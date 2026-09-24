@@ -1,0 +1,42 @@
+# Ambiente Python
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.pyo
+
+# Compilacao / instalador
+build/
+dist/
+
+# Arquivos temporarios
+*.log
+*.tmp
+*.temp
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+Thumbs.db
+.DS_Store
+
+# Dados do usuario
+*.db
+*.sqlite
+*.sqlite3
+
+# Documentos importados
+*.pdf
+
+# Pastas de dados
+dados/
+data/
+documentos/
+comprovantes/
+contas/
+
+# IMPORTANTE: os .pyc recuperados fazem parte deste projeto
