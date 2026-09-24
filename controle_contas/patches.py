@@ -1742,16 +1742,37 @@ def _mesmo_pdf_por_conteudo(novo: str | Path, existente: str | Path) -> bool:
 
 
 def _localizar_duplicatas_reforcado(self, dados, ignorar_id=None):
-    # Mantém todas as regras originais primeiro.
-    encontradas = list(_localizar_duplicatas_original(self, dados, ignorar_id) or [])
-    ids = {int(c["id"]) for c in encontradas if c.get("id") is not None}
+    """Bloqueia apenas duplicatas com evidência forte.
+
+    Regras de semelhança (mesmo fornecedor, valor, vencimento etc.) não são
+    suficientes para impedir o cadastro: contas reais podem ser muito parecidas.
+    """
+    encontradas: list[dict] = []
+    ids: set[int] = set()
 
     novo_pdf = str(dados.get("pdf_conta") or "")
-    novo_codigo = _normalizar_codigo_duplicata(dados.get("codigo_pagamento"))
-    novo_recebedor = dados.get("fornecedor") or dados.get("recebedor") or ""
+    novo_codigo_bruto = str(dados.get("codigo_pagamento") or "").strip()
+    novo_codigo = _normalizar_codigo_duplicata(novo_codigo_bruto)
     novo_valor = round(float(dados.get("valor") or 0), 2)
-    novo_vencimento = str(dados.get("vencimento") or "")
-    nova_referencia = str(dados.get("referencia") or "").strip().casefold()
+    novo_vencimento = str(dados.get("vencimento") or "").strip()
+    nova_referencia = str(dados.get("referencia") or "").strip()
+
+    def _mesmos_dados_basicos(conta) -> bool:
+        try:
+            mesmo_valor = round(float(conta.get("valor") or 0), 2) == novo_valor
+        except Exception:
+            mesmo_valor = False
+        mesmo_vencimento = str(conta.get("vencimento") or "").strip() == novo_vencimento
+        return mesmo_valor and mesmo_vencimento
+
+    def _codigo_e_linha_bancaria_forte(codigo: str) -> bool:
+        # Códigos de barras / linhas digitáveis de cobrança e arrecadação.
+        return codigo.isdigit() and len(codigo) in {44, 46, 47, 48}
+
+    def _codigo_e_pix_emv(codigo: str) -> bool:
+        # PIX Copia e Cola EMV. Um payload igual é um sinal forte, mas como
+        # pode existir PIX estático, exigimos também valor + vencimento iguais.
+        return codigo.startswith("000201") and len(codigo) >= 50
 
     for conta in self.listar_contas():
         try:
@@ -1763,48 +1784,35 @@ def _localizar_duplicatas_reforcado(self, dados, ignorar_id=None):
         if conta_id in ids:
             continue
 
-        # Regra mais forte: é literalmente o mesmo arquivo PDF, byte por byte.
+        # 1) Mesmos bytes = exatamente o mesmo PDF.
         if _mesmo_pdf_por_conteudo(novo_pdf, str(conta.get("pdf_conta") or "")):
             encontradas.append(conta)
             ids.add(conta_id)
             continue
 
-        # Código/linha digitável/PIX idêntico continua sendo prova forte mesmo
-        # se o OCR escrever o nome do recebedor de maneira um pouco diferente.
-        codigo_existente = _normalizar_codigo_duplicata(conta.get("codigo_pagamento"))
-        if (
-            len(novo_codigo) >= 20
-            and len(codigo_existente) >= 20
-            and novo_codigo == codigo_existente
-        ):
-            encontradas.append(conta)
-            ids.add(conta_id)
-            continue
+        codigo_existente_bruto = str(conta.get("codigo_pagamento") or "").strip()
+        codigo_existente = _normalizar_codigo_duplicata(codigo_existente_bruto)
 
-        # Fallback para OCR: valor + vencimento precisam ser exatos; o nome
-        # pode variar apenas o suficiente para cobrir pontuação/sufixos/erros
-        # pequenos de reconhecimento. A referência, quando existe nos dois,
-        # também precisa bater.
-        try:
-            mesmo_valor = round(float(conta.get("valor") or 0), 2) == novo_valor
-        except Exception:
-            mesmo_valor = False
-        mesmo_vencimento = str(conta.get("vencimento") or "") == novo_vencimento
-        ref_existente = str(conta.get("referencia") or "").strip().casefold()
-        referencia_compativel = (
-            not nova_referencia
-            or not ref_existente
-            or nova_referencia == ref_existente
-        )
+        if novo_codigo and codigo_existente and novo_codigo == codigo_existente:
+            # 2) Linha digitável / código de barras idêntico: bloqueio seguro.
+            if _codigo_e_linha_bancaria_forte(novo_codigo):
+                encontradas.append(conta)
+                ids.add(conta_id)
+                continue
 
-        if (
-            mesmo_valor
-            and mesmo_vencimento
-            and referencia_compativel
-            and _nomes_equivalentes(novo_recebedor, conta.get("fornecedor") or "")
-        ):
-            encontradas.append(conta)
-            ids.add(conta_id)
+            # 3) PIX Copia e Cola idêntico: só bloqueia junto com valor e
+            # vencimento, evitando falso positivo em PIX estático reutilizado.
+            if _codigo_e_pix_emv(novo_codigo) and _mesmos_dados_basicos(conta):
+                encontradas.append(conta)
+                ids.add(conta_id)
+                continue
+
+            # 4) Outros códigos/URLs/chaves: igualdade sozinha NÃO bloqueia.
+            # Ex.: uma chave PIX fixa pode aparecer em várias contas legítimas.
+
+        # 5) Referência, fornecedor, valor e vencimento semelhantes servem para
+        # conferência humana, mas NÃO são prova de duplicidade e não bloqueiam.
+        # Isso evita barrar cobranças distintas do mesmo fornecedor/período.
 
     return encontradas
 
