@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import hashlib
 import shutil
 import sys
 import unicodedata
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from . import pdf_reader
+from . import paths
 from . import ui
 
 
@@ -897,6 +900,505 @@ def _carregar_pdf_preservando_campos(self, caminho, dados_prontos=None):
 
 
 # ---------------------------------------------------------------------------
+# ORGANIZAÇÃO DE DOCUMENTOS POR VENCIMENTO
+# ---------------------------------------------------------------------------
+
+_CONFIG_DOCUMENTOS = paths.APP_DATA_DIR / "config_documentos.json"
+_MESES = (
+    "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
+    "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO",
+)
+
+_dados_conta_original = ui.ContaDialog.dados
+_validar_conta_original = ui.ContaDialog.validar
+_dados_pagamento_original = ui.PagamentoDialog.dados
+_validar_pagamento_original = ui.PagamentoDialog.validar
+_banco_adicionar_conta_original = ui.Banco.adicionar_conta
+_banco_atualizar_conta_original = ui.Banco.atualizar_conta
+_banco_registrar_pagamento_original = ui.Banco.registrar_pagamento
+_janela_init_original = ui.JanelaPrincipal.__init__
+_excluir_conta_original = ui.JanelaPrincipal.excluir_conta
+
+
+def _ler_pasta_base() -> Path | None:
+    try:
+        if not _CONFIG_DOCUMENTOS.is_file():
+            return None
+        dados = json.loads(_CONFIG_DOCUMENTOS.read_text(encoding="utf-8"))
+        valor = str(dados.get("pasta_base") or "").strip()
+        return Path(valor) if valor else None
+    except Exception:
+        return None
+
+
+def _salvar_pasta_base(pasta: Path) -> None:
+    paths.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _CONFIG_DOCUMENTOS.write_text(
+        json.dumps({"pasta_base": str(pasta)}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _normalizar_base_escolhida(pasta: Path) -> Path:
+    # Se o usuário apontar por engano para "BOLETOS 2026", guardamos o pai.
+    if re.fullmatch(r"BOLETOS\s+\d{4}", pasta.name.strip(), flags=re.IGNORECASE):
+        return pasta.parent
+    return pasta
+
+
+def _selecionar_pasta_base(parent=None) -> Path | None:
+    atual = _ler_pasta_base()
+    inicial = str(atual or (Path.home() / "Documents"))
+    escolhido = ui.QFileDialog.getExistingDirectory(
+        parent,
+        "Escolha a pasta-base dos boletos",
+        inicial,
+    )
+    if not escolhido:
+        return None
+
+    pasta = _normalizar_base_escolhida(Path(escolhido).resolve())
+    try:
+        pasta.mkdir(parents=True, exist_ok=True)
+        _salvar_pasta_base(pasta)
+    except OSError as exc:
+        ui.QMessageBox.critical(
+            parent,
+            "Pasta indisponível",
+            "Não foi possível usar essa pasta para organizar os documentos.\n\n"
+            f"Detalhe: {exc}",
+        )
+        return None
+    return pasta
+
+
+def _obter_pasta_base(parent=None, perguntar: bool = True) -> Path | None:
+    pasta = _ler_pasta_base()
+    if pasta:
+        try:
+            pasta.mkdir(parents=True, exist_ok=True)
+            return pasta
+        except OSError:
+            pass
+    if perguntar:
+        return _selecionar_pasta_base(parent)
+    return None
+
+
+def _pasta_do_vencimento(base: Path, vencimento: str) -> Path:
+    try:
+        data = datetime.strptime(str(vencimento), "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("O vencimento da conta não é uma data válida.") from exc
+
+    pasta = base / f"BOLETOS {data.year}" / f"{data.month:02d} - {_MESES[data.month - 1]}"
+    pasta.mkdir(parents=True, exist_ok=True)
+    return pasta
+
+
+def _nome_documento(nome_base: str, fallback: str = "DOCUMENTO") -> str:
+    nome = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", str(nome_base or ""))
+    nome = " ".join(nome.split()).strip().rstrip(".")
+    if nome.casefold().endswith(".pdf"):
+        nome = nome[:-4].rstrip()
+    nome = nome[:120].strip() or fallback
+    return f"{nome}.pdf"
+
+
+def _destino_disponivel(pasta: Path, nome_arquivo: str, origem: Path | None = None) -> Path:
+    destino = pasta / nome_arquivo
+    try:
+        if origem and destino.exists() and destino.resolve() == origem.resolve():
+            return destino
+    except OSError:
+        pass
+
+    if not destino.exists():
+        return destino
+
+    base = destino.stem
+    ext = destino.suffix or ".pdf"
+    contador = 1
+    while True:
+        candidato = pasta / f"{base} ({contador}){ext}"
+        if not candidato.exists():
+            return candidato
+        contador += 1
+
+
+def _mover_pdf_cobranca(
+    origem: str | Path,
+    vencimento: str,
+    observacoes: str,
+    fornecedor: str,
+    parent=None,
+) -> tuple[str, str]:
+    """Move o PDF para ANO/MÊS. Retorna (destino, origem_original)."""
+    if not origem:
+        return "", ""
+
+    src = Path(origem)
+    if not src.is_file():
+        return str(src), str(src)
+
+    base = _obter_pasta_base(parent, perguntar=True)
+    if base is None:
+        raise RuntimeError("Seleção da pasta de documentos cancelada.")
+
+    pasta = _pasta_do_vencimento(base, vencimento)
+    nome = _nome_documento(observacoes, fornecedor or src.stem or "BOLETO")
+    destino = _destino_disponivel(pasta, nome, src)
+
+    try:
+        if src.resolve() == destino.resolve():
+            return str(destino), str(src)
+    except OSError:
+        pass
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(destino))
+    return str(destino), str(src)
+
+
+def _desfazer_movimento(destino: str, origem: str) -> None:
+    if not destino or not origem or destino == origem:
+        return
+    dst = Path(destino)
+    src = Path(origem)
+    try:
+        if dst.is_file() and not src.exists():
+            src.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(dst), str(src))
+    except OSError:
+        pass
+
+
+def _dados_conta_sem_copia(self, copiar_pdf=True):
+    # A cópia antiga é desativada. O Banco move o arquivo somente depois que
+    # o usuário confirma o cadastro/edição e organiza pelo vencimento.
+    return _dados_conta_original(self, copiar_pdf=False)
+
+
+def _validar_conta_com_pasta(self):
+    # Se existe PDF, garantimos antes do accept() que a pasta-base foi definida.
+    # Cancelar o seletor mantém o formulário aberto e não move nenhum arquivo.
+    if getattr(self, "pdf_origem", "") and _obter_pasta_base(self, perguntar=False) is None:
+        if _selecionar_pasta_base(self) is None:
+            return
+    return _validar_conta_original(self)
+
+
+def _banco_adicionar_conta_organizada(self, dados):
+    dados_novos = dict(dados)
+    origem = str(dados_novos.get("pdf_conta") or "")
+    destino = origem
+
+    if origem:
+        destino, origem_original = _mover_pdf_cobranca(
+            origem,
+            str(dados_novos.get("vencimento") or ""),
+            str(dados_novos.get("observacoes") or ""),
+            str(dados_novos.get("fornecedor") or ""),
+            ui.QApplication.activeWindow(),
+        )
+        dados_novos["pdf_conta"] = destino
+    else:
+        origem_original = ""
+
+    try:
+        return _banco_adicionar_conta_original(self, dados_novos)
+    except Exception:
+        _desfazer_movimento(destino, origem_original)
+        raise
+
+
+def _banco_atualizar_conta_organizada(self, conta_id, dados):
+    dados_novos = dict(dados)
+    origem = str(dados_novos.get("pdf_conta") or "")
+    destino = origem
+
+    if origem:
+        destino, origem_original = _mover_pdf_cobranca(
+            origem,
+            str(dados_novos.get("vencimento") or ""),
+            str(dados_novos.get("observacoes") or ""),
+            str(dados_novos.get("fornecedor") or ""),
+            ui.QApplication.activeWindow(),
+        )
+        dados_novos["pdf_conta"] = destino
+    else:
+        origem_original = ""
+
+    try:
+        return _banco_atualizar_conta_original(self, conta_id, dados_novos)
+    except Exception:
+        _desfazer_movimento(destino, origem_original)
+        raise
+
+
+def _dados_pagamento_sem_copia(self):
+    dados = self.dados_parciais() or {}
+    resultado, detalhes = ui.comparar_pagamento(self.conta, dados)
+    return {
+        **dados,
+        "pdf_comprovante": str(getattr(self, "pdf_origem", "") or ""),
+        "resultado_conferencia": resultado,
+        "detalhes_conferencia": detalhes,
+    }
+
+
+def _validar_pagamento_com_pasta(self):
+    if getattr(self, "pdf_origem", "") and _obter_pasta_base(self, perguntar=False) is None:
+        if _selecionar_pasta_base(self) is None:
+            return
+    return _validar_pagamento_original(self)
+
+
+def _atualizar_caminho_pdf_conta(banco, conta_id: int, caminho: str) -> None:
+    with banco.conexao() as conn:
+        conn.execute(
+            "UPDATE contas SET pdf_conta = ?, atualizado_em = ? WHERE id = ?",
+            (caminho, datetime.now().isoformat(timespec="seconds"), int(conta_id)),
+        )
+
+
+def _mesclar_pdfs_atomico(pdf_conta: Path, comprovante: Path) -> tuple[Path, Path]:
+    try:
+        import fitz
+    except Exception as exc:
+        raise RuntimeError("PyMuPDF não está disponível para mesclar os PDFs.") from exc
+
+    backup = pdf_conta.with_name(f".{pdf_conta.stem}.backup_pagamento.pdf")
+    temp = pdf_conta.with_name(f".{pdf_conta.stem}.mesclando.pdf")
+    contador = 1
+    while backup.exists() or temp.exists():
+        backup = pdf_conta.with_name(f".{pdf_conta.stem}.backup_pagamento_{contador}.pdf")
+        temp = pdf_conta.with_name(f".{pdf_conta.stem}.mesclando_{contador}.pdf")
+        contador += 1
+
+    shutil.copy2(pdf_conta, backup)
+    saida = None
+    doc_conta = None
+    doc_comprovante = None
+    try:
+        doc_conta = fitz.open(str(pdf_conta))
+        doc_comprovante = fitz.open(str(comprovante))
+        paginas_esperadas = doc_conta.page_count + doc_comprovante.page_count
+
+        saida = fitz.open()
+        saida.insert_pdf(doc_conta)
+        saida.insert_pdf(doc_comprovante)
+        saida.save(str(temp), garbage=4, deflate=True)
+        saida.close()
+        saida = None
+        doc_conta.close()
+        doc_conta = None
+        doc_comprovante.close()
+        doc_comprovante = None
+
+        teste = fitz.open(str(temp))
+        paginas_gravadas = teste.page_count
+        teste.close()
+        if paginas_gravadas != paginas_esperadas:
+            raise RuntimeError("A quantidade de páginas do PDF mesclado não confere.")
+
+        os.replace(str(temp), str(pdf_conta))
+        return pdf_conta, backup
+    except Exception:
+        for doc in (saida, doc_conta, doc_comprovante):
+            try:
+                if doc is not None:
+                    doc.close()
+            except Exception:
+                pass
+        try:
+            if temp.exists():
+                temp.unlink()
+        except OSError:
+            pass
+        try:
+            if backup.exists():
+                os.replace(str(backup), str(pdf_conta))
+        except OSError:
+            pass
+        raise
+
+
+def _banco_registrar_pagamento_mesclado(self, conta_id, dados):
+    dados_novos = dict(dados)
+    comprovante_txt = str(dados_novos.get("pdf_comprovante") or "").strip()
+    if not comprovante_txt:
+        return _banco_registrar_pagamento_original(self, conta_id, dados_novos)
+
+    comprovante = Path(comprovante_txt)
+    if not comprovante.is_file():
+        return _banco_registrar_pagamento_original(self, conta_id, dados_novos)
+
+    conta = self.buscar_conta(int(conta_id))
+    if not conta:
+        return _banco_registrar_pagamento_original(self, conta_id, dados_novos)
+
+    parent = ui.QApplication.activeWindow()
+    pdf_conta_txt = str(conta.get("pdf_conta") or "").strip()
+    pdf_conta = Path(pdf_conta_txt) if pdf_conta_txt else None
+    origem_conta = pdf_conta_txt
+    conta_movida = False
+    comprovante_movido = False
+    comprovante_destino = ""
+    comprovante_origem = ""
+    backup = None
+
+    try:
+        # Contas antigas também passam a ser organizadas na nova estrutura no
+        # primeiro pagamento/edição em que forem tocadas.
+        if pdf_conta and pdf_conta.is_file():
+            destino_conta, origem_real = _mover_pdf_cobranca(
+                pdf_conta,
+                str(conta.get("vencimento") or ""),
+                str(conta.get("observacoes") or ""),
+                str(conta.get("fornecedor") or ""),
+                parent,
+            )
+            pdf_conta = Path(destino_conta)
+            conta_movida = destino_conta != origem_real
+            if destino_conta != pdf_conta_txt:
+                _atualizar_caminho_pdf_conta(self, int(conta_id), destino_conta)
+
+        if pdf_conta and pdf_conta.is_file():
+            try:
+                mesmo_arquivo = pdf_conta.resolve() == comprovante.resolve()
+            except OSError:
+                mesmo_arquivo = False
+
+            if not mesmo_arquivo:
+                pdf_conta, backup = _mesclar_pdfs_atomico(pdf_conta, comprovante)
+            dados_novos["pdf_comprovante"] = str(pdf_conta)
+        else:
+            # Conta sem PDF: o comprovante vira o documento único daquela conta.
+            destino, origem_comprovante = _mover_pdf_cobranca(
+                comprovante,
+                str(conta.get("vencimento") or ""),
+                str(conta.get("observacoes") or "") or str(conta.get("fornecedor") or ""),
+                str(conta.get("fornecedor") or ""),
+                parent,
+            )
+            comprovante_destino = destino
+            comprovante_origem = origem_comprovante
+            comprovante_movido = destino != origem_comprovante
+            pdf_conta = Path(destino)
+            _atualizar_caminho_pdf_conta(self, int(conta_id), destino)
+            dados_novos["pdf_comprovante"] = destino
+            comprovante = Path(origem_comprovante)
+
+        resultado = _banco_registrar_pagamento_original(self, conta_id, dados_novos)
+
+        # Só removemos o comprovante avulso depois de o PDF final e o banco
+        # estarem confirmados. O conteúdo dele já está dentro do PDF da conta.
+        if pdf_conta:
+            try:
+                if comprovante.is_file() and comprovante.resolve() != pdf_conta.resolve():
+                    comprovante.unlink()
+            except OSError:
+                pass
+        if backup:
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return resultado
+
+    except Exception:
+        if backup and backup.exists() and pdf_conta:
+            try:
+                os.replace(str(backup), str(pdf_conta))
+            except OSError:
+                pass
+        if conta_movida and pdf_conta and origem_conta:
+            _desfazer_movimento(str(pdf_conta), origem_conta)
+            try:
+                _atualizar_caminho_pdf_conta(self, int(conta_id), origem_conta)
+            except Exception:
+                pass
+        if comprovante_movido and comprovante_destino and comprovante_origem:
+            _desfazer_movimento(comprovante_destino, comprovante_origem)
+            try:
+                _atualizar_caminho_pdf_conta(self, int(conta_id), origem_conta)
+            except Exception:
+                pass
+        raise
+
+
+def _configurar_pasta_documentos(self):
+    atual = _ler_pasta_base()
+    nova = _selecionar_pasta_base(self)
+    if nova is None:
+        return
+    self._patch_btn_pasta.setToolTip(f"Pasta-base atual:\n{nova}")
+    if atual and atual != nova:
+        ui.QMessageBox.information(
+            self,
+            "Pasta alterada",
+            "A nova pasta-base foi salva. Novos documentos e documentos alterados "
+            "passarão a usar esse local. Os arquivos antigos não foram movidos automaticamente.",
+        )
+    else:
+        ui.QMessageBox.information(
+            self,
+            "Pasta configurada",
+            "Pasta-base salva. O sistema criará automaticamente BOLETOS ANO e as pastas dos meses.",
+        )
+
+
+def _janela_init_com_pasta(self, *args, **kwargs):
+    _janela_init_original(self, *args, **kwargs)
+
+    try:
+        header = self.findChild(ui.QFrame, "headerPanel")
+        layout = header.layout() if header else None
+        if layout is None:
+            return
+
+        botao = ui.QPushButton("📁  Pasta de boletos")
+        botao.setObjectName("secondaryButton")
+        pasta = _ler_pasta_base()
+        botao.setToolTip(
+            f"Pasta-base atual:\n{pasta}" if pasta else
+            "Escolha onde o sistema deve criar as pastas BOLETOS ANO / MÊS."
+        )
+        botao.clicked.connect(self._patch_configurar_pasta_documentos)
+        self._patch_btn_pasta = botao
+
+        indice_nova = -1
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget() if item else None
+            if isinstance(widget, ui.QPushButton) and "Nova conta" in widget.text():
+                indice_nova = i
+                break
+        if indice_nova >= 0:
+            layout.insertWidget(indice_nova, botao)
+        else:
+            layout.addWidget(botao)
+    except Exception:
+        pass
+
+
+def _excluir_conta_mensagem_atualizada(self):
+    conta = self.conta_selecionada()
+    if not conta:
+        return
+    resposta = ui.QMessageBox.question(
+        self,
+        "Excluir conta",
+        f"Excluir definitivamente a conta de {conta['fornecedor']}?\n\n"
+        "O PDF organizado permanecerá na pasta de boletos.",
+    )
+    if resposta == ui.QMessageBox.StandardButton.Yes:
+        self.banco.excluir_conta(int(conta["id"]))
+        self.atualizar()
+
+
+# ---------------------------------------------------------------------------
 # JANELA DE CADASTRO NÃO MODAL
 # ---------------------------------------------------------------------------
 
@@ -1025,12 +1527,23 @@ def aplicar_patches():
     ui.analisar_pdf = _analisar_pdf_com_ocr_melhorado
 
     ui.Banco.localizar_duplicatas = _localizar_duplicatas_reforcado
+    ui.Banco.adicionar_conta = _banco_adicionar_conta_organizada
+    ui.Banco.atualizar_conta = _banco_atualizar_conta_organizada
+    ui.Banco.registrar_pagamento = _banco_registrar_pagamento_mesclado
 
     ui.ContaDialog.__init__ = _init_conta_preservando_edicoes
     ui.ContaDialog.carregar_pdf = _carregar_pdf_preservando_campos
+    ui.ContaDialog.dados = _dados_conta_sem_copia
+    ui.ContaDialog.validar = _validar_conta_com_pasta
 
+    ui.PagamentoDialog.dados = _dados_pagamento_sem_copia
+    ui.PagamentoDialog.validar = _validar_pagamento_com_pasta
+
+    ui.JanelaPrincipal.__init__ = _janela_init_com_pasta
+    ui.JanelaPrincipal._patch_configurar_pasta_documentos = _configurar_pasta_documentos
     ui.JanelaPrincipal.nova_conta = _nova_conta_nao_modal
     ui.JanelaPrincipal.editar_conta = _editar_conta_nao_modal
     ui.JanelaPrincipal.processar_pdf_solto = _processar_pdf_solto_nao_modal
+    ui.JanelaPrincipal.excluir_conta = _excluir_conta_mensagem_atualizada
 
     _aplicado = True
