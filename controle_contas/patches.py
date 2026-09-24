@@ -39,12 +39,15 @@ _ROTULOS_RECEBEDOR = (
 
 _ROTULOS_PAGADOR = (
     ("nome", "do", "pagador"),
+    ("nome", "pagador"),
     ("pagador",),
     ("sacado",),
+    ("nome", "do", "cliente"),
     ("cliente",),
     ("consumidor",),
     ("titular",),
     ("razao", "social", "pagador"),
+    ("razao", "social", "cliente"),
 )
 
 _ROTULOS_RECEBEDOR_TEXTO = (
@@ -52,7 +55,43 @@ _ROTULOS_RECEBEDOR_TEXTO = (
     "fornecedor", "prestador", "emitente",
 )
 _ROTULOS_PAGADOR_TEXTO = (
-    "pagador", "nome do pagador", "sacado", "cliente", "consumidor", "titular",
+    "pagador", "nome do pagador", "nome pagador", "sacado", "cliente",
+    "nome do cliente", "consumidor", "titular",
+)
+
+_ROTULOS_REFERENCIA = (
+    ("referencia",),
+    ("mes", "referencia"),
+    ("mes", "de", "referencia"),
+    ("mes", "ano"),
+    ("competencia",),
+    ("periodo", "de", "apuracao"),
+    ("periodo", "apuracao"),
+    ("periodo", "de", "referencia"),
+    ("periodo", "referencia"),
+    ("numero", "de", "referencia"),
+    ("numero", "da", "fatura"),
+    ("numero", "fatura"),
+    ("seu", "numero"),
+)
+
+_FRASES_NAO_NOME = (
+    "voce podera",
+    "podera ter",
+    "fornecimento de",
+    "suspensao do",
+    "aviso de",
+    "valor a pagar",
+    "valor total",
+    "total a pagar",
+    "data de vencimento",
+    "mes referencia",
+    "mes de referencia",
+    "periodo de referencia",
+    "consumo faturado",
+    "leitura anterior",
+    "leitura atual",
+    "proxima leitura",
 )
 
 _CORTES_NOME = {
@@ -146,6 +185,122 @@ def _achar_rotulo(tokens: list[str], rotulos: tuple[tuple[str, ...], ...]):
     return None
 
 
+def _parece_nome_entidade(texto: str) -> bool:
+    """Valida se um trecho realmente parece nome de pessoa/empresa.
+
+    Evita aceitar como pagador/recebedor linhas de fatura contendo competencia,
+    valores monetarios, avisos ao consumidor ou frases corridas.
+    """
+    texto = re.sub(r"\s+", " ", texto or "").strip()
+    if len(texto) < 3 or len(texto) > 120:
+        return False
+
+    norm = _normalizar_ocr(texto)
+    if not norm:
+        return False
+
+    # Uma referencia/competencia ou data no inicio nao e nome de entidade.
+    if re.match(r"^\s*(?:0?[1-9]|1[0-2])\s*[/.-]\s*(?:19|20)\d{2}\b", texto):
+        return False
+    if re.match(r"^\s*\d{1,2}\s*[/.-]\s*\d{1,2}\s*[/.-]\s*(?:19|20)?\d{2}\b", texto):
+        return False
+
+    # Nome de pessoa/empresa nao deve carregar valor monetario no meio.
+    if re.search(r"(?:R\$\s*)?\d{1,3}(?:\.\d{3})*,\d{2}\b", texto, re.I):
+        return False
+
+    if any(frase in norm for frase in _FRASES_NAO_NOME):
+        return False
+
+    # Frases longas com verbos/pronomes tipicos de avisos sao rejeitadas.
+    palavras = norm.split()
+    if len(palavras) > 12:
+        return False
+    palavras_frase = {"voce", "podera", "devera", "ter", "sera", "foi", "para", "ate", "apos"}
+    if len(set(palavras) & palavras_frase) >= 2:
+        return False
+
+    letras = sum(ch.isalpha() for ch in texto)
+    digitos = sum(ch.isdigit() for ch in texto)
+    if letras < 3 or letras < digitos:
+        return False
+
+    # Linhas com pontuacao de frase costumam ser aviso/texto corrido.
+    if re.search(r"[.!?]{2,}", texto):
+        return False
+    return True
+
+
+def _limpar_referencia_ocr(texto: str) -> str:
+    texto = re.sub(r"\s+", " ", texto or "").strip(" :-|;,\t[]{}()<>\\/")
+    if not texto:
+        return ""
+
+    texto = re.sub(
+        r"^(?:(?:REFER[EÊ]NCIA|M[EÊ]S\s+DE\s+REFER[EÊ]NCIA|M[EÊ]S\s+REFER[EÊ]NCIA|M[EÊ]S\s*/?\s*ANO|COMPET[EÊ]NCIA|PER[IÍ]ODO\s+DE\s+REFER[EÊ]NCIA|N[ÚU]MERO\s+DE\s+REFER[EÊ]NCIA|N[ÚU]MERO\s+DA\s+FATURA|SEU\s+N[ÚU]MERO)\s*[:|;\-–—]?\s*)+",
+        "",
+        texto,
+        flags=re.IGNORECASE,
+    ).strip(" :-|;,\t[]{}()<>\\/")
+
+    # Prioridade: competencia MM/AAAA, formato mais comum no campo Referencia.
+    m = re.search(r"(?<!\d)(0?[1-9]|1[0-2])\s*[/._-]\s*((?:19|20)\d{2})(?!\d)", texto)
+    if m:
+        return f"{int(m.group(1)):02d}/{m.group(2)}"
+
+    # Tambem aceita AAAA-MM e normaliza para MM/AAAA.
+    m = re.search(r"(?<!\d)((?:19|20)\d{2})\s*[/._-]\s*(0?[1-9]|1[0-2])(?!\d)", texto)
+    if m:
+        return f"{int(m.group(2)):02d}/{m.group(1)}"
+
+    # Numero/codigo de referencia explicitamente rotulado.
+    candidato = texto.strip(" .,:;|-_")
+    if not (3 <= len(candidato) <= 50):
+        return ""
+    if re.search(r"\b\d{1,2}/\d{1,2}/(?:19|20)?\d{2}\b", candidato):
+        return ""
+    if re.search(r"(?:R\$\s*)?\d{1,3}(?:\.\d{3})*,\d{2}\b", candidato, re.I):
+        return ""
+    if not any(ch.isdigit() for ch in candidato):
+        return ""
+    norm = _normalizar_ocr(candidato)
+    if any(frase in norm for frase in _FRASES_NAO_NOME):
+        return ""
+    return candidato
+
+
+def _extrair_referencia_ancorada(linhas: list[dict]) -> str:
+    candidatos: list[tuple[float, str]] = []
+    for idx, linha in enumerate(linhas):
+        achado = _achar_rotulo(linha["tokens"], _ROTULOS_REFERENCIA)
+        if not achado:
+            continue
+        _, fim = achado
+
+        direita = _limpar_referencia_ocr(" ".join(linha["tokens"][fim:]))
+        if direita:
+            candidatos.append((100.0 + float(linha.get("conf", 0)) * 0.1, direita))
+
+        for distancia in (1, 2):
+            j = idx + distancia
+            if j >= len(linhas):
+                break
+            prox = linhas[j]
+            if prox["pagina"] != linha["pagina"]:
+                break
+            if prox["top"] - linha["bottom"] > max(linha["altura"] * 5.0, 125) * distancia:
+                break
+            candidato = _limpar_referencia_ocr(prox["texto"])
+            if candidato:
+                candidatos.append((75.0 - 8.0 * distancia + float(prox.get("conf", 0)) * 0.1, candidato))
+                break
+
+    if not candidatos:
+        return ""
+    candidatos.sort(key=lambda item: item[0], reverse=True)
+    return candidatos[0][1]
+
+
 def _limpar_nome_ocr(texto: str) -> str:
     texto = re.sub(r"\s+", " ", texto or "").strip()
 
@@ -215,11 +370,13 @@ def _limpar_nome_ocr(texto: str) -> str:
         return ""
     if any(x in norm for x in ("linha digitavel", "codigo de barras", "data de vencimento", "valor do documento")):
         return ""
+    if not _parece_nome_entidade(texto):
+        return ""
     return texto
 
 
 def _pontuar_nome(texto: str, confianca: float, mesma_linha: bool, distancia: int) -> float:
-    if not texto:
+    if not texto or not _parece_nome_entidade(texto):
         return -999.0
     norm = _normalizar_ocr(texto)
     score = max(0.0, min(100.0, confianca)) * 0.55
@@ -341,7 +498,7 @@ def _ocr_documento(caminho: str | Path) -> dict[str, str]:
     if chave in _OCR_CACHE:
         return dict(_OCR_CACHE[chave])
 
-    vazio = {"texto": "", "recebedor": "", "pagador": ""}
+    vazio = {"texto": "", "recebedor": "", "pagador": "", "referencia": ""}
     try:
         import cv2
         import fitz
@@ -465,6 +622,7 @@ def _ocr_documento(caminho: str | Path) -> dict[str, str]:
         "texto": "\n".join(texto_unico),
         "recebedor": _extrair_nome_ancorado(linhas_unicas, _ROTULOS_RECEBEDOR),
         "pagador": _extrair_nome_ancorado(linhas_unicas, _ROTULOS_PAGADOR),
+        "referencia": _extrair_referencia_ancorada(linhas_unicas),
     }
     _OCR_CACHE.clear()  # evita crescimento indefinido; mantém só o documento atual
     _OCR_CACHE[chave] = dict(resultado)
@@ -509,57 +667,980 @@ def _extrair_texto_com_ocr(caminho: str | Path) -> str:
     return texto_ocr
 
 
+
+def _valor_br_para_float(texto: str) -> float | None:
+    bruto = re.sub(r"[^0-9,.-]", "", str(texto or "")).strip()
+    if not bruto:
+        return None
+    try:
+        if "," in bruto:
+            bruto = bruto.replace(".", "").replace(",", ".")
+        return round(float(bruto), 2)
+    except ValueError:
+        return None
+
+
+def _extrair_valor_apos_rotulo(linhas: list[str], rotulos: tuple[str, ...], limpador):
+    normalizadas = [_normalizar_ocr(l) for l in linhas]
+    for i, norm in enumerate(normalizadas):
+        for rotulo in rotulos:
+            rnorm = _normalizar_ocr(rotulo)
+            if rnorm not in norm:
+                continue
+
+            # Primeiro tenta o que vier depois do próprio rótulo na mesma linha.
+            pos = norm.find(rnorm)
+            if pos >= 0:
+                # Usa a linha original para preservar pontuação/acentos.
+                original = linhas[i]
+                m = re.search(re.escape(rotulo), original, flags=re.IGNORECASE)
+                if m:
+                    candidato = limpador(original[m.end():])
+                    if candidato:
+                        return candidato
+
+            # Depois tenta as próximas linhas úteis.
+            for j in range(i + 1, min(len(linhas), i + 4)):
+                candidato = limpador(linhas[j])
+                if candidato:
+                    return candidato
+    return None
+
+
+def _enriquecer_documento_textual(caminho: str | Path, dados: dict) -> tuple[dict, set[str]]:
+    """Extrai campos fortes de guias/faturas que não seguem layout de boleto.
+
+    Dá prioridade a rótulos explícitos presentes na camada de texto do PDF.
+    Inclui tratamentos determinísticos para guias governamentais (FGTS Digital,
+    DARF/Documento de Arrecadação de Receitas Federais) antes de recorrer ao OCR.
+    """
+    try:
+        texto = _extrair_texto_original(caminho) or ""
+    except Exception:
+        texto = ""
+    if not texto.strip():
+        return dados, set()
+
+    linhas = [re.sub(r"\s+", " ", l).strip() for l in texto.splitlines() if l.strip()]
+    texto_norm = _normalizar_ocr(texto)
+    fortes: set[str] = set()
+
+    def nome_valido(t: str) -> str:
+        candidato = _limpar_nome_ocr(t)
+        return candidato if candidato and _parece_nome_entidade(candidato) else ""
+
+    # ------------------------------------------------------------------
+    # DARF / DOCUMENTO DE ARRECADAÇÃO DE RECEITAS FEDERAIS
+    # ------------------------------------------------------------------
+    # A extração de texto desses PDFs costuma vir fora da ordem visual:
+    # o CNPJ + Razão Social podem aparecer ANTES dos rótulos "CNPJ Razão
+    # Social". Por isso não usamos apenas "valor depois do rótulo".
+    eh_darf = "documento de arrecadacao de receitas federais" in texto_norm
+    if eh_darf:
+        # PAGADOR/CONTRIBUINTE: linha contendo CNPJ seguido da razão social.
+        pagador_darf = ""
+        padrao_cnpj_nome = re.compile(
+            r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\s+(.+?)\s*$",
+            re.IGNORECASE,
+        )
+        for linha in linhas:
+            m = padrao_cnpj_nome.search(linha)
+            if not m:
+                continue
+            candidato = nome_valido(m.group(1))
+            if candidato:
+                pagador_darf = candidato
+                break
+
+        # Fallback para CNPJ e razão social quebrados em linhas distintas.
+        if not pagador_darf:
+            for i, linha in enumerate(linhas):
+                if re.fullmatch(r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}", linha):
+                    for j in range(i + 1, min(len(linhas), i + 4)):
+                        candidato = nome_valido(linhas[j])
+                        if candidato:
+                            pagador_darf = candidato
+                            break
+                if pagador_darf:
+                    break
+
+        if pagador_darf:
+            dados["pagador"] = pagador_darf
+            fortes.add("pagador")
+
+        # RECEBEDOR: neste tipo de documento a entidade arrecadadora é a
+        # Receita Federal. O próprio documento se identifica como Documento de
+        # Arrecadação de Receitas Federais e traz a marca Receita Federal.
+        dados["recebedor"] = "RECEITA FEDERAL"
+        dados["fornecedor"] = "RECEITA FEDERAL"
+        fortes.add("recebedor")
+
+        # REFERÊNCIA/PERÍODO DE APURAÇÃO. "PA:08/2026" é o sinal mais forte.
+        m = re.search(
+            r"(?i)\bPA\s*[:\-]?\s*(0?[1-9]|1[0-2])\s*/\s*((?:19|20)\d{2})\b",
+            texto,
+        )
+        if m:
+            dados["referencia"] = f"{int(m.group(1)):02d}/{m.group(2)}"
+            fortes.add("referencia")
+        else:
+            # Alguns DARFs exibem "agosto/2026" no Período de Apuração.
+            meses_pt = {
+                "janeiro": 1, "fevereiro": 2, "marco": 3, "abril": 4,
+                "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+                "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
+            }
+            texto_sem_acento = _normalizar_ocr(texto)
+            mm = re.search(
+                r"\b(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s*/\s*((?:19|20)\d{2})\b",
+                texto_sem_acento,
+            )
+            if mm:
+                dados["referencia"] = f"{meses_pt[mm.group(1)]:02d}/{mm.group(2)}"
+                fortes.add("referencia")
+
+        # Código de arrecadação com 48 dígitos (4 blocos de 12 contando DV).
+        # Preserva espaços em grupos para ficar legível/copiável no cadastro.
+        if not str(dados.get("codigo_pagamento") or "").strip():
+            for linha in linhas:
+                numeros = re.sub(r"\D", "", linha)
+                if len(numeros) == 48 and numeros.startswith("8"):
+                    dados["codigo_pagamento"] = " ".join(
+                        numeros[i:i + 12] for i in range(0, 48, 12)
+                    )
+                    dados["tipo_pagamento"] = "Linha digitável"
+                    fortes.add("codigo_pagamento")
+                    break
+
+        dados["tipo_documento"] = "conta"
+
+    # PAGADOR / EMPREGADOR / CONTRIBUINTE ---------------------------------
+    # Só executa o genérico se o tratamento específico ainda não confirmou.
+    if "pagador" not in fortes:
+        pagador = _extrair_valor_apos_rotulo(
+            linhas,
+            (
+                "Nome/Razão Social do Empregador",
+                "Nome / Razão Social do Empregador",
+                "Nome/Razão Social do Contribuinte",
+                "Nome / Razão Social do Contribuinte",
+                "Nome/Razão Social do Pagador",
+                "Nome do Pagador",
+                "Razão Social do Empregador",
+                "Razão Social do Contribuinte",
+                "CNPJ Razão Social",
+                "Razão Social",
+            ),
+            nome_valido,
+        )
+        if pagador:
+            dados["pagador"] = pagador
+            fortes.add("pagador")
+
+    # REFERÊNCIA / COMPETÊNCIA --------------------------------------------
+    if "referencia" not in fortes:
+        referencia = ""
+        padroes_ref = (
+            r"(?i)\bPA\s*[:\-]?\s*(0?[1-9]|1[0-2])\s*/\s*((?:19|20)\d{2})\b",
+            r"(?i)\bRECALC\.?\s*(0?[1-9]|1[0-2])[./-]((?:19|20)\d{2})\b",
+            r"(?i)\bCOMPET[EÊ]NCIA\s*[:\-]?\s*(0?[1-9]|1[0-2])[./-]((?:19|20)\d{2})\b",
+            r"(?i)\bPER[IÍ]ODO\s+DE\s+APURA[CÇ][AÃ]O\s*[:\-]?\s*(0?[1-9]|1[0-2])[./-]((?:19|20)\d{2})\b",
+            r"(?i)\bM[EÊ]S\s*(?:DE\s*)?REFER[EÊ]NCIA\s*[:\-]?\s*(0?[1-9]|1[0-2])[./-]((?:19|20)\d{2})\b",
+        )
+        for padrao in padroes_ref:
+            m = re.search(padrao, texto)
+            if m:
+                referencia = f"{int(m.group(1)):02d}/{m.group(2)}"
+                break
+
+        if not referencia:
+            # Em tabelas, o rótulo e o valor podem cair em linhas separadas.
+            for i, linha in enumerate(linhas):
+                norm_linha = _normalizar_ocr(linha)
+                if (
+                    "competencia" in norm_linha
+                    or "referencia" in norm_linha
+                    or "periodo de apuracao" in norm_linha
+                ):
+                    bloco = " ".join(linhas[i:i + 8])
+                    m = re.search(r"(?<!\d)(0?[1-9]|1[0-2])\s*/\s*((?:19|20)\d{2})(?!\d)", bloco)
+                    if m:
+                        referencia = f"{int(m.group(1)):02d}/{m.group(2)}"
+                        break
+
+        if referencia:
+            dados["referencia"] = referencia
+            fortes.add("referencia")
+
+    # VENCIMENTO -----------------------------------------------------------
+    m = re.search(
+        r"(?is)(?:Pagar\s+este\s+documento\s+at[eé]|Data\s+de\s+Vencimento|Vencimento)\s*[:\-]?\s*(\d{1,2}/\d{1,2}/\d{4})",
+        texto,
+    )
+    if m:
+        try:
+            dados["vencimento"] = datetime.strptime(m.group(1), "%d/%m/%Y").strftime("%Y-%m-%d")
+            fortes.add("vencimento")
+        except ValueError:
+            pass
+
+    # VALOR ---------------------------------------------------------------
+    m = re.search(
+        r"(?is)(?:Valor\s+a\s+recolher|Total\s+da\s+Guia|Valor\s+Total\s+do\s+Documento|Valor\s+do\s+documento)\s*[:\-]?\s*(?:R\$\s*)?([0-9.]+,[0-9]{2})",
+        texto,
+    )
+    if m:
+        valor = _valor_br_para_float(m.group(1))
+        if valor is not None and valor > 0:
+            dados["valor"] = valor
+            fortes.add("valor")
+
+    # PIX EMV completo ----------------------------------------------------
+    # Captura o payload completo quando o PDF traz o PIX Copia e Cola em
+    # uma linha contínua. O prefixo 000201 identifica o padrão BR Code/EMV.
+    pix = ""
+    for linha in linhas:
+        candidato = re.sub(r"\s+", "", linha)
+        if candidato.startswith("000201") and len(candidato) >= 80:
+            pix = candidato
+            break
+    if pix:
+        dados["codigo_pagamento"] = pix
+        dados["tipo_pagamento"] = "PIX"
+        fortes.add("codigo_pagamento")
+
+    # Recebedor explicitamente presente no conteúdo textual/payload.
+    # Não inventamos no fluxo genérico: só preenche se o próprio PDF contiver.
+    if "recebedor" not in fortes and not str(dados.get("recebedor") or dados.get("fornecedor") or "").strip():
+        if "caixa economica federal" in texto_norm:
+            dados["recebedor"] = "CAIXA ECONOMICA FEDERAL"
+            dados["fornecedor"] = "CAIXA ECONOMICA FEDERAL"
+            fortes.add("recebedor")
+
+    if "guia do fgts digital" in texto_norm:
+        dados["tipo_documento"] = "conta"
+
+    # Campos fortes deixam de ser considerados inseguros.
+    inseguros = [str(x) for x in dados.get("campos_inseguros", [])]
+    if fortes:
+        inseguros = [x for x in inseguros if x not in fortes]
+        dados["campos_inseguros"] = inseguros
+        confianca = dados.get("confianca")
+        if isinstance(confianca, dict):
+            for campo in fortes:
+                confianca[campo] = max(float(confianca.get(campo, 0) or 0), 0.98)
+        motivos = dados.get("motivos")
+        if isinstance(motivos, dict):
+            for campo in fortes:
+                motivos[campo] = "campo localizado por regra estrutural explícita na camada de texto do PDF"
+
+    return dados, fortes
+
+
+
+# ---------------------------------------------------------------------------
+# APRENDIZADO LOCAL DE LAYOUTS
+# ---------------------------------------------------------------------------
+# O aprendizado não treina um modelo pesado. Ele guarda somente uma assinatura
+# estrutural do documento e pequenas regiões (x/y relativos) dos campos que o
+# usuário corrigiu. Em um layout conhecido, o sistema lê primeiro essas regiões;
+# se não houver confiança suficiente, volta automaticamente para o leitor genérico.
+
+_ARQUIVO_APRENDIZADO = paths.APP_DATA_DIR / "aprendizado_layouts.json"
+_ASSINATURA_CACHE: dict[tuple[str, int, int], dict] = {}
+_APRENDIZADO_MEMORIA: dict | None = None
+_CAMPOS_APRENDIVEIS = ("recebedor", "pagador", "referencia")
+
+_STOP_LAYOUT = {
+    "de", "da", "do", "das", "dos", "e", "em", "para", "por", "com", "sem",
+    "a", "o", "as", "os", "um", "uma", "no", "na", "nos", "nas", "ao", "aos",
+    "pagina", "pag", "valor", "data", "documento", "total", "numero", "codigo",
+}
+
+
+def _carregar_aprendizado() -> dict:
+    global _APRENDIZADO_MEMORIA
+    if _APRENDIZADO_MEMORIA is not None:
+        return _APRENDIZADO_MEMORIA
+    base = {"versao": 1, "perfis": []}
+    try:
+        if _ARQUIVO_APRENDIZADO.is_file():
+            bruto = json.loads(_ARQUIVO_APRENDIZADO.read_text(encoding="utf-8"))
+            if isinstance(bruto, dict) and isinstance(bruto.get("perfis"), list):
+                base = bruto
+    except Exception:
+        pass
+    _APRENDIZADO_MEMORIA = base
+    return base
+
+
+def _salvar_aprendizado() -> None:
+    dados = _carregar_aprendizado()
+    try:
+        _ARQUIVO_APRENDIZADO.parent.mkdir(parents=True, exist_ok=True)
+        temporario = _ARQUIVO_APRENDIZADO.with_suffix(".tmp")
+        temporario.write_text(
+            json.dumps(dados, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporario, _ARQUIVO_APRENDIZADO)
+    except Exception:
+        pass
+
+
+def _texto_assinatura(caminho: str | Path) -> str:
+    try:
+        texto = _extrair_texto_original(caminho) or ""
+    except Exception:
+        texto = ""
+    # PDF escaneado: o OCR já é necessário para a leitura. Reaproveitamos o
+    # resultado em cache quando possível, sem criar uma segunda rotina pesada.
+    if len(re.sub(r"\s+", "", texto)) < 80:
+        try:
+            texto_ocr = _ocr_documento(caminho).get("texto", "")
+            if texto_ocr:
+                texto = f"{texto}\n{texto_ocr}" if texto else texto_ocr
+        except Exception:
+            pass
+    return texto
+
+
+def _tokens_assinatura(texto: str) -> list[str]:
+    texto = _normalizar_ocr(texto)
+    # Remove conteúdo altamente variável antes de construir a assinatura.
+    texto = re.sub(r"\b\d{1,2}\s*/\s*\d{4}\b", " periodo ", texto)
+    texto = re.sub(r"\b\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4}\b", " data ", texto)
+    texto = re.sub(r"\b\d{2}\s*\d{3}\s*\d{3}\s*\d{4}\s*\d{2}\b", " cnpj ", texto)
+    texto = re.sub(r"\b\d{3}\s*\d{3}\s*\d{3}\s*\d{2}\b", " cpf ", texto)
+    texto = re.sub(r"\b\d+[.,]\d{2}\b", " valor ", texto)
+    texto = re.sub(r"\b\d{5,}\b", " numero ", texto)
+
+    tokens = []
+    for token in texto.split():
+        if len(token) < 3 or token in _STOP_LAYOUT:
+            continue
+        if token.isdigit():
+            continue
+        tokens.append(token)
+
+    # Conjunto ordenado e limitado: pequeno no disco e suficiente para comparar
+    # layouts. Mantemos palavras repetidas apenas uma vez.
+    return sorted(set(tokens))[:240]
+
+
+def _assinatura_layout(caminho: str | Path) -> dict:
+    chave = _chave_cache(caminho)
+    if chave in _ASSINATURA_CACHE:
+        return dict(_ASSINATURA_CACHE[chave])
+
+    texto = _texto_assinatura(caminho)
+    paginas = 1
+    try:
+        import fitz
+        doc = fitz.open(str(caminho))
+        paginas = max(1, int(doc.page_count))
+        doc.close()
+    except Exception:
+        pass
+
+    assinatura = {
+        "tokens": _tokens_assinatura(texto),
+        "paginas": paginas,
+    }
+    if len(_ASSINATURA_CACHE) > 64:
+        _ASSINATURA_CACHE.clear()
+    _ASSINATURA_CACHE[chave] = dict(assinatura)
+    return assinatura
+
+
+def _similaridade_layout(a: dict, b: dict) -> float:
+    ta = set(a.get("tokens") or [])
+    tb = set(b.get("tokens") or [])
+    if len(ta) < 6 or len(tb) < 6:
+        return 0.0
+    inter = len(ta & tb)
+    uniao = len(ta | tb)
+    menor = min(len(ta), len(tb))
+    jaccard = inter / uniao if uniao else 0.0
+    cobertura = inter / menor if menor else 0.0
+    score = 0.55 * cobertura + 0.45 * jaccard
+    if int(a.get("paginas") or 1) == int(b.get("paginas") or 1):
+        score += 0.04
+    else:
+        score -= 0.06
+    return max(0.0, min(1.0, score))
+
+
+def _reconhecer_layout(caminho: str | Path):
+    assinatura = _assinatura_layout(caminho)
+    perfis = _carregar_aprendizado().get("perfis", [])
+    pontuados = []
+    for perfil in perfis:
+        score = _similaridade_layout(assinatura, perfil.get("assinatura") or {})
+        pontuados.append((score, perfil))
+    if not pontuados:
+        return None, 0.0
+    pontuados.sort(key=lambda x: x[0], reverse=True)
+    melhor_score, melhor = pontuados[0]
+    segundo = pontuados[1][0] if len(pontuados) > 1 else 0.0
+    # Limiar conservador e margem para evitar aplicar um modelo ambíguo.
+    if melhor_score < 0.72:
+        return None, melhor_score
+    if len(pontuados) > 1 and segundo >= 0.68 and (melhor_score - segundo) < 0.055:
+        return None, melhor_score
+    return melhor, melhor_score
+
+
+def _novo_perfil_layout(caminho: str | Path) -> dict:
+    assinatura = _assinatura_layout(caminho)
+    semente = "|".join(assinatura.get("tokens") or []) + f"|p{assinatura.get('paginas', 1)}"
+    perfil = {
+        "id": hashlib.sha1(semente.encode("utf-8", errors="ignore")).hexdigest()[:12],
+        "assinatura": assinatura,
+        "campos": {},
+        "criado_em": datetime.now().isoformat(timespec="seconds"),
+        "atualizado_em": datetime.now().isoformat(timespec="seconds"),
+    }
+    _carregar_aprendizado().setdefault("perfis", []).append(perfil)
+    return perfil
+
+
+def _linhas_posicionais_nativas(caminho: str | Path) -> list[dict]:
+    linhas_saida: list[dict] = []
+    try:
+        import fitz
+        doc = fitz.open(str(caminho))
+        for pagina_idx, pagina in enumerate(doc):
+            palavras = pagina.get_text("words", sort=True) or []
+            grupos: dict[tuple[int, int], list] = {}
+            for p in palavras:
+                if len(p) < 8:
+                    continue
+                x0, y0, x1, y1, texto, bloco, linha, _ordem = p[:8]
+                texto = str(texto or "").strip()
+                if not texto:
+                    continue
+                grupos.setdefault((int(bloco), int(linha)), []).append(
+                    (float(x0), float(y0), float(x1), float(y1), texto)
+                )
+            largura = max(float(pagina.rect.width), 1.0)
+            altura = max(float(pagina.rect.height), 1.0)
+            for grupo in grupos.values():
+                grupo.sort(key=lambda item: item[0])
+                texto = " ".join(item[4] for item in grupo).strip()
+                if not texto:
+                    continue
+                x0 = min(item[0] for item in grupo) / largura
+                y0 = min(item[1] for item in grupo) / altura
+                x1 = max(item[2] for item in grupo) / largura
+                y1 = max(item[3] for item in grupo) / altura
+                linhas_saida.append({
+                    "pagina": pagina_idx,
+                    "texto": texto,
+                    "rect": [x0, y0, x1, y1],
+                    "fonte": "nativo",
+                })
+        doc.close()
+    except Exception:
+        return []
+    return linhas_saida
+
+
+def _linhas_posicionais_ocr_aprendizado(caminho: str | Path) -> list[dict]:
+    # Executada apenas quando o usuário corrige um PDF escaneado cujo texto
+    # nativo não tem coordenadas úteis. É aprendizado pontual, não leitura comum.
+    saida: list[dict] = []
+    try:
+        import fitz
+        import numpy as np
+        import cv2
+        import pytesseract
+        from pytesseract import Output
+    except Exception:
+        return saida
+
+    executavel = _localizar_tesseract()
+    if not executavel:
+        return saida
+    pytesseract.pytesseract.tesseract_cmd = executavel
+    idiomas = _idiomas_disponiveis(pytesseract)
+    idioma = next((i for i in idiomas if i), None)
+
+    doc = None
+    try:
+        doc = fitz.open(str(caminho))
+        for pagina_idx, pagina in enumerate(doc):
+            pix = pagina.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+            if pix.n == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            kwargs = {"config": "--oem 3 --psm 11", "output_type": Output.DICT}
+            if idioma:
+                kwargs["lang"] = idioma
+            data = pytesseract.image_to_data(img, **kwargs)
+            total = len(data.get("text", []))
+            grupos: dict[tuple[int, int, int], list] = {}
+            for i in range(total):
+                txt = str(data["text"][i] or "").strip()
+                if not txt:
+                    continue
+                try:
+                    conf = float(data["conf"][i])
+                except Exception:
+                    conf = -1
+                if conf < 20:
+                    continue
+                chave = (
+                    int(data.get("block_num", [0] * total)[i]),
+                    int(data.get("par_num", [0] * total)[i]),
+                    int(data.get("line_num", [0] * total)[i]),
+                )
+                grupos.setdefault(chave, []).append({
+                    "texto": txt,
+                    "x0": int(data["left"][i]),
+                    "y0": int(data["top"][i]),
+                    "x1": int(data["left"][i]) + int(data["width"][i]),
+                    "y1": int(data["top"][i]) + int(data["height"][i]),
+                })
+            for grupo in grupos.values():
+                grupo.sort(key=lambda item: item["x0"])
+                texto = " ".join(item["texto"] for item in grupo).strip()
+                if not texto:
+                    continue
+                saida.append({
+                    "pagina": pagina_idx,
+                    "texto": texto,
+                    "rect": [
+                        min(i["x0"] for i in grupo) / max(pix.width, 1),
+                        min(i["y0"] for i in grupo) / max(pix.height, 1),
+                        max(i["x1"] for i in grupo) / max(pix.width, 1),
+                        max(i["y1"] for i in grupo) / max(pix.height, 1),
+                    ],
+                    "fonte": "ocr",
+                })
+    except Exception:
+        return saida
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+    return saida
+
+
+def _linhas_posicionais_aprendizado(caminho: str | Path) -> list[dict]:
+    linhas = _linhas_posicionais_nativas(caminho)
+    # Se houver texto nativo suficiente, ele é mais rápido e exato.
+    if sum(len(str(l.get("texto") or "")) for l in linhas) >= 80:
+        return linhas
+    return _linhas_posicionais_ocr_aprendizado(caminho)
+
+
+def _formas_referencia(valor: str) -> set[str]:
+    normal = _limpar_referencia_ocr(valor)
+    if not normal:
+        return set()
+    formas = {_normalizar_ocr(normal)}
+    m = re.fullmatch(r"(0[1-9]|1[0-2])/(\d{4})", normal)
+    if m:
+        meses = [
+            "janeiro", "fevereiro", "marco", "abril", "maio", "junho",
+            "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+        ]
+        mes = int(m.group(1))
+        ano = m.group(2)
+        formas.add(f"{meses[mes - 1]} {ano}")
+        formas.add(f"{mes} {ano}")
+        formas.add(f"{mes:02d} {ano}")
+    return formas
+
+
+def _pontuar_correspondencia(campo: str, valor: str, texto: str) -> float:
+    alvo = _normalizar_ocr(valor)
+    candidato = _normalizar_ocr(texto)
+    if not alvo or not candidato:
+        return 0.0
+
+    if campo == "referencia":
+        formas = _formas_referencia(valor)
+        if any(f and f in candidato for f in formas):
+            return 1.0
+        ref_cand = _limpar_referencia_ocr(texto)
+        if ref_cand and _limpar_referencia_ocr(valor) == ref_cand:
+            return 1.0
+        return SequenceMatcher(None, alvo, candidato).ratio() * 0.55
+
+    ta = set(alvo.split())
+    tc = set(candidato.split())
+    if not ta or not tc:
+        return 0.0
+    cobertura = len(ta & tc) / len(ta)
+    sequencia = SequenceMatcher(None, alvo, candidato).ratio()
+    contem = 1.0 if (alvo in candidato or candidato in alvo) else 0.0
+    score = max(cobertura * 0.86 + sequencia * 0.14, sequencia, contem * 0.92)
+    # Linhas gigantes normalmente são parágrafos, não o valor de um campo.
+    if len(candidato) > max(120, len(alvo) * 4):
+        score *= 0.65
+    return score
+
+
+def _unir_rects(a: list[float], b: list[float]) -> list[float]:
+    return [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+
+
+def _localizar_regiao_corrigida(caminho: str | Path, campo: str, valor: str):
+    linhas = _linhas_posicionais_aprendizado(caminho)
+    if not linhas:
+        return None
+    candidatos: list[tuple[float, dict]] = []
+    for i, linha in enumerate(linhas):
+        texto = str(linha.get("texto") or "")
+        score = _pontuar_correspondencia(campo, valor, texto)
+        candidatos.append((score, linha))
+
+        # Nome ou razão social pode quebrar em duas linhas próximas.
+        if i + 1 < len(linhas):
+            prox = linhas[i + 1]
+            if int(prox.get("pagina", -1)) == int(linha.get("pagina", -2)):
+                y_gap = float(prox["rect"][1]) - float(linha["rect"][3])
+                if -0.005 <= y_gap <= 0.035:
+                    combinado = f"{texto} {prox.get('texto', '')}"
+                    score2 = _pontuar_correspondencia(campo, valor, combinado)
+                    if score2 > score:
+                        candidatos.append((score2, {
+                            "pagina": linha["pagina"],
+                            "texto": combinado,
+                            "rect": _unir_rects(linha["rect"], prox["rect"]),
+                            "fonte": linha.get("fonte", "nativo"),
+                        }))
+
+    candidatos.sort(key=lambda x: x[0], reverse=True)
+    if not candidatos or candidatos[0][0] < (0.72 if campo != "referencia" else 0.78):
+        return None
+    melhor = dict(candidatos[0][1])
+    r = [float(x) for x in melhor["rect"]]
+    # Pequena margem para absorver diferenças mínimas de renderização.
+    melhor["rect"] = [
+        max(0.0, r[0] - 0.008),
+        max(0.0, r[1] - 0.006),
+        min(1.0, r[2] + 0.008),
+        min(1.0, r[3] + 0.006),
+    ]
+    melhor["score"] = round(float(candidatos[0][0]), 4)
+    return melhor
+
+
+def _limpar_valor_aprendido(campo: str, texto: str) -> str:
+    if campo in ("recebedor", "pagador"):
+        return _limpar_nome_ocr(texto)
+    if campo == "referencia":
+        return _limpar_referencia_ocr(texto)
+    return str(texto or "").strip()
+
+
+def _ler_regiao_aprendida(caminho: str | Path, regra: dict, campo: str) -> str:
+    try:
+        import fitz
+    except Exception:
+        return ""
+    try:
+        pagina_idx = int(regra.get("pagina", 0))
+        r = [float(x) for x in regra.get("rect", [])]
+        if len(r) != 4:
+            return ""
+        doc = fitz.open(str(caminho))
+        if pagina_idx < 0 or pagina_idx >= doc.page_count:
+            doc.close()
+            return ""
+        pagina = doc[pagina_idx]
+        rect = fitz.Rect(
+            r[0] * pagina.rect.width,
+            r[1] * pagina.rect.height,
+            r[2] * pagina.rect.width,
+            r[3] * pagina.rect.height,
+        )
+        texto = pagina.get_text("text", clip=rect).strip()
+        candidato = _limpar_valor_aprendido(campo, texto)
+        if candidato:
+            doc.close()
+            return candidato
+
+        # Em PDF escaneado, OCR apenas do retângulo aprendido: muito mais rápido
+        # do que reprocessar a página inteira.
+        try:
+            import numpy as np
+            import cv2
+            import pytesseract
+            pix = pagina.get_pixmap(matrix=fitz.Matrix(3.0, 3.0), clip=rect, alpha=False)
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+            if pix.n == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            executavel = _localizar_tesseract()
+            if executavel:
+                pytesseract.pytesseract.tesseract_cmd = executavel
+            idiomas = _idiomas_disponiveis(pytesseract)
+            idioma = next((i for i in idiomas if i), None)
+            kwargs = {"config": "--oem 3 --psm 6"}
+            if idioma:
+                kwargs["lang"] = idioma
+            texto_ocr = pytesseract.image_to_string(img, **kwargs)
+            candidato = _limpar_valor_aprendido(campo, texto_ocr)
+            doc.close()
+            return candidato
+        except Exception:
+            doc.close()
+            return ""
+    except Exception:
+        return ""
+
+
+def _forca_regra(regra: dict) -> int:
+    return (
+        int(regra.get("correcoes", 0)) * 2
+        + int(regra.get("confirmacoes", 0))
+        - int(regra.get("erros", 0)) * 3
+    )
+
+
+def _aplicar_aprendizado_layout(caminho: str | Path, dados: dict):
+    perfil, score = _reconhecer_layout(caminho)
+    if not perfil:
+        return dados, set()
+
+    inseguros = set(str(x) for x in dados.get("campos_inseguros", []))
+    aplicados: set[str] = set()
+    for campo in _CAMPOS_APRENDIVEIS:
+        regra = (perfil.get("campos") or {}).get(campo)
+        if not isinstance(regra, dict):
+            continue
+        forca = _forca_regra(regra)
+        if forca < 2:
+            continue
+        atual = dados.get("fornecedor") if campo == "recebedor" else dados.get(campo)
+        deve_usar = bool(regra.get("override")) or not str(atual or "").strip() or campo in inseguros
+        if not deve_usar:
+            continue
+        valor = _ler_regiao_aprendida(caminho, regra, campo)
+        if not valor:
+            continue
+        if campo == "recebedor":
+            dados["recebedor"] = valor
+            dados["fornecedor"] = valor
+        else:
+            dados[campo] = valor
+        inseguros.discard(campo)
+        aplicados.add(campo)
+
+    dados["campos_inseguros"] = list(inseguros)
+    dados["_layout_aprendido"] = str(perfil.get("id") or "")
+    dados["_layout_score"] = round(float(score), 3)
+    dados["_campos_aprendidos"] = sorted(aplicados)
+    if aplicados:
+        confianca = dados.get("confianca")
+        if isinstance(confianca, dict):
+            for campo in aplicados:
+                confianca[campo] = max(float(confianca.get(campo, 0) or 0), 0.96)
+        motivos = dados.get("motivos")
+        if isinstance(motivos, dict):
+            for campo in aplicados:
+                motivos[campo] = "campo lido por layout local aprendido e confirmado"
+    return dados, aplicados
+
+
+def _equivalente_salvo(campo: str, a: str, b: str) -> bool:
+    if campo == "referencia":
+        aa = _limpar_referencia_ocr(a)
+        bb = _limpar_referencia_ocr(b)
+        return bool(aa and bb and aa == bb)
+    return _nomes_equivalentes(a, b)
+
+
+def _aprender_com_dialogo(dialogo) -> None:
+    caminho = str(getattr(dialogo, "pdf_origem", "") or "")
+    if not caminho or not Path(caminho).is_file():
+        return
+
+    previstos = dict(getattr(dialogo, "_patch_dados_lidos", {}) or {})
+    aplicados = set(getattr(dialogo, "_patch_campos_aprendidos", []) or [])
+    finais = {
+        "recebedor": str(dialogo.fornecedor.text() or "").strip(),
+        "pagador": str(dialogo.pagador.text() or "").strip(),
+        "referencia": str(dialogo.referencia.text() or "").strip(),
+    }
+
+    perfil, _score = _reconhecer_layout(caminho)
+    alterou = False
+
+    # Só criamos um perfil novo quando existe uma correção explícita que pode
+    # ser localizada no próprio documento. Assim o banco não cresce com layouts
+    # que nunca precisaram ser ensinados.
+    correcoes_localizadas: dict[str, dict] = {}
+    for campo in _CAMPOS_APRENDIVEIS:
+        final = finais.get(campo, "")
+        previsto = str(previstos.get(campo, "") or "")
+        if not final:
+            continue
+        if previsto and _equivalente_salvo(campo, final, previsto):
+            continue
+        regiao = _localizar_regiao_corrigida(caminho, campo, final)
+        if regiao:
+            correcoes_localizadas[campo] = regiao
+
+    if perfil is None and correcoes_localizadas:
+        perfil = _novo_perfil_layout(caminho)
+        alterou = True
+
+    if perfil is None:
+        return
+
+    campos = perfil.setdefault("campos", {})
+    for campo in _CAMPOS_APRENDIVEIS:
+        final = finais.get(campo, "")
+        previsto = str(previstos.get(campo, "") or "")
+        regra = campos.get(campo)
+
+        if campo in correcoes_localizadas:
+            regiao = correcoes_localizadas[campo]
+            if not isinstance(regra, dict):
+                regra = {}
+                campos[campo] = regra
+            regra.update({
+                "pagina": int(regiao["pagina"]),
+                "rect": [round(float(x), 6) for x in regiao["rect"]],
+                "fonte": str(regiao.get("fonte") or ""),
+                "override": True,
+                "atualizado_em": datetime.now().isoformat(timespec="seconds"),
+            })
+            regra["correcoes"] = int(regra.get("correcoes", 0)) + 1
+            # Uma correção nova supera um erro anterior, mas não apaga o histórico.
+            regra["erros"] = max(0, int(regra.get("erros", 0)) - 1)
+            alterou = True
+            continue
+
+        # Se um campo vindo de um layout aprendido foi salvo sem alteração,
+        # isso é uma confirmação implícita e aumenta gradualmente a confiança.
+        if isinstance(regra, dict) and campo in aplicados and final and previsto:
+            if _equivalente_salvo(campo, final, previsto):
+                regra["confirmacoes"] = int(regra.get("confirmacoes", 0)) + 1
+                regra["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
+                alterou = True
+            else:
+                regra["erros"] = int(regra.get("erros", 0)) + 1
+                regra["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
+                alterou = True
+
+    if alterou:
+        perfil["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
+        _salvar_aprendizado()
+
+
 def _analisar_pdf_com_ocr_melhorado(caminho: str | Path):
     dados = _analisar_pdf_original(caminho)
     if not isinstance(dados, dict):
         return dados
 
-    # Mesmo quando o leitor original encontra um nome, ele pode capturar a linha
-    # inteira do boleto. Antes de decidir se precisa chamar o OCR pesado, limpamos
-    # os valores existentes. Isso corrige casos como:
-    #   01/09/2026 | RODES ENG TRANSPORTES CNPJ
-    # para:
-    #   RODES ENG TRANSPORTES
+    dados, campos_fortes_texto = _enriquecer_documento_textual(caminho, dados)
+    dados, campos_aprendidos = _aplicar_aprendizado_layout(caminho, dados)
+    campos_fortes_texto = set(campos_fortes_texto) | set(campos_aprendidos)
+    inseguros = [str(x) for x in dados.get("campos_inseguros", []) if str(x) not in campos_fortes_texto]
+
+    def marcar_inseguro(campo: str):
+        if campo not in inseguros:
+            inseguros.append(campo)
+
+    # Nomes vindos do parser original so sao aceitos se realmente parecerem
+    # pessoa/empresa. Isso impede casos como:
+    #   "06/2026 694,48.. Voce podera ter o fornecimento de"
+    # de serem tratados como Pagador confirmado.
     recebedor_atual = str(dados.get("recebedor") or dados.get("fornecedor") or "").strip()
     recebedor_limpo = _limpar_nome_ocr(recebedor_atual)
     if recebedor_limpo:
         dados["recebedor"] = recebedor_limpo
         dados["fornecedor"] = recebedor_limpo
+    else:
+        dados["recebedor"] = ""
+        dados["fornecedor"] = ""
+        marcar_inseguro("recebedor")
 
     pagador_atual = str(dados.get("pagador") or "").strip()
     pagador_limpo = _limpar_nome_ocr(pagador_atual)
     if pagador_limpo:
         dados["pagador"] = pagador_limpo
+    else:
+        dados["pagador"] = ""
+        marcar_inseguro("pagador")
 
-    inseguros = [str(x) for x in dados.get("campos_inseguros", [])]
+    referencia_atual = str(dados.get("referencia") or "").strip()
+    referencia_limpa = _limpar_referencia_ocr(referencia_atual)
+    if referencia_limpa:
+        dados["referencia"] = referencia_limpa
+    elif referencia_atual:
+        dados["referencia"] = ""
+        marcar_inseguro("referencia")
+
     falta_recebedor = not str(dados.get("recebedor") or dados.get("fornecedor") or "").strip() or "recebedor" in inseguros
     falta_pagador = not str(dados.get("pagador") or "").strip() or "pagador" in inseguros
+    falta_referencia = not str(dados.get("referencia") or "").strip() or "referencia" in inseguros
 
-    if not (falta_recebedor or falta_pagador):
+    # Se os tres campos de texto estrutural estao confiaveis, evita OCR extra.
+    if not (falta_recebedor or falta_pagador or falta_referencia):
+        dados["campos_inseguros"] = inseguros
         return dados
 
     ocr = _ocr_documento(caminho)
     preenchidos: list[str] = []
 
     if falta_recebedor and ocr.get("recebedor"):
-        dados["recebedor"] = ocr["recebedor"]
-        dados["fornecedor"] = ocr["recebedor"]
-        preenchidos.append("recebedor")
+        candidato = _limpar_nome_ocr(ocr["recebedor"])
+        if candidato:
+            dados["recebedor"] = candidato
+            dados["fornecedor"] = candidato
+            preenchidos.append("recebedor")
 
     if falta_pagador and ocr.get("pagador"):
-        dados["pagador"] = ocr["pagador"]
-        preenchidos.append("pagador")
+        candidato = _limpar_nome_ocr(ocr["pagador"])
+        if candidato:
+            dados["pagador"] = candidato
+            preenchidos.append("pagador")
 
-    if preenchidos:
-        dados["campos_inseguros"] = [x for x in inseguros if x not in preenchidos]
-        confianca = dados.get("confianca")
-        if isinstance(confianca, dict):
-            for campo in preenchidos:
-                confianca[campo] = max(float(confianca.get(campo, 0) or 0), 0.90)
-        motivos = dados.get("motivos")
-        if isinstance(motivos, dict):
-            for campo in preenchidos:
-                motivos[campo] = "nome localizado por OCR posicional junto ao rótulo do campo"
+    if falta_referencia and ocr.get("referencia"):
+        candidato = _limpar_referencia_ocr(ocr["referencia"])
+        if candidato:
+            dados["referencia"] = candidato
+            preenchidos.append("referencia")
+
+    # Se o OCR nao encontrou um nome confiavel, deixa vazio. E melhor pedir
+    # revisao ao usuario do que preencher uma frase errada e dizer "confirmado".
+    for campo in ("recebedor", "pagador", "referencia"):
+        if campo in preenchidos:
+            inseguros = [x for x in inseguros if x != campo]
+        else:
+            valor = dados.get("fornecedor") if campo == "recebedor" else dados.get(campo)
+            if not str(valor or "").strip():
+                marcar_inseguro(campo)
+
+    dados["campos_inseguros"] = inseguros
+
+    confianca = dados.get("confianca")
+    if isinstance(confianca, dict):
+        for campo in preenchidos:
+            confianca[campo] = max(float(confianca.get(campo, 0) or 0), 0.90)
+        for campo in inseguros:
+            if campo in ("recebedor", "pagador", "referencia"):
+                confianca[campo] = min(float(confianca.get(campo, 0) or 0), 0.49)
+
+    motivos = dados.get("motivos")
+    if isinstance(motivos, dict):
+        for campo in preenchidos:
+            motivos[campo] = "campo localizado por OCR posicional junto ao rotulo correspondente"
+        for campo in inseguros:
+            if campo in ("recebedor", "pagador", "referencia"):
+                motivos[campo] = "texto encontrado nao parece um valor confiavel para este campo"
 
     return dados
 
@@ -837,6 +1918,16 @@ def _carregar_pdf_preservando_campos(self, caminho, dados_prontos=None):
         codigo_lido = str(dados.get("codigo_pagamento") or "")
         tipo_lido = str(dados.get("tipo_pagamento") or "")
 
+        # Guarda exatamente o que o leitor apresentou. Ao salvar, diferenças
+        # feitas pelo usuário viram sinal de aprendizado para este layout.
+        self._patch_dados_lidos = {
+            "recebedor": recebedor,
+            "pagador": pagador,
+            "referencia": referencia,
+        }
+        self._patch_campos_aprendidos = list(dados.get("_campos_aprendidos", []) or [])
+        self._patch_layout_aprendido = str(dados.get("_layout_aprendido") or "")
+
         # Texto digitado pelo usuário sempre vence o que veio do PDF.
         if not self.fornecedor.text().strip() and recebedor:
             self.fornecedor.setText(recebedor)
@@ -887,6 +1978,19 @@ def _carregar_pdf_preservando_campos(self, caminho, dados_prontos=None):
                 "Leitura confirmada: os campos extraídos passaram pelas validações automáticas."
             )
 
+        layout_id = str(dados.get("_layout_aprendido") or "")
+        if layout_id:
+            score = int(round(float(dados.get("_layout_score") or 0) * 100))
+            campos_modelo = [
+                {"recebedor": "Recebedor", "pagador": "Pagador", "referencia": "Referência"}.get(c, c)
+                for c in dados.get("_campos_aprendidos", [])
+            ]
+            detalhe = (
+                f" Modelo conhecido reconhecido ({score}% de similaridade)."
+                + (f" Aprendizado aplicado em: {', '.join(campos_modelo)}." if campos_modelo else "")
+            )
+            self.aviso_leitura.setText(self.aviso_leitura.text() + detalhe)
+
     except Exception as exc:
         ui.QMessageBox.warning(
             self,
@@ -916,6 +2020,9 @@ _validar_pagamento_original = ui.PagamentoDialog.validar
 _banco_adicionar_conta_original = ui.Banco.adicionar_conta
 _banco_atualizar_conta_original = ui.Banco.atualizar_conta
 _banco_registrar_pagamento_original = ui.Banco.registrar_pagamento
+_listar_contas_original = ui.Banco.listar_contas
+_montar_ui_original = ui.JanelaPrincipal._montar_ui
+_atualizar_tabela_original = ui.JanelaPrincipal.atualizar_tabela
 _janela_init_original = ui.JanelaPrincipal.__init__
 _excluir_conta_original = ui.JanelaPrincipal.excluir_conta
 
@@ -1328,6 +2435,153 @@ def _banco_registrar_pagamento_mesclado(self, conta_id, dados):
         raise
 
 
+
+# ---------------------------------------------------------------------------
+# LISTA PRINCIPAL: COLUNA OBS + CABEÇALHO COMPACTO
+# ---------------------------------------------------------------------------
+
+
+def _listar_contas_com_observacao(self, busca="", filtro="Todas"):
+    # O banco original já calcula status/filtro corretamente. Chamamos sem o
+    # termo e aplicamos a busca aqui para incluir também Observações.
+    itens = _listar_contas_original(self, "", filtro)
+    termo = str(busca or "").strip().casefold()
+    if not termo:
+        return itens
+
+    resultado = []
+    for item in itens:
+        texto = " ".join(
+            str(item.get(campo) or "")
+            for campo in (
+                "fornecedor", "pagador", "referencia", "codigo_pagamento", "observacoes"
+            )
+        ).casefold()
+        if termo in texto:
+            resultado.append(item)
+    return resultado
+
+
+def _compactar_area_superior(self) -> None:
+    try:
+        central = self.centralWidget()
+        raiz = central.layout() if central else None
+        if raiz:
+            raiz.setContentsMargins(18, 10, 18, 10)
+            raiz.setSpacing(8)
+
+        header = self.findChild(ui.QFrame, "headerPanel")
+        if header:
+            header.setMinimumHeight(64)
+            header.setMaximumHeight(72)
+            if header.layout():
+                header.layout().setContentsMargins(16, 8, 16, 8)
+                header.layout().setSpacing(10)
+
+        # Elementos decorativos que consomem altura e não são funcionais.
+        marca = self.findChild(ui.QLabel, "eyebrow")
+        if marca:
+            marca.hide()
+        subtitulo = self.findChild(ui.QLabel, "subtitle")
+        if subtitulo:
+            subtitulo.hide()
+        legenda = self.findChild(ui.QLabel, "sectionCaption")
+        if legenda:
+            legenda.hide()
+
+        if getattr(self, "area_drop", None):
+            self.area_drop.setMinimumHeight(30)
+            self.area_drop.setMaximumHeight(34)
+
+        for card in getattr(self, "cards", {}).values():
+            card.setMinimumHeight(70)
+            card.setMaximumHeight(76)
+            lay = card.layout()
+            if lay:
+                lay.setContentsMargins(12, 7, 12, 7)
+                lay.setSpacing(1)
+    except Exception:
+        pass
+
+
+def _configurar_coluna_observacao(self) -> None:
+    try:
+        tabela = self.tabela
+        if tabela.columnCount() < 9:
+            tabela.setColumnCount(9)
+            cab = ui.QTableWidgetItem("OBS")
+            cab.setTextAlignment(
+                ui.Qt.AlignmentFlag.AlignLeft | ui.Qt.AlignmentFlag.AlignVCenter
+            )
+            tabela.setHorizontalHeaderItem(8, cab)
+
+        header = tabela.horizontalHeader()
+        # Recebedor e OBS dividem a área que antes ficava toda em Recebedor.
+        header.setSectionResizeMode(0, ui.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(8, ui.QHeaderView.ResizeMode.Stretch)
+        tabela.setColumnHidden(7, True)  # ID continua lógico/oculto
+
+        # Mantemos os índices lógicos originais e movemos apenas visualmente a
+        # coluna OBS para logo depois de Recebedor. Assim o bytecode original
+        # pode continuar escrevendo Vencimento/Valor/etc. nos mesmos índices.
+        visual_obs = header.visualIndex(8)
+        if visual_obs >= 0 and visual_obs != 1:
+            header.moveSection(visual_obs, 1)
+    except Exception:
+        pass
+
+
+def _montar_ui_compacta_com_obs(self):
+    _montar_ui_original(self)
+    _compactar_area_superior(self)
+    _configurar_coluna_observacao(self)
+    try:
+        self.busca.setPlaceholderText(
+            "Pesquisar recebedor, observação, documento ou código..."
+        )
+    except Exception:
+        pass
+
+
+def _atualizar_tabela_com_obs(self, *args, **kwargs):
+    _atualizar_tabela_original(self, *args, **kwargs)
+    try:
+        tabela = self.tabela
+        if tabela.columnCount() < 9:
+            _configurar_coluna_observacao(self)
+
+        for linha in range(tabela.rowCount()):
+            id_item = tabela.item(linha, 7)
+            if id_item is None:
+                continue
+            try:
+                conta = self.banco.buscar_conta(int(id_item.text()))
+            except Exception:
+                conta = None
+            if not conta:
+                continue
+
+            obs = " ".join(str(conta.get("observacoes") or "").split())
+            item = ui.QTableWidgetItem(obs)
+            item.setTextAlignment(
+                ui.Qt.AlignmentFlag.AlignLeft | ui.Qt.AlignmentFlag.AlignVCenter
+            )
+            if obs:
+                item.setToolTip(obs)
+
+            # Mantém a mesma cor visual da linha/status.
+            base = tabela.item(linha, 0)
+            if base is not None:
+                try:
+                    item.setBackground(base.background())
+                    item.setForeground(base.foreground())
+                except Exception:
+                    pass
+            tabela.setItem(linha, 8, item)
+    except Exception:
+        pass
+
+
 def _configurar_pasta_documentos(self):
     atual = _ler_pasta_base()
     nova = _selecionar_pasta_base(self)
@@ -1430,6 +2684,7 @@ def _nova_conta_nao_modal(self):
     dialog = ui.ContaDialog(self, banco=self.banco)
 
     def salvar():
+        _aprender_com_dialogo(dialog)
         self.banco.adicionar_conta(dialog.dados())
         self.atualizar()
 
@@ -1445,6 +2700,7 @@ def _editar_conta_nao_modal(self):
     dialog = ui.ContaDialog(self, conta, banco=self.banco)
 
     def salvar():
+        _aprender_com_dialogo(dialog)
         self.banco.atualizar_conta(int(conta["id"]), dialog.dados())
         self.atualizar()
 
@@ -1502,6 +2758,7 @@ def _processar_pdf_solto_nao_modal(self, caminho):
     )
 
     def salvar():
+        _aprender_com_dialogo(dialog)
         self.banco.adicionar_conta(dialog.dados())
         self.atualizar()
 
@@ -1527,6 +2784,7 @@ def aplicar_patches():
     ui.analisar_pdf = _analisar_pdf_com_ocr_melhorado
 
     ui.Banco.localizar_duplicatas = _localizar_duplicatas_reforcado
+    ui.Banco.listar_contas = _listar_contas_com_observacao
     ui.Banco.adicionar_conta = _banco_adicionar_conta_organizada
     ui.Banco.atualizar_conta = _banco_atualizar_conta_organizada
     ui.Banco.registrar_pagamento = _banco_registrar_pagamento_mesclado
@@ -1539,6 +2797,8 @@ def aplicar_patches():
     ui.PagamentoDialog.dados = _dados_pagamento_sem_copia
     ui.PagamentoDialog.validar = _validar_pagamento_com_pasta
 
+    ui.JanelaPrincipal._montar_ui = _montar_ui_compacta_com_obs
+    ui.JanelaPrincipal.atualizar_tabela = _atualizar_tabela_com_obs
     ui.JanelaPrincipal.__init__ = _janela_init_com_pasta
     ui.JanelaPrincipal._patch_configurar_pasta_documentos = _configurar_pasta_documentos
     ui.JanelaPrincipal.nova_conta = _nova_conta_nao_modal
