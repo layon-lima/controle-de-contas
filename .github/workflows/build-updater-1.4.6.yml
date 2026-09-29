@@ -1,0 +1,122 @@
+name: Build updater 1.4.6
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract tested 1.4.4 snapshot
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release_src | Out-Null
+          Expand-Archive -Path '.\releases\CONTROLE_CONTAS_1.4.4_SOURCE.zip' -DestinationPath '.\release_src' -Force
+
+      - name: Apply tested 1.4.5 mobile overlay
+        shell: pwsh
+        run: |
+          $b64 = Get-Content '.\releases\CONTROLE_CONTAS_1.4.5_OVERLAY.b64' -Raw
+          [IO.File]::WriteAllBytes('.\overlay_145.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path '.\overlay_145.zip' -DestinationPath '.\release_src' -Force
+
+      - name: Apply tested 1.4.6 search fix
+        shell: pwsh
+        run: |
+          python '.\releases\apply_search_fix_1.4.6.py'
+
+          Copy-Item '.\release_src\version_info_1.4.5.txt' '.\release_src\version_info_1.4.6.txt' -Force
+          $version = Get-Content '.\release_src\version_info_1.4.6.txt' -Raw
+          $version = $version -replace '\(1, 4, 5, 0\)', '(1, 4, 6, 0)'
+          $version = $version -replace '1\.4\.5\.0', '1.4.6.0'
+          Set-Content '.\release_src\version_info_1.4.6.txt' $version -Encoding UTF8
+
+          $spec = Get-Content '.\release_src\Controle de Contas.spec' -Raw
+          $spec = $spec -replace 'version_info_1\.4\.5\.txt', 'version_info_1.4.6.txt'
+          Set-Content '.\release_src\Controle de Contas.spec' $spec -Encoding UTF8
+
+          Copy-Item '.\release_src\Controle_de_Contas_1.4.5.iss' '.\release_src\Controle_de_Contas_1.4.6.iss' -Force
+          $iss = Get-Content '.\release_src\Controle_de_Contas_1.4.6.iss' -Raw
+          $iss = $iss -replace '1\.4\.5', '1.4.6'
+          Set-Content '.\release_src\Controle_de_Contas_1.4.6.iss' $iss -Encoding UTF8
+
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          Set-Location '.\release_src'
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Tesseract and Inno Setup
+        shell: pwsh
+        run: |
+          choco install tesseract -y --no-progress
+          choco install innosetup -y --no-progress
+
+      - name: Verify 1.4.6 source
+        shell: pwsh
+        run: |
+          Set-Location '.\release_src'
+          if (!(Test-Path '.\tesseract\por.traineddata')) { throw 'por.traineddata ausente.' }
+          Select-String '.\controle_contas\patches.py' -Pattern '_interpretar_valor_busca_exata','setInterval\(220\)','_patch_ultima_listagem' | Out-Host
+          Select-String '.\controle_contas\cloud_mobile_ui.py' -Pattern 'Sugerir pagamento','CÓDIGO COPIADO' | Out-Host
+          Select-String '.\controle_contas\cloud_sync.py' -Pattern '/api/desktop/activity','/api/desktop/suggest/' | Out-Host
+
+      - name: Validate Python source
+        shell: pwsh
+        run: |
+          Set-Location '.\release_src'
+          python -m py_compile .\app.py .\controle_contas\patches.py .\controle_contas\layout_learning_v2.py .\controle_contas\cloud_sync.py .\controle_contas\cloud_mobile_ui.py .\controle_contas\web_server.py
+
+      - name: Build desktop app
+        shell: pwsh
+        run: |
+          Set-Location '.\release_src'
+          python -m PyInstaller --clean --noconfirm '.\Controle de Contas.spec'
+          $exe = '.\dist\Controle de Contas\Controle de Contas.exe'
+          if (!(Test-Path $exe)) { throw 'Executavel nao foi gerado.' }
+          if (!(Test-Path '.\dist\Controle de Contas\_internal\tesseract\tessdata\por.traineddata')) {
+            throw 'Build nao contem por.traineddata.'
+          }
+          $v = (Get-Item $exe).VersionInfo.FileVersion
+          Write-Host "FileVersion: $v"
+          if ($v -notlike '1.4.6*') { throw "Versao incorreta no EXE: $v" }
+
+      - name: Build updater
+        shell: pwsh
+        run: |
+          Set-Location '.\release_src'
+          $candidatos = @(
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidatos | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            $iscc = Get-ChildItem "$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs" -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { throw 'ISCC.exe nao encontrado.' }
+          & $iscc '.\Controle_de_Contas_1.4.6.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Falha no Inno Setup.' }
+          if (!(Test-Path '.\atualizador\ATUALIZADOR_CONTROLE_DE_CONTAS_1.4.6.exe')) {
+            throw 'Atualizador nao foi gerado.'
+          }
+
+      - name: Upload updater artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ATUALIZADOR_CONTROLE_DE_CONTAS_1.4.6
+          path: release_src/atualizador/ATUALIZADOR_CONTROLE_DE_CONTAS_1.4.6.exe
+          if-no-files-found: error
+          retention-days: 30
