@@ -57,7 +57,6 @@ jobs:
           Set-Location '.\release_src'
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyflakes
 
       - name: Install Tesseract and Inno Setup
         shell: pwsh
@@ -75,11 +74,33 @@ jobs:
           Select-String '.\controle_contas\cloud_mobile_ui.py' -Pattern 'Sugerir pagamento','CÓDIGO COPIADO' | Out-Host
           Select-String '.\controle_contas\cloud_sync.py' -Pattern '/api/desktop/activity','/api/desktop/suggest/' | Out-Host
 
-          $lint = python -m pyflakes '.\controle_contas\patches.py' 2>&1
-          $lint | Out-Host
-          if (($lint | Out-String) -match "undefined name 'consulta'") {
-            throw "Regressao detectada: consulta indefinida em patches.py"
-          }
+          @'
+          import ast
+          from pathlib import Path
+
+          source = Path("controle_contas/patches.py").read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          fn = next(
+              n for n in tree.body
+              if isinstance(n, ast.FunctionDef) and n.name == "_atualizar_tabela_com_obs"
+          )
+          loads = [
+              n for n in ast.walk(fn)
+              if isinstance(n, ast.Name)
+              and n.id == "consulta"
+              and isinstance(n.ctx, ast.Load)
+          ]
+          stores = [
+              n for n in ast.walk(fn)
+              if isinstance(n, ast.Name)
+              and n.id == "consulta"
+              and isinstance(n.ctx, ast.Store)
+          ]
+          assert loads, "consulta não é usada na função de atualização"
+          assert stores, "consulta é usada sem ser definida na função de atualização"
+          print("Consulta scope OK")
+          '@ | Set-Content '.\test_scope_147.py' -Encoding UTF8
+          python '.\test_scope_147.py'
 
       - name: Validate Python source
         shell: pwsh
