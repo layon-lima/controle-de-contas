@@ -122,7 +122,10 @@ async function installLocal148(){
 }
 async function syncPanel(){
   const j=await post('/api/panel/pull');
-  if(j&&j.ok) toast('Painel sincronizado com o GitHub. As novas alterações ficam disponíveis ao reiniciar o painel.',true);
+  if(j&&j.ok){
+    toast('Painel sincronizado. Reiniciando backend...',true);
+    setTimeout(()=>location.reload(),3200);
+  }
 }
 async function deployMobile(){
   if(!confirm('Publicar agora as alterações do mobile/Cloudflare que estão no GitHub?')) return;
