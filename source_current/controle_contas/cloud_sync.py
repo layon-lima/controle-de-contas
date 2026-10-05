@@ -348,6 +348,30 @@ def load_cloud_activity() -> dict:
         return {}
 
 
+def suggest_payments(account_ids: list[int] | tuple[int, ...] | set[int]) -> dict:
+    cfg = load_cloud_config()
+    if not cloud_enabled():
+        raise RuntimeError("Sincronização em nuvem não configurada.")
+
+    ids = sorted({int(account_id) for account_id in account_ids if int(account_id) > 0})
+    if not ids:
+        return {"ok": True, "quantidade": 0, "account_ids": []}
+
+    token = str(cfg["sync_token"])
+    result = _json_request(
+        "POST",
+        "/api/desktop/suggest-batch",
+        {"account_ids": ids},
+        token,
+        timeout=30,
+    )
+    try:
+        pull_cloud_activity_once()
+    except Exception:
+        pass
+    return result
+
+
 def suggest_payment(account_id: int) -> dict:
     cfg = load_cloud_config()
     if not cloud_enabled():
