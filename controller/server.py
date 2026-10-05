@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.2.0"
+CONTROLLER_VERSION = "0.3.0"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -56,9 +56,10 @@ def _save_default_config_if_missing() -> None:
         )
 
 
-def _run(cmd: list[str], timeout: int = 15) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], timeout: int = 15, cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
+        cwd=str(cwd) if cwd else None,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -316,6 +317,111 @@ def _restart_app() -> tuple[bool, str]:
     return _start_app()
 
 
+_JOB_LOCK = threading.Lock()
+_JOB_STATE = {
+    "running": False,
+    "kind": "",
+    "message": "",
+    "ok": None,
+    "started_at": "",
+    "finished_at": "",
+}
+JOB_LOG_PATH = APP_DATA_DIR / "controller_job.log"
+
+
+def _set_job_state(**values) -> None:
+    with _JOB_LOCK:
+        _JOB_STATE.update(values)
+
+
+def _job_snapshot() -> dict:
+    with _JOB_LOCK:
+        data = dict(_JOB_STATE)
+    data["log_tail"] = _tail(JOB_LOG_PATH, 80)
+    return data
+
+
+def _run_logged_command(kind: str, cmd: list[str], cwd: Path) -> None:
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _set_job_state(
+        running=True,
+        kind=kind,
+        message="Executando...",
+        ok=None,
+        started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        finished_at="",
+    )
+
+    try:
+        with JOB_LOG_PATH.open("w", encoding="utf-8", errors="replace") as log:
+            log.write("$ " + " ".join(cmd) + "\n\n")
+            log.flush()
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            code = proc.wait()
+
+        if code == 0:
+            _set_job_state(
+                running=False,
+                ok=True,
+                message="Concluído com sucesso.",
+                finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        else:
+            _set_job_state(
+                running=False,
+                ok=False,
+                message=f"Processo terminou com código {code}.",
+                finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+    except Exception as exc:
+        _set_job_state(
+            running=False,
+            ok=False,
+            message=f"{type(exc).__name__}: {exc}",
+            finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+
+def _start_mobile_deploy() -> tuple[bool, str]:
+    with _JOB_LOCK:
+        if _JOB_STATE.get("running"):
+            return False, "Já existe uma operação em andamento no painel."
+
+    script = ROOT / "tools" / "DEPLOY_MOBILE_PERMANENT_ACCESS.ps1"
+    if not script.is_file():
+        return False, "Script de publicação mobile ainda não está disponível localmente."
+
+    cmd = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script),
+    ]
+    threading.Thread(
+        target=_run_logged_command,
+        args=("mobile_deploy", cmd, ROOT),
+        daemon=True,
+    ).start()
+    return True, "Publicação do mobile iniciada. O painel mostrará o andamento."
+
+
+def _pull_develop() -> tuple[bool, str]:
+    result = _run(["git", "pull", "origin", "develop"], timeout=60, cwd=ROOT)
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "Falha ao atualizar a cópia local."
+    message = result.stdout.strip() or "Painel sincronizado com o GitHub."
+    return True, message
+
+
 def _install_latest_update() -> tuple[bool, str]:
     cfg = _load_config()
     repo = str(cfg.get("repo_full_name") or DEFAULT_CONFIG["repo_full_name"])
@@ -398,6 +504,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/logs":
             self._json({"lines": _tail(SYNC_LOG_PATH, 250)})
             return
+        if path == "/api/job":
+            self._json(_job_snapshot())
+            return
         if path in ("/", "/index.html"):
             self._static(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
@@ -410,6 +519,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/app/stop": _stop_app,
             "/api/app/restart": _restart_app,
             "/api/update/install": _install_latest_update,
+            "/api/mobile/deploy": _start_mobile_deploy,
+            "/api/panel/pull": _pull_develop,
         }
         action = actions.get(path)
         if not action:
