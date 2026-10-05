@@ -230,3 +230,97 @@
 @media(max-width:380px){
   .suggestion-flag{font-size:8px;padding:5px 7px}
 }
+
+
+/* -------- Estados separados de pagamento -------- */
+.sent-flag,
+.copied-flag{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  max-width:100%;
+  padding:5px 9px;
+  border-radius:999px;
+  font-size:9px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:.025em;
+  white-space:nowrap;
+}
+.sent-flag{
+  border:1px solid #bfe8d3;
+  background:#ecfaf3;
+  color:#24744d;
+}
+.copied-flag{
+  border:1px solid #dcc9ff;
+  background:#f5efff;
+  color:#7444bd;
+}
+
+.payment-activity{
+  display:grid;
+  gap:8px;
+  margin-top:12px;
+}
+.activity-line{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:11px 12px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:#fbfcfb;
+}
+.activity-line>div{
+  min-width:0;
+}
+.activity-line strong{
+  display:block;
+  color:#284239;
+  font-size:12px;
+}
+.activity-line small{
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+  font-size:11px;
+}
+.activity-dot{
+  width:9px;
+  height:9px;
+  margin-top:4px;
+  border-radius:50%;
+  flex:0 0 auto;
+}
+.activity-dot.suggested{
+  background:#d98a00;
+  box-shadow:0 0 0 4px #d98a0018;
+}
+.activity-dot.sent{
+  background:#259362;
+  box-shadow:0 0 0 4px #25936218;
+}
+.copy-payment-tag{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:11px 12px;
+  border:1px solid #dcc9ff;
+  border-radius:14px;
+  background:#f5efff;
+  color:#7444bd;
+}
+.copy-payment-tag strong{
+  font-size:12px;
+}
+.copy-payment-tag span{
+  font-size:10px;
+  font-weight:800;
+  white-space:nowrap;
+}
+
+@media(max-width:380px){
+  .sent-flag,.copied-flag{font-size:8px;padding:5px 7px}
+}
