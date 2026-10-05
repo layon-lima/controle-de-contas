@@ -29,7 +29,7 @@ SYNC_LOG_PATH = APP_DATA_DIR / "cloud_sync.log"
 DEFAULT_CONFIG = {
     "repo_full_name": "layon-lima/controle-de-contas",
     "host": "127.0.0.1",
-    "port": 8765,
+    "port": 8766,
     "app_executable": "",
     "auto_open_browser": True,
 }
