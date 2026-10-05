@@ -11,7 +11,7 @@ $OpenLauncher = Join-Path $AppData "open_panel.vbs"
 
 $Vbs = @"
 Set shell = CreateObject("WScript.Shell")
-cmd = "cmd /c cd /d ""$Projeto"" && py -3.13 ""$Server"" --no-browser"
+cmd = "cmd /c cd /d ""$Projeto"" && git pull --ff-only origin develop >nul 2>&1 & py -3.13 ""$Server"" --no-browser"
 shell.Run cmd, 0, False
 "@
 Set-Content -Path $Launcher -Value $Vbs -Encoding ASCII
@@ -19,7 +19,7 @@ Set-Content -Path $Launcher -Value $Vbs -Encoding ASCII
 $OpenVbs = @"
 Set shell = CreateObject("WScript.Shell")
 shell.Run "wscript.exe ""$Launcher""", 0, False
-WScript.Sleep 900
+WScript.Sleep 1800
 shell.Run "http://127.0.0.1:8765", 1, False
 "@
 Set-Content -Path $OpenLauncher -Value $OpenVbs -Encoding ASCII
@@ -47,4 +47,4 @@ Write-Host "Inicializacao automatica: ATIVA"
 Write-Host "Atalho criado na Area de Trabalho: Controle de Contas - Painel"
 Write-Host "Endereco: http://127.0.0.1:8765"
 Write-Host ""
-Write-Host "A partir de agora o painel inicia sozinho com o Windows."
+Write-Host "A partir de agora o painel inicia sozinho com o Windows e busca atualizacoes do painel no GitHub."
