@@ -1,4 +1,4 @@
-const CACHE = "controle-contas-cloud-v12";
+const CACHE = "controle-contas-cloud-v13";
 const ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", event => {
