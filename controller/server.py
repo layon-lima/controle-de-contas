@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,14 @@ def _process_running(image_name: str) -> bool:
         )
         return image_name.casefold() in result.stdout.casefold()
     except Exception:
+        return False
+
+
+def _sync_running() -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", 18766), timeout=0.25):
+            return True
+    except OSError:
         return False
 
 
@@ -219,9 +228,7 @@ def _status_payload() -> dict:
             installed and latest and _version_tuple(latest) > _version_tuple(installed)
         ),
         "app_running": _process_running("Controle de Contas.exe"),
-        "sync_running": _process_running("Controle de Contas.exe") and any(
-            "--cloud-sync" in line for line in _tail(SYNC_LOG_PATH, 20)
-        ),
+        "sync_running": _sync_running(),
         "app_executable": str(exe) if exe else "",
         "cloud_log_path": str(SYNC_LOG_PATH),
         "cloud_log_tail": _tail(SYNC_LOG_PATH, 12),
