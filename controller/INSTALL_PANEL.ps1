@@ -8,6 +8,7 @@ $AppData = Join-Path $env:LOCALAPPDATA "ControleContas"
 New-Item -ItemType Directory -Force -Path $AppData | Out-Null
 $Launcher = Join-Path $AppData "start_panel.vbs"
 $OpenLauncher = Join-Path $AppData "open_panel.vbs"
+$RestartScript = Join-Path $Projeto "controller\RESTART_PANEL.ps1"
 
 $ConfigPath = Join-Path $AppData "controller.json"
 $Config = @{
@@ -29,8 +30,8 @@ Set-Content -Path $Launcher -Value $Vbs -Encoding ASCII
 
 $OpenVbs = @"
 Set shell = CreateObject("WScript.Shell")
-shell.Run "wscript.exe ""$Launcher""", 0, False
-WScript.Sleep 1800
+shell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""$RestartScript""", 0, False
+WScript.Sleep 2200
 shell.Run "http://127.0.0.1:8766", 1, False
 "@
 Set-Content -Path $OpenLauncher -Value $OpenVbs -Encoding ASCII
