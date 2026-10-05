@@ -85,6 +85,15 @@ jobs:
           Select-String '.\controle_contas\cloud_mobile_ui.py' -Pattern 'Selecionar todos','Sugerido em','Enviado em','suggest_payments' | Out-Host
           Select-String '.\controle_contas\cloud_sync.py' -Pattern 'suggest_payments','suggest-batch' | Out-Host
 
+          @'
+          from controle_contas.patches import aplicar_patches
+          aplicar_patches()
+          from controle_contas.cloud_mobile_ui import integrate_cloud_mobile_button
+          integrate_cloud_mobile_button()
+          print("Desktop UI integration import OK")
+          '@ | Set-Content '.\test_ui_integration_148.py' -Encoding UTF8
+          python '.\test_ui_integration_148.py'
+
           if (!(Test-Path '.\tesseract\por.traineddata')) {
             throw 'por.traineddata ausente.'
           }
