@@ -38,24 +38,71 @@ $Shortcut.WorkingDirectory = $Projeto
 $Shortcut.Description = "Painel de Controle do Controle de Contas"
 $Shortcut.Save()
 
-# Encerra uma instancia antiga do painel que ainda esteja usando a porta.
-try {
-    $listeners = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
-    foreach ($listener in $listeners) {
-        if ($listener.OwningProcess) {
-            Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+
+# Encerra qualquer backend antigo que ainda esteja usando a porta 8765.
+function Stop-OldPanel {
+    try {
+        $listeners = @(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue)
+        foreach ($listener in $listeners) {
+            $ownerPid = [int]$listener.OwningProcess
+            if ($ownerPid -gt 0 -and $ownerPid -ne $PID) {
+                Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
+            }
         }
+    } catch {}
+
+    # Fallback para instalações onde Get-NetTCPConnection não retorna o listener.
+    try {
+        $lines = netstat -ano -p tcp | Select-String ":8765\s+.*LISTENING\s+(\d+)$"
+        foreach ($line in $lines) {
+            if ($line.Matches.Count -gt 0) {
+                $ownerPid = [int]$line.Matches[0].Groups[1].Value
+                if ($ownerPid -gt 0 -and $ownerPid -ne $PID) {
+                    Stop-Process -Id $ownerPid -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    } catch {}
+
+    for ($i = 0; $i -lt 20; $i++) {
+        $stillListening = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+        if (-not $stillListening) { break }
+        Start-Sleep -Milliseconds 250
     }
-    Start-Sleep -Milliseconds 700
-} catch {
-    # Se Get-NetTCPConnection nao estiver disponivel, seguimos normalmente.
 }
 
+Stop-OldPanel
+
+# Inicia a versão nova silenciosamente.
 Start-Process -FilePath "wscript.exe" -ArgumentList "`"$Launcher`"" -WindowStyle Hidden
-Start-Sleep -Milliseconds 900
+
+# Só considera concluído quando o backend novo responder na porta.
+$ready = $false
+$reportedVersion = ""
+for ($i = 0; $i -lt 30; $i++) {
+    Start-Sleep -Milliseconds 300
+    try {
+        $status = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/status?t=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" -TimeoutSec 2
+        $reportedVersion = [string]$status.controller_version
+        if ($reportedVersion) {
+            $ready = $true
+            break
+        }
+    } catch {}
+}
+
+if (-not $ready) {
+    throw "O backend do painel não iniciou corretamente na porta 8765."
+}
+
+if ($reportedVersion -ne "0.3.0") {
+    Stop-OldPanel
+    throw "O backend iniciado ainda é antigo ($reportedVersion). Execute novamente a atualização do painel."
+}
 
 Write-Host ""
-Write-Host "Painel instalado com sucesso." -ForegroundColor Green
+Write-Host "Painel instalado/atualizado com sucesso." -ForegroundColor Green
+Write-Host "Backend: $reportedVersion"
 Write-Host "Inicializacao automatica: ATIVA"
 Write-Host "Atalho criado na Area de Trabalho: Controle de Contas - Painel"
 Write-Host "Endereco: http://127.0.0.1:8765"
