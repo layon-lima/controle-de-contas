@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Controle de Contas — Painel</title>
+<style>
+:root{
+  --bg:#07130e;--panel:#0e2018;--panel2:#122a20;--line:#244a39;
+  --text:#f2f7f4;--muted:#93aa9f;--green:#32c47a;--green2:#1e9c5e;
+  --amber:#f0a428;--red:#ee6b62;--blue:#62a9ff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#153727 0,#07130e 42%);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1320px;margin:auto;padding:24px}
+header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}
+h1{font-size:30px;margin:0;letter-spacing:-.04em}.sub{color:var(--muted);margin-top:5px}
+.badge{padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:#0d1c15;color:#b9d5c7;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.card{background:linear-gradient(180deg,rgba(18,42,32,.96),rgba(11,28,21,.96));border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 12px 34px rgba(0,0,0,.17)}
+.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}
+.kicker{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;font-weight:800}
+.big{font-size:28px;font-weight:850;margin-top:7px}.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.between{justify-content:space-between}
+button,a.btn{border:1px solid var(--line);background:#18372a;color:var(--text);border-radius:11px;padding:10px 14px;cursor:pointer;font-weight:750;text-decoration:none}
+button:hover,a.btn:hover{border-color:#3f745b;background:#1d4634}.primary{background:var(--green2)!important;border-color:var(--green)!important}.danger{background:#3a1b19!important;border-color:#74342f!important}
+.section-title{font-size:18px;font-weight:800;margin:0 0 12px}.muted{color:var(--muted)}
+.statusdot{width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--red);box-shadow:0 0 0 4px rgba(238,107,98,.1)}
+.statusdot.on{background:var(--green);box-shadow:0 0 0 4px rgba(50,196,122,.12)}
+pre{white-space:pre-wrap;word-break:break-word;background:#08150f;border:1px solid #193a2b;border-radius:12px;padding:14px;max-height:300px;overflow:auto;color:#b9d6c7;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+.meta{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;font-size:14px}.meta b{color:#bcd4c8}.meta span{color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.update{border-color:#6a5321;background:linear-gradient(180deg,#2c2717,#1d1a10)}
+.toast{position:fixed;right:20px;bottom:20px;max-width:420px;padding:12px 15px;border-radius:12px;background:#10241b;border:1px solid var(--line);display:none;box-shadow:0 14px 40px rgba(0,0,0,.35)}
+@media(max-width:900px){.span3,.span4,.span6,.span8{grid-column:span 12}.wrap{padding:14px}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>Controle de Contas</h1><div class="sub">Painel local de desenvolvimento, operação e atualização</div></div>
+  <div class="badge" id="clock">carregando...</div>
+</header>
+
+<div class="grid">
+  <section class="card span3"><div class="kicker">Aplicativo</div><div class="big" id="appState">—</div><div class="muted" id="appVersion">Versão —</div></section>
+  <section class="card span3"><div class="kicker">GitHub / main</div><div class="big" id="gitVersion">—</div><div class="muted" id="gitSha">Commit —</div></section>
+  <section class="card span3"><div class="kicker">Atualização</div><div class="big" id="updateState">—</div><div class="muted" id="buildState">Build —</div></section>
+  <section class="card span3"><div class="kicker">Sincronização mobile</div><div class="big" id="syncState">—</div><div class="muted">Cloudflare / D1 / R2</div></section>
+
+  <section class="card span8">
+    <div class="row between"><h2 class="section-title">Controle do aplicativo</h2><span class="muted" id="exePath"></span></div>
+    <div class="row">
+      <button class="primary" onclick="post('/api/app/start')">▶ Abrir</button>
+      <button onclick="post('/api/app/restart')">↻ Reiniciar</button>
+      <button class="danger" onclick="post('/api/app/stop')">■ Fechar</button>
+      <button id="updateBtn" onclick="installUpdate()">⬆ Atualizar programa</button>
+    </div>
+    <div id="updateBox" class="card update" style="margin-top:16px;display:none">
+      <div class="row between">
+        <div><div class="kicker">Nova versão aprovada</div><div class="big" id="availableVersion"></div></div>
+        <button class="primary" onclick="installUpdate()">Instalar agora</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card span4">
+    <h2 class="section-title">GitHub</h2>
+    <div class="meta">
+      <b>Repositório</b><span id="repo">—</span>
+      <b>Commit main</b><span id="commit">—</span>
+      <b>Mensagem</b><span id="commitMsg">—</span>
+      <b>Build</b><span id="buildUrl">—</span>
+    </div>
+  </section>
+
+  <section class="card span12">
+    <div class="row between"><h2 class="section-title">Log da sincronização</h2><button onclick="load()">Atualizar</button></div>
+    <pre id="logs">Carregando...</pre>
+  </section>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+function toast(msg,good=true){
+  const el=$('toast'); el.textContent=msg; el.style.display='block';
+  el.style.borderColor=good?'#2c7a52':'#8d3a34';
+  setTimeout(()=>el.style.display='none',4200);
+}
+async function post(url){
+  try{
+    const r=await fetch(url,{method:'POST'});
+    const j=await r.json();
+    toast(j.message,!!j.ok);
+    setTimeout(load,900);
+    return j;
+  }catch(e){toast(String(e),false)}
+}
+async function installUpdate(){
+  if(!confirm('Baixar do GitHub e iniciar o atualizador aprovado mais recente?')) return;
+  await post('/api/update/install');
+}
+async function load(){
+  try{
+    const r=await fetch('/api/status',{cache:'no-store'}); const s=await r.json();
+    $('clock').textContent='Painel '+s.controller_version+' • '+s.server_time;
+    $('appState').textContent=s.app_running?'ABERTO':'FECHADO';
+    $('appState').className='big '+(s.app_running?'ok':'bad');
+    $('appVersion').textContent='Versão '+(s.installed_version||'não identificada');
+    $('syncState').textContent=s.sync_running?'ATIVO':'AGUARDANDO';
+    $('syncState').className='big '+(s.sync_running?'ok':'warn');
+    $('gitVersion').textContent=s.latest_version||'—';
+    $('gitSha').textContent='Commit '+(s.github.main_sha||'—');
+    $('updateState').textContent=s.update_available?'DISPONÍVEL':'ATUALIZADO';
+    $('updateState').className='big '+(s.update_available?'warn':'ok');
+    $('buildState').textContent='Build '+(s.github.latest_build_status||'—');
+    $('exePath').textContent=s.app_executable||'Executável não localizado';
+    $('repo').textContent=s.github.repo||'—';
+    $('commit').textContent=s.github.main_sha||'—';
+    $('commitMsg').textContent=s.github.main_message||s.github.error||'—';
+    $('buildUrl').innerHTML=s.github.latest_build_url?'<a class="btn" target="_blank" href="'+s.github.latest_build_url+'">Abrir build</a>':'—';
+    $('updateBox').style.display=s.update_available?'block':'none';
+    $('availableVersion').textContent=s.latest_version||'';
+    $('logs').textContent=(s.cloud_log_tail||[]).join('\n')||'Sem registros.';
+  }catch(e){toast('Falha ao carregar painel: '+e,false)}
+}
+load(); setInterval(load,5000);
+</script>
+</body>
+</html>
