@@ -42,7 +42,7 @@ jobs:
       - name: Validate panel health endpoint
         shell: pwsh
         run: |
-          Select-String '.\controller\server.py' -Pattern '/api/health','CONTROLLER_VERSION = "0.3.1"' | Out-Host
+          Select-String '.\controller\server.py' -Pattern '/api/health','CONTROLLER_VERSION = "0.3.2"' | Out-Host
 
       - name: Validate editable production source
         shell: pwsh
