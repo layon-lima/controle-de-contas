@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.3.1"
+CONTROLLER_VERSION = "0.3.2"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -174,6 +174,10 @@ def _github_snapshot(repo: str, force: bool = False) -> dict:
         "latest_build_run_id": None,
         "latest_build_status": "",
         "latest_build_url": "",
+        "latest_release_version": "",
+        "latest_release_tag": "",
+        "latest_release_url": "",
+        "latest_release_asset": "",
         "error": "",
     }
 
@@ -231,6 +235,51 @@ def _github_snapshot(repo: str, force: bool = False) -> dict:
                 data["latest_build_status"] = run.get("conclusion") or run.get("status") or ""
                 data["latest_build_url"] = run.get("html_url") or ""
 
+        releases = _run(
+            ["gh", "api", f"repos/{repo}/releases?per_page=30"],
+            timeout=20,
+        )
+        if releases.returncode == 0:
+            releases_json = json.loads(releases.stdout)
+            release_candidates = []
+            for release in releases_json if isinstance(releases_json, list) else []:
+                if release.get("draft"):
+                    continue
+                tag = str(release.get("tag_name") or "")
+                match = re.fullmatch(r"v?(\d+\.\d+\.\d+)", tag, re.I)
+                if not match:
+                    continue
+                version = match.group(1)
+                wanted_asset = f"ATUALIZADOR_CONTROLE_DE_CONTAS_{version}.exe"
+                asset = next(
+                    (
+                        item for item in (release.get("assets") or [])
+                        if str(item.get("name") or "") == wanted_asset
+                    ),
+                    None,
+                )
+                if not asset:
+                    continue
+                release_candidates.append(
+                    (
+                        tuple(int(x) for x in version.split(".")),
+                        version,
+                        tag,
+                        release,
+                        asset,
+                    )
+                )
+
+            if release_candidates:
+                _key, version, tag, release, asset = max(
+                    release_candidates,
+                    key=lambda item: item[0],
+                )
+                data["latest_release_version"] = version
+                data["latest_release_tag"] = tag
+                data["latest_release_url"] = release.get("html_url") or ""
+                data["latest_release_asset"] = asset.get("name") or ""
+
         develop_runs = _run(
             [
                 "gh",
@@ -271,7 +320,13 @@ def _status_payload() -> dict:
     exe = _find_app_executable(cfg)
     installed = _installed_version(exe)
     github = _github_snapshot(str(cfg.get("repo_full_name") or DEFAULT_CONFIG["repo_full_name"]))
-    latest = str(github.get("latest_build_version") or "")
+    build_version = str(github.get("latest_build_version") or "")
+    release_version = str(github.get("latest_release_version") or "")
+    latest = max(
+        (value for value in (build_version, release_version) if value),
+        key=_version_tuple,
+        default="",
+    )
 
     return {
         "controller_version": CONTROLLER_VERSION,
@@ -447,40 +502,80 @@ def _pull_develop() -> tuple[bool, str]:
 def _install_latest_update() -> tuple[bool, str]:
     cfg = _load_config()
     repo = str(cfg.get("repo_full_name") or DEFAULT_CONFIG["repo_full_name"])
-    github = _github_snapshot(repo)
-    run_id = github.get("latest_build_run_id")
-    version = str(github.get("latest_build_version") or "")
+    github = _github_snapshot(repo, force=True)
 
     if not github.get("available"):
         return False, github.get("error") or "GitHub indisponível."
-    if not run_id or not version:
+
+    build_version = str(github.get("latest_build_version") or "")
+    release_version = str(github.get("latest_release_version") or "")
+    version = max(
+        (value for value in (build_version, release_version) if value),
+        key=_version_tuple,
+        default="",
+    )
+    if not version:
         return False, "Nenhum atualizador aprovado foi encontrado no GitHub."
 
-    artifact = f"ATUALIZADOR_CONTROLE_DE_CONTAS_{version}"
     tmp_root = Path(tempfile.mkdtemp(prefix="controle_contas_update_"))
 
     try:
-        result = _run(
-            [
-                "gh",
-                "run",
-                "download",
-                str(run_id),
-                "--repo",
-                repo,
-                "--name",
-                artifact,
-                "--dir",
-                str(tmp_root),
-            ],
-            timeout=120,
-        )
-        if result.returncode != 0:
-            return False, result.stderr.strip() or "Falha ao baixar o atualizador."
+        result = None
 
-        exe_candidates = list(tmp_root.rglob("*.exe"))
+        if (
+            release_version == version
+            and github.get("latest_release_tag")
+            and github.get("latest_release_asset")
+        ):
+            result = _run(
+                [
+                    "gh",
+                    "release",
+                    "download",
+                    str(github["latest_release_tag"]),
+                    "--repo",
+                    repo,
+                    "--pattern",
+                    str(github["latest_release_asset"]),
+                    "--dir",
+                    str(tmp_root),
+                ],
+                timeout=180,
+            )
+
+        if (
+            (result is None or result.returncode != 0)
+            and build_version == version
+            and github.get("latest_build_run_id")
+        ):
+            artifact = f"ATUALIZADOR_CONTROLE_DE_CONTAS_{version}"
+            result = _run(
+                [
+                    "gh",
+                    "run",
+                    "download",
+                    str(github["latest_build_run_id"]),
+                    "--repo",
+                    repo,
+                    "--name",
+                    artifact,
+                    "--dir",
+                    str(tmp_root),
+                ],
+                timeout=180,
+            )
+
+        if result is None or result.returncode != 0:
+            message = ""
+            if result is not None:
+                message = result.stderr.strip() or result.stdout.strip()
+            return False, message or "Falha ao baixar o atualizador."
+
+        exe_candidates = list(tmp_root.rglob("ATUALIZADOR_CONTROLE_DE_CONTAS_*.exe"))
         if not exe_candidates:
-            return False, "O artefato foi baixado, mas o instalador .exe não foi encontrado."
+            exe_candidates = list(tmp_root.rglob("*.exe"))
+        if not exe_candidates:
+            return False, "O atualizador foi baixado, mas o instalador .exe não foi encontrado."
 
         updater = exe_candidates[0]
         _stop_app()
