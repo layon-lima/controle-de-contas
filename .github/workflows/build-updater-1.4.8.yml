@@ -7,6 +7,9 @@ on:
       - 'tools/BUILD_1_4_8.trigger'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -146,10 +149,25 @@ jobs:
             throw 'Atualizador nao foi gerado.'
           }
 
-      - name: Upload updater artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ATUALIZADOR_CONTROLE_DE_CONTAS_1.4.8
-          path: release_src/atualizador/ATUALIZADOR_CONTROLE_DE_CONTAS_1.4.8.exe
-          if-no-files-found: error
-          retention-days: 30
+      - name: Publish updater as GitHub Release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v1.4.8'
+          $asset = '.\release_src\atualizador\ATUALIZADOR_CONTROLE_DE_CONTAS_1.4.8.exe'
+
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag `
+              --repo "${{ github.repository }}" `
+              --target "${{ github.sha }}" `
+              --title "Controle de Contas 1.4.8" `
+              --notes "Nova interface de pagamentos, seleção em lote, estados Sugerido/Enviado separados e tag mobile Copiado para pagamento por 15 minutos."
+            if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar release 1.4.8.' }
+          }
+
+          gh release upload $tag $asset `
+            --repo "${{ github.repository }}" `
+            --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao publicar atualizador na release.' }
