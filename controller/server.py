@@ -489,6 +489,31 @@ def _start_mobile_deploy() -> tuple[bool, str]:
     return True, "Publicação do mobile iniciada. O painel mostrará o andamento."
 
 
+def _restart_panel_after_sync() -> None:
+    script = ROOT / "controller" / "RESTART_PANEL.ps1"
+    if not script.is_file():
+        return
+    try:
+        subprocess.Popen(
+            [
+                "powershell",
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+            ],
+            cwd=str(ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+
 def _pull_develop() -> tuple[bool, str]:
     result = _run(["git", "pull", "origin", "develop"], timeout=60, cwd=ROOT)
     if result.returncode != 0:
@@ -682,6 +707,8 @@ class Handler(BaseHTTPRequestHandler):
             {"ok": ok, "message": message},
             HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST,
         )
+        if ok and path == "/api/panel/pull":
+            _restart_panel_after_sync()
 
     def log_message(self, format: str, *args) -> None:
         return
