@@ -43,3 +43,21 @@ jobs:
         shell: pwsh
         run: |
           Select-String '.\controller\server.py' -Pattern '/api/health','CONTROLLER_VERSION = "0.3.1"' | Out-Host
+
+      - name: Validate editable production source
+        shell: pwsh
+        run: |
+          python -m py_compile .\source_current\app.py
+          python -m py_compile .\source_current\controle_contas\patches.py
+          python -m py_compile .\source_current\controle_contas\cloud_sync.py
+          python -m py_compile .\source_current\controle_contas\cloud_mobile_ui.py
+          python -m py_compile .\source_current\controle_contas\layout_learning_v2.py
+          python -m py_compile .\source_current\controle_contas\web_server.py
+
+      - name: Validate mobile worker and app
+        shell: pwsh
+        run: |
+          node --check .\cloud_mobile\src\index.js
+          node --check .\cloud_mobile\public\app.js
+          Select-String '.\cloud_mobile\src\index.js' -Pattern 'suggestPaymentsBatch','15 \* 60 \* 1000','suggested_at IS NOT NULL' | Out-Host
+          Select-String '.\cloud_mobile\public\app.js' -Pattern 'Copiado para pagamento','remainingCopyMinutes','ENVIADO PARA PAGAMENTO' | Out-Host
