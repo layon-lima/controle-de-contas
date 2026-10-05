@@ -1,0 +1,7 @@
+{
+  "name": "controle-contas-cloud",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "latest"
+  }
+}

@@ -1,0 +1,24 @@
+name = "controle-contas-cloud"
+main = "src/index.js"
+compatibility_date = "2026-09-25"
+workers_dev = false
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = [ "/api/*" ]
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "controle-contas-cloud"
+database_id = "44305d5a-cf45-4514-99e6-fcb1055e1267"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "PDFS"
+bucket_name = "controle-contas-pdfs"
+
+
+[[routes]]
+pattern = "contas-cloud.fazendanovohorizonte.com"
+custom_domain = true

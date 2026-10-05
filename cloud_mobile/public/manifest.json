@@ -1,0 +1,17 @@
+{
+  "name": "Controle de Contas",
+  "short_name": "Contas",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3f6f4",
+  "theme_color": "#0b1f17",
+  "description": "Painel mobile de visualização do Controle de Contas",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
