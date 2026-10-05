@@ -499,6 +499,31 @@ def _pull_develop() -> tuple[bool, str]:
     return True, message
 
 
+def _start_local_update_148() -> tuple[bool, str]:
+    with _JOB_LOCK:
+        if _JOB_STATE.get("running"):
+            return False, "Já existe uma operação em andamento no painel."
+
+    script = ROOT / "tools" / "BUILD_AND_INSTALL_LOCAL_1.4.8.ps1"
+    if not script.is_file():
+        return False, "Script local da versão 1.4.8 não encontrado. Sincronize o painel primeiro."
+
+    cmd = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script),
+    ]
+    threading.Thread(
+        target=_run_logged_command,
+        args=("local_update_1_4_8", cmd, ROOT),
+        daemon=True,
+    ).start()
+    return True, "Build e instalação local da 1.4.8 iniciados."
+
+
 def _install_latest_update() -> tuple[bool, str]:
     cfg = _load_config()
     repo = str(cfg.get("repo_full_name") or DEFAULT_CONFIG["repo_full_name"])
@@ -643,6 +668,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/app/stop": _stop_app,
             "/api/app/restart": _restart_app,
             "/api/update/install": _install_latest_update,
+            "/api/update/local-1.4.8": _start_local_update_148,
             "/api/mobile/deploy": _start_mobile_deploy,
             "/api/panel/pull": _pull_develop,
         }
