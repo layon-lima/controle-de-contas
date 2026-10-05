@@ -98,7 +98,13 @@ function toast(msg,good=true){
 async function post(url){
   try{
     const r=await fetch(url,{method:'POST'});
-    const j=await r.json();
+    const raw=await r.text();
+    let j;
+    try{
+      j=JSON.parse(raw);
+    }catch{
+      throw new Error('O painel local ainda está em uma versão antiga. Feche e reabra o Painel de Controle para carregar o backend novo.');
+    }
     toast(j.message,!!j.ok);
     setTimeout(load,900);
     return j;
