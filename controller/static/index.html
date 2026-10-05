@@ -149,7 +149,8 @@ async function load(){
     $('repo').textContent=s.github.repo||'—';
     $('commit').textContent=s.github.main_sha||'—';
     $('commitMsg').textContent=s.github.main_message||s.github.error||'—';
-    $('buildUrl').innerHTML=s.github.latest_build_url?'<a class="btn" target="_blank" href="'+s.github.latest_build_url+'">Abrir build</a>':'—';
+    const updateUrl=s.github.latest_release_url||s.github.latest_build_url||'';
+    $('buildUrl').innerHTML=updateUrl?'<a class="btn" target="_blank" href="'+updateUrl+'">Abrir versão</a>':'—';
     $('updateBox').style.display=s.update_available?'block':'none';
     $('availableVersion').textContent=s.latest_version||'';
     $('logs').textContent=(s.cloud_log_tail||[]).join('\n')||'Sem registros.';
