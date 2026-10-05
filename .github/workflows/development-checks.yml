@@ -38,3 +38,8 @@ jobs:
             $errors | Format-List | Out-Host
             throw 'PowerShell do deploy mobile possui erro de sintaxe.'
           }
+
+      - name: Validate panel health endpoint
+        shell: pwsh
+        run: |
+          Select-String '.\controller\server.py' -Pattern '/api/health','CONTROLLER_VERSION = "0.3.1"' | Out-Host
