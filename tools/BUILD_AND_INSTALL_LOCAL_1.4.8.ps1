@@ -16,8 +16,6 @@ New-Item -ItemType Directory -Force -Path $Work | Out-Null
 
 $SourceZip = Join-Path $Root "releases\CONTROLE_CONTAS_1.4.4_SOURCE.zip"
 $OverlayB64 = Join-Path $Root "releases\CONTROLE_CONTAS_1.4.5_OVERLAY.b64"
-$Fix147 = Join-Path $Root "releases\apply_search_fix_1.4.7.py"
-
 Expand-Archive -Path $SourceZip -DestinationPath $Work -Force
 
 $OverlayZip = Join-Path $Work "overlay_145.zip"
@@ -26,16 +24,9 @@ $b64 = Get-Content $OverlayB64 -Raw
 Expand-Archive -Path $OverlayZip -DestinationPath $Work -Force
 Remove-Item $OverlayZip -Force
 
-$env:RELEASE_SRC = $Work
-$old = Get-Location
-try {
-    Set-Location $Root
-    py -3.13 $Fix147
-    if ($LASTEXITCODE -ne 0) { throw "Falha ao aplicar hotfix 1.4.7." }
-} finally {
-    Set-Location $old
-}
-
+# A pasta source_current já contém a fonte materializada da 1.4.7,
+# incluindo o hotfix da pesquisa. Por isso não rodamos novamente
+# releases/apply_search_fix_1.4.7.py aqui.
 Copy-Item (Join-Path $Root "source_current\app.py") (Join-Path $Work "app.py") -Force
 Copy-Item (Join-Path $Root "source_current\requirements.txt") (Join-Path $Work "requirements.txt") -Force
 Get-ChildItem (Join-Path $Root "source_current\controle_contas") -File -Filter "*.py" | ForEach-Object {
