@@ -22,3 +22,19 @@ jobs:
         shell: pwsh
         run: |
           python -m py_compile .\controle_contas\patches.py
+          python -m py_compile .\tools\fix_mobile_permanent_access.py
+
+      - name: Validate PowerShell deployment helper
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\tools\DEPLOY_MOBILE_PERMANENT_ACCESS.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-Host
+            throw 'PowerShell do deploy mobile possui erro de sintaxe.'
+          }
