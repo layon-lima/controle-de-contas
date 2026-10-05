@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.3.0"
+CONTROLLER_VERSION = "0.3.1"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -146,7 +146,21 @@ def _gh_available() -> bool:
     return shutil.which("gh") is not None
 
 
-def _github_snapshot(repo: str) -> dict:
+_GITHUB_CACHE = {"repo": "", "at": 0.0, "data": None}
+_GITHUB_CACHE_LOCK = threading.Lock()
+
+
+def _github_snapshot(repo: str, force: bool = False) -> dict:
+    now = time.time()
+    with _GITHUB_CACHE_LOCK:
+        cached = _GITHUB_CACHE.get("data")
+        if (
+            not force
+            and cached is not None
+            and _GITHUB_CACHE.get("repo") == repo
+            and now - float(_GITHUB_CACHE.get("at") or 0) < 30
+        ):
+            return dict(cached)
     data = {
         "available": False,
         "repo": repo,
@@ -165,6 +179,8 @@ def _github_snapshot(repo: str) -> dict:
 
     if not _gh_available():
         data["error"] = "GitHub CLI (gh) não encontrado."
+        with _GITHUB_CACHE_LOCK:
+            _GITHUB_CACHE.update({"repo": repo, "at": time.time(), "data": dict(data)})
         return data
 
     try:
@@ -235,9 +251,13 @@ def _github_snapshot(repo: str) -> dict:
                 break
 
         data["available"] = True
+        with _GITHUB_CACHE_LOCK:
+            _GITHUB_CACHE.update({"repo": repo, "at": time.time(), "data": dict(data)})
         return data
     except Exception as exc:
         data["error"] = f"{type(exc).__name__}: {exc}"
+        with _GITHUB_CACHE_LOCK:
+            _GITHUB_CACHE.update({"repo": repo, "at": time.time(), "data": dict(data)})
         return data
 
 
@@ -419,6 +439,8 @@ def _pull_develop() -> tuple[bool, str]:
     if result.returncode != 0:
         return False, result.stderr.strip() or "Falha ao atualizar a cópia local."
     message = result.stdout.strip() or "Painel sincronizado com o GitHub."
+    with _GITHUB_CACHE_LOCK:
+        _GITHUB_CACHE.update({"repo": "", "at": 0.0, "data": None})
     return True, message
 
 
@@ -498,6 +520,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/health":
+            self._json({
+                "ok": True,
+                "controller_version": CONTROLLER_VERSION,
+                "port": int(_load_config().get("port") or DEFAULT_CONFIG["port"]),
+            })
+            return
         if path == "/api/status":
             self._json(_status_payload())
             return
