@@ -134,7 +134,7 @@ def integrate_cloud_mobile_button() -> None:
         if clear is not None:
             clear.setEnabled(count > 0)
         if bar is not None:
-            bar.setVisible(count > 0)
+            bar.setVisible(True)
 
     def refresh_detail_panel(self, row: int | None = None) -> None:
         dock = getattr(self, "_cloud_detail_dock", None)
@@ -365,6 +365,17 @@ def integrate_cloud_mobile_button() -> None:
         except Exception:
             pass
 
+    def select_all_visible(self) -> None:
+        selected: set[int] = set()
+        for row in range(self.tabela.rowCount()):
+            account_id = row_account_id(self, row)
+            status_item = self.tabela.item(row, 3)
+            status = status_item.text().strip() if status_item is not None else ""
+            if account_id and status != "Paga":
+                selected.add(account_id)
+        self._bulk_checked_ids = selected
+        apply_activity_markers(self)
+
     def clear_checked(self) -> None:
         self._bulk_checked_ids = set()
         apply_activity_markers(self)
@@ -507,12 +518,15 @@ def integrate_cloud_mobile_button() -> None:
         suggest = QPushButton("Sugerir pagamento (0)", bar)
         suggest.setObjectName("bulkPrimary")
         sent = QPushButton("Marcar como enviado (0)", bar)
+        select_all = QPushButton("Selecionar todos", bar)
         clear = QPushButton("Limpar seleção", bar)
 
         suggest.clicked.connect(lambda: suggest_checked(self))
         sent.clicked.connect(lambda: mark_checked_sent(self))
+        select_all.clicked.connect(lambda: select_all_visible(self))
         clear.clicked.connect(lambda: clear_checked(self))
 
+        lay.addWidget(select_all)
         lay.addWidget(suggest)
         lay.addWidget(sent)
         lay.addWidget(clear)
@@ -531,7 +545,8 @@ def integrate_cloud_mobile_button() -> None:
         self._bulk_suggest_button = suggest
         self._bulk_sent_button = sent
         self._bulk_clear_button = clear
-        bar.hide()
+        self._bulk_select_all_button = select_all
+        bar.show()
 
     def install_detail_dock(self) -> None:
         if getattr(self, "_cloud_detail_dock", None) is not None:
