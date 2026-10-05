@@ -1,0 +1,411 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import webbrowser
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+CONTROLLER_VERSION = "0.1.0"
+ROOT = Path(__file__).resolve().parents[1]
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+LOCALAPPDATA = Path(
+    os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+)
+APP_DATA_DIR = LOCALAPPDATA / "ControleContas"
+CONFIG_PATH = APP_DATA_DIR / "controller.json"
+SYNC_LOG_PATH = APP_DATA_DIR / "cloud_sync.log"
+
+DEFAULT_CONFIG = {
+    "repo_full_name": "layon-lima/controle-de-contas",
+    "host": "127.0.0.1",
+    "port": 8765,
+    "app_executable": "",
+    "auto_open_browser": True,
+}
+
+
+def _load_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        if CONFIG_PATH.is_file():
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                cfg.update(data)
+    except Exception:
+        pass
+    return cfg
+
+
+def _save_default_config_if_missing() -> None:
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_PATH.exists():
+        CONFIG_PATH.write_text(
+            json.dumps(DEFAULT_CONFIG, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+def _run(cmd: list[str], timeout: int = 15) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def _find_app_executable(cfg: dict) -> Path | None:
+    configured = str(cfg.get("app_executable") or "").strip()
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    local_programs = LOCALAPPDATA / "Programs"
+    candidates.extend(
+        [
+            program_files / "Controle de Contas" / "Controle de Contas.exe",
+            local_programs / "Controle de Contas" / "Controle de Contas.exe",
+            ROOT / "dist" / "Controle de Contas" / "Controle de Contas.exe",
+        ]
+    )
+
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path
+        except OSError:
+            pass
+    return None
+
+
+def _process_running(image_name: str) -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        result = _run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
+            timeout=8,
+        )
+        return image_name.casefold() in result.stdout.casefold()
+    except Exception:
+        return False
+
+
+def _installed_version(exe: Path | None) -> str:
+    if not exe or os.name != "nt":
+        return ""
+    try:
+        escaped = str(exe).replace("'", "''")
+        cmd = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"(Get-Item '{escaped}').VersionInfo.FileVersion",
+        ]
+        result = _run(cmd, timeout=10)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _tail(path: Path, max_lines: int = 120) -> list[str]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return lines[-max_lines:]
+    except Exception:
+        return []
+
+
+def _gh_available() -> bool:
+    return shutil.which("gh") is not None
+
+
+def _github_snapshot(repo: str) -> dict:
+    data = {
+        "available": False,
+        "repo": repo,
+        "main_sha": "",
+        "main_message": "",
+        "latest_build_version": "",
+        "latest_build_run_id": None,
+        "latest_build_status": "",
+        "latest_build_url": "",
+        "error": "",
+    }
+
+    if not _gh_available():
+        data["error"] = "GitHub CLI (gh) não encontrado."
+        return data
+
+    try:
+        commit = _run(["gh", "api", f"repos/{repo}/commits/main"], timeout=15)
+        if commit.returncode != 0:
+            data["error"] = commit.stderr.strip() or "Falha ao consultar GitHub."
+            return data
+
+        commit_json = json.loads(commit.stdout)
+        data["main_sha"] = str(commit_json.get("sha") or "")[:10]
+        data["main_message"] = (
+            commit_json.get("commit", {}).get("message", "").splitlines()[0]
+        )
+
+        runs = _run(
+            [
+                "gh",
+                "api",
+                f"repos/{repo}/actions/runs?branch=main&status=success&per_page=30",
+            ],
+            timeout=20,
+        )
+        if runs.returncode == 0:
+            runs_json = json.loads(runs.stdout)
+            best = None
+            for run in runs_json.get("workflow_runs", []):
+                name = str(run.get("name") or "")
+                match = re.search(r"Build updater\s+(\d+\.\d+\.\d+)", name, re.I)
+                if not match:
+                    continue
+                version = match.group(1)
+                best = (version, run)
+                break
+
+            if best:
+                version, run = best
+                data["latest_build_version"] = version
+                data["latest_build_run_id"] = run.get("id")
+                data["latest_build_status"] = run.get("conclusion") or run.get("status") or ""
+                data["latest_build_url"] = run.get("html_url") or ""
+
+        data["available"] = True
+        return data
+    except Exception as exc:
+        data["error"] = f"{type(exc).__name__}: {exc}"
+        return data
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    numbers = re.findall(r"\d+", value or "")
+    return tuple(int(x) for x in numbers[:4]) if numbers else (0,)
+
+
+def _status_payload() -> dict:
+    cfg = _load_config()
+    exe = _find_app_executable(cfg)
+    installed = _installed_version(exe)
+    github = _github_snapshot(str(cfg.get("repo_full_name") or DEFAULT_CONFIG["repo_full_name"]))
+    latest = str(github.get("latest_build_version") or "")
+
+    return {
+        "controller_version": CONTROLLER_VERSION,
+        "installed_version": installed,
+        "latest_version": latest,
+        "update_available": bool(
+            installed and latest and _version_tuple(latest) > _version_tuple(installed)
+        ),
+        "app_running": _process_running("Controle de Contas.exe"),
+        "sync_running": _process_running("Controle de Contas.exe") and any(
+            "--cloud-sync" in line for line in _tail(SYNC_LOG_PATH, 20)
+        ),
+        "app_executable": str(exe) if exe else "",
+        "cloud_log_path": str(SYNC_LOG_PATH),
+        "cloud_log_tail": _tail(SYNC_LOG_PATH, 12),
+        "github": github,
+        "config_path": str(CONFIG_PATH),
+        "server_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _start_app() -> tuple[bool, str]:
+    cfg = _load_config()
+    exe = _find_app_executable(cfg)
+    if not exe:
+        return False, "Executável do Controle de Contas não encontrado."
+    if _process_running(exe.name):
+        return True, "O Controle de Contas já está aberto."
+
+    try:
+        subprocess.Popen(
+            [str(exe)],
+            cwd=str(exe.parent),
+            creationflags=(
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True, "Controle de Contas iniciado."
+    except Exception as exc:
+        return False, f"Falha ao iniciar: {exc}"
+
+
+def _stop_app() -> tuple[bool, str]:
+    if os.name != "nt":
+        return False, "Ação disponível apenas no Windows."
+    try:
+        result = _run(
+            ["taskkill", "/IM", "Controle de Contas.exe", "/T", "/F"],
+            timeout=12,
+        )
+        if result.returncode in (0, 128):
+            return True, "Controle de Contas fechado."
+        return False, result.stderr.strip() or result.stdout.strip()
+    except Exception as exc:
+        return False, f"Falha ao fechar: {exc}"
+
+
+def _restart_app() -> tuple[bool, str]:
+    _stop_app()
+    time.sleep(0.8)
+    return _start_app()
+
+
+def _install_latest_update() -> tuple[bool, str]:
+    cfg = _load_config()
+    repo = str(cfg.get("repo_full_name") or DEFAULT_CONFIG["repo_full_name"])
+    github = _github_snapshot(repo)
+    run_id = github.get("latest_build_run_id")
+    version = str(github.get("latest_build_version") or "")
+
+    if not github.get("available"):
+        return False, github.get("error") or "GitHub indisponível."
+    if not run_id or not version:
+        return False, "Nenhum atualizador aprovado foi encontrado no GitHub."
+
+    artifact = f"ATUALIZADOR_CONTROLE_DE_CONTAS_{version}"
+    tmp_root = Path(tempfile.mkdtemp(prefix="controle_contas_update_"))
+
+    try:
+        result = _run(
+            [
+                "gh",
+                "run",
+                "download",
+                str(run_id),
+                "--repo",
+                repo,
+                "--name",
+                artifact,
+                "--dir",
+                str(tmp_root),
+            ],
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return False, result.stderr.strip() or "Falha ao baixar o atualizador."
+
+        exe_candidates = list(tmp_root.rglob("*.exe"))
+        if not exe_candidates:
+            return False, "O artefato foi baixado, mas o instalador .exe não foi encontrado."
+
+        updater = exe_candidates[0]
+        _stop_app()
+        subprocess.Popen(
+            [str(updater)],
+            cwd=str(updater.parent),
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+        )
+        return True, f"Atualizador {version} iniciado."
+    except Exception as exc:
+        return False, f"Falha ao atualizar: {type(exc).__name__}: {exc}"
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "ControleContasController/" + CONTROLLER_VERSION
+
+    def _json(self, payload: dict, status: int = 200) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _static(self, path: Path, content_type: str) -> None:
+        if not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        body = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/api/status":
+            self._json(_status_payload())
+            return
+        if path == "/api/logs":
+            self._json({"lines": _tail(SYNC_LOG_PATH, 250)})
+            return
+        if path in ("/", "/index.html"):
+            self._static(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        actions = {
+            "/api/app/start": _start_app,
+            "/api/app/stop": _stop_app,
+            "/api/app/restart": _restart_app,
+            "/api/update/install": _install_latest_update,
+        }
+        action = actions.get(path)
+        if not action:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        ok, message = action()
+        self._json(
+            {"ok": ok, "message": message},
+            HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST,
+        )
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+
+def main() -> None:
+    _save_default_config_if_missing()
+    cfg = _load_config()
+    host = str(cfg.get("host") or "127.0.0.1")
+    port = int(cfg.get("port") or 8765)
+
+    server = ThreadingHTTPServer((host, port), Handler)
+    url = f"http://{host}:{port}"
+
+    print(f"Painel Controle de Contas: {url}")
+    if bool(cfg.get("auto_open_browser", True)) and "--no-browser" not in sys.argv:
+        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
