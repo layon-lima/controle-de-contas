@@ -93,7 +93,7 @@ $reportedVersion = ""
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 300
     try {
-        $status = Invoke-RestMethod -Uri "http://127.0.0.1:8766/api/status?t=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" -TimeoutSec 2
+        $status = Invoke-RestMethod -Uri "http://127.0.0.1:8766/api/health?t=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" -TimeoutSec 2
         $reportedVersion = [string]$status.controller_version
         if ($reportedVersion) {
             $ready = $true
@@ -106,7 +106,7 @@ if (-not $ready) {
     throw "O backend do painel não iniciou corretamente na porta 8766."
 }
 
-if ($reportedVersion -ne "0.3.0") {
+if ($reportedVersion -ne "0.3.1") {
     Stop-OldPanel
     throw "O backend iniciado ainda é antigo ($reportedVersion). Execute novamente a atualização do painel."
 }
