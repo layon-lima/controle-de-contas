@@ -618,11 +618,13 @@ def integrate_cloud_mobile_button() -> None:
             layout.addStretch(1)
 
             open_receipt = QPushButton("Abrir comprovante", body)
+            open_receipt.setObjectName("detailOpenReceipt")
             open_receipt.setStyleSheet(
                 "min-height:38px;border:1px solid #9bbcff;color:#1769e0;"
                 "background:#ffffff;border-radius:9px;font-weight:700;"
             )
             edit_account = QPushButton("Editar conta", body)
+            edit_account.setObjectName("detailEditAccount")
             edit_account.setStyleSheet(
                 "min-height:40px;border:1px solid #1f6feb;color:#ffffff;"
                 "background:#1f6feb;border-radius:9px;font-weight:800;"
@@ -657,7 +659,12 @@ def integrate_cloud_mobile_button() -> None:
 
     def _find_button_by_text(self, needle: str):
         target = needle.casefold()
+        detail_dock = getattr(self, "_cloud_detail_dock", None)
         for button in self.findChildren(QPushButton):
+            if button.objectName() in {"detailOpenReceipt", "detailEditAccount"}:
+                continue
+            if detail_dock is not None and detail_dock.isAncestorOf(button):
+                continue
             if target in str(button.text() or "").casefold():
                 return button
         return None
