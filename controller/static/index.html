@@ -54,6 +54,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#08150f;border:1px sol
       <button onclick="post('/api/app/restart')">↻ Reiniciar</button>
       <button class="danger" onclick="post('/api/app/stop')">■ Fechar</button>
       <button id="updateBtn" onclick="installUpdate()">⬆ Atualizar programa</button>
+      <button onclick="installLocal148()">⚙ Instalar 1.4.8 local</button>
       <button onclick="syncPanel()">⟳ Sincronizar painel</button>
       <button onclick="deployMobile()">☁ Publicar mobile</button>
     </div>
@@ -113,6 +114,11 @@ async function post(url){
 async function installUpdate(){
   if(!confirm('Baixar do GitHub e iniciar o atualizador aprovado mais recente?')) return;
   await post('/api/update/install');
+}
+async function installLocal148(){
+  if(!confirm('Gerar e instalar a versão 1.4.8 diretamente neste PC? O processo pode levar alguns minutos.')) return;
+  const j=await post('/api/update/local-1.4.8');
+  if(j&&j.ok) setTimeout(loadJob,700);
 }
 async function syncPanel(){
   const j=await post('/api/panel/pull');
