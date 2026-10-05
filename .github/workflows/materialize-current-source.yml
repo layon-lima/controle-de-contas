@@ -1,0 +1,76 @@
+name: Materialize current production source
+
+on:
+  push:
+    branches: [ develop ]
+    paths:
+      - 'tools/MATERIALIZE_CURRENT_SOURCE.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Reconstruct current 1.4.7 source
+        shell: pwsh
+        run: |
+          Remove-Item '.\release_src' -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path '.\release_src' | Out-Null
+          Expand-Archive -Path '.\releases\CONTROLE_CONTAS_1.4.4_SOURCE.zip' -DestinationPath '.\release_src' -Force
+          $b64 = Get-Content '.\releases\CONTROLE_CONTAS_1.4.5_OVERLAY.b64' -Raw
+          [IO.File]::WriteAllBytes('.\overlay_145.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path '.\overlay_145.zip' -DestinationPath '.\release_src' -Force
+          python '.\releases\apply_search_fix_1.4.7.py'
+
+      - name: Copy editable production source into repository
+        shell: pwsh
+        run: |
+          Remove-Item '.\source_current' -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path '.\source_current\controle_contas' | Out-Null
+
+          Copy-Item '.\release_src\app.py' '.\source_current\app.py' -Force
+          Copy-Item '.\release_src\requirements.txt' '.\source_current\requirements.txt' -Force
+          Copy-Item '.\release_src\Controle de Contas.spec' '.\source_current\Controle de Contas.spec' -Force
+
+          Get-ChildItem '.\release_src\controle_contas' -File -Filter '*.py' | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path '.\source_current\controle_contas' $_.Name) -Force
+          }
+
+          $iss = Get-ChildItem '.\release_src' -File -Filter '*.iss' | Sort-Object Name | Select-Object -Last 1
+          if ($iss) { Copy-Item $iss.FullName (Join-Path '.\source_current' $iss.Name) -Force }
+
+          @'
+          # Fonte atual do aplicativo
+          Esta pasta contém a fonte editável reconstruída da versão de produção 1.4.7
+          (snapshot 1.4.4 + overlay 1.4.5 + hotfix 1.4.7).
+          As próximas versões devem partir desta pasta.
+          '@ | Set-Content '.\source_current\README.md' -Encoding UTF8
+
+      - name: Validate source
+        shell: pwsh
+        run: |
+          python -m py_compile .\source_current\app.py
+          Get-ChildItem '.\source_current\controle_contas' -File -Filter '*.py' | ForEach-Object {
+            python -m py_compile $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Falha em $($_.Name)" }
+          }
+
+      - name: Commit materialized source
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add source_current
+          if (git diff --cached --quiet) {
+            Write-Host "Fonte já materializada."
+            exit 0
+          }
+          git commit -m "Materialize editable 1.4.7 production source"
+          git push origin HEAD:develop
