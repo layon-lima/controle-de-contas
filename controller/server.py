@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.1.0"
+CONTROLLER_VERSION = "0.2.0"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -151,6 +151,10 @@ def _github_snapshot(repo: str) -> dict:
         "repo": repo,
         "main_sha": "",
         "main_message": "",
+        "develop_sha": "",
+        "develop_message": "",
+        "develop_check_status": "",
+        "develop_check_url": "",
         "latest_build_version": "",
         "latest_build_run_id": None,
         "latest_build_status": "",
@@ -174,32 +178,60 @@ def _github_snapshot(repo: str) -> dict:
             commit_json.get("commit", {}).get("message", "").splitlines()[0]
         )
 
+        develop = _run(["gh", "api", f"repos/{repo}/commits/develop"], timeout=15)
+        if develop.returncode == 0:
+            develop_json = json.loads(develop.stdout)
+            data["develop_sha"] = str(develop_json.get("sha") or "")[:10]
+            data["develop_message"] = (
+                develop_json.get("commit", {}).get("message", "").splitlines()[0]
+            )
+
+        # O build aprovado pode ter sido produzido em uma branch de release/PR,
+        # então não limitamos a consulta à main.
         runs = _run(
             [
                 "gh",
                 "api",
-                f"repos/{repo}/actions/runs?branch=main&status=success&per_page=30",
+                f"repos/{repo}/actions/runs?status=success&per_page=100",
             ],
-            timeout=20,
+            timeout=25,
         )
         if runs.returncode == 0:
             runs_json = json.loads(runs.stdout)
-            best = None
+            candidates = []
             for run in runs_json.get("workflow_runs", []):
                 name = str(run.get("name") or "")
                 match = re.search(r"Build updater\s+(\d+\.\d+\.\d+)", name, re.I)
                 if not match:
                     continue
                 version = match.group(1)
-                best = (version, run)
-                break
+                candidates.append((tuple(int(x) for x in version.split(".")), version, run))
 
-            if best:
-                version, run = best
+            if candidates:
+                _key, version, run = max(candidates, key=lambda item: item[0])
                 data["latest_build_version"] = version
                 data["latest_build_run_id"] = run.get("id")
                 data["latest_build_status"] = run.get("conclusion") or run.get("status") or ""
                 data["latest_build_url"] = run.get("html_url") or ""
+
+        develop_runs = _run(
+            [
+                "gh",
+                "api",
+                f"repos/{repo}/actions/runs?branch=develop&per_page=20",
+            ],
+            timeout=20,
+        )
+        if develop_runs.returncode == 0:
+            develop_runs_json = json.loads(develop_runs.stdout)
+            for run in develop_runs_json.get("workflow_runs", []):
+                if str(run.get("name") or "") != "Development checks":
+                    continue
+                data["develop_check_status"] = (
+                    run.get("conclusion") or run.get("status") or ""
+                )
+                data["develop_check_url"] = run.get("html_url") or ""
+                break
 
         data["available"] = True
         return data
@@ -224,6 +256,7 @@ def _status_payload() -> dict:
         "controller_version": CONTROLLER_VERSION,
         "installed_version": installed,
         "latest_version": latest,
+        "update_known": bool(latest),
         "update_available": bool(
             installed and latest and _version_tuple(latest) > _version_tuple(installed)
         ),
