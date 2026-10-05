@@ -63,74 +63,283 @@ def _format_activity_time(value) -> str:
         return text
 
 
+def _money_br(value) -> str:
+    try:
+        text = f"{float(value or 0):,.2f}"
+        return "R$ " + text.replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "R$ 0,00"
+
+
 def integrate_cloud_mobile_button() -> None:
     global _ui_integrated
     if _ui_integrated:
         return
 
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtGui import QColor, QFont
+    from PySide6.QtWidgets import (
+        QAbstractItemView,
+        QDockWidget,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMessageBox,
+        QPushButton,
+        QVBoxLayout,
+        QWidget,
+    )
+
     from . import ui
     from .cloud_sync import (
         cloud_enabled,
         get_cloud_private_link,
         pull_cloud_activity_once,
-        suggest_payment,
+        suggest_payments,
     )
 
     original_init = ui.JanelaPrincipal.__init__
     original_update_table = ui.JanelaPrincipal.atualizar_tabela
 
+    visible_columns = (0, 1, 2, 3, 4, 5)
+
+    def row_account_id(self, row: int) -> int | None:
+        try:
+            item = self.tabela.item(row, 7)
+            return int(item.text()) if item is not None else None
+        except Exception:
+            return None
+
+    def checked_ids(self) -> list[int]:
+        selected = set(getattr(self, "_bulk_checked_ids", set()))
+        return sorted(int(x) for x in selected)
+
+    def update_bulk_state(self) -> None:
+        ids = checked_ids(self)
+        count = len(ids)
+        label = getattr(self, "_bulk_count_label", None)
+        bar = getattr(self, "_bulk_bar", None)
+        suggest = getattr(self, "_bulk_suggest_button", None)
+        sent = getattr(self, "_bulk_sent_button", None)
+        clear = getattr(self, "_bulk_clear_button", None)
+
+        if label is not None:
+            label.setText(f"{count} selecionada" + ("" if count == 1 else "s"))
+        if suggest is not None:
+            suggest.setText(f"Sugerir pagamento ({count})")
+            suggest.setEnabled(count > 0)
+        if sent is not None:
+            sent.setText(f"Marcar como enviado ({count})")
+            sent.setEnabled(count > 0)
+        if clear is not None:
+            clear.setEnabled(count > 0)
+        if bar is not None:
+            bar.setVisible(count > 0)
+
+    def refresh_detail_panel(self, row: int | None = None) -> None:
+        dock = getattr(self, "_cloud_detail_dock", None)
+        if dock is None or not dock.isVisible():
+            return
+
+        if row is None:
+            row = self.tabela.currentRow()
+        account_id = row_account_id(self, int(row))
+        if not account_id:
+            return
+
+        try:
+            account = self.banco.buscar_conta(int(account_id)) or {}
+        except Exception:
+            account = {}
+
+        activity = _activity_map().get(account_id) or {}
+
+        receiver = str(account.get("fornecedor") or "")
+        value = _money_br(account.get("valor"))
+        due = ui.data_br(account.get("vencimento"))
+        status_item = self.tabela.item(int(row), 3)
+        status = status_item.text() if status_item is not None else ""
+
+        suggested = _format_activity_time(activity.get("suggested_at")) or "—"
+        sent = (
+            ui.data_hora_br(account.get("enviado_pagamento_em"))
+            if account.get("enviado_pagamento_em")
+            else "—"
+        )
+        copied = _format_activity_time(activity.get("copied_at")) or "—"
+
+        self._detail_receiver.setText(receiver or "Conta")
+        self._detail_value.setText(value)
+        self._detail_due.setText(f"Vencimento  {due or '—'}")
+        self._detail_status.setText(status or "—")
+        self._detail_suggested.setText(f"Sugerido para pagamento\n{suggested}")
+        self._detail_sent.setText(f"Enviado para pagamento\n{sent}")
+        self._detail_copied.setText(f"Última cópia do código\n{copied}")
+
+        if _is_future(activity.get("copied_until")):
+            self._detail_copied.setStyleSheet(
+                "padding:10px 12px;border-radius:10px;"
+                "background:#f4edff;color:#6d37b8;font-weight:700;"
+            )
+        else:
+            self._detail_copied.setStyleSheet(
+                "padding:10px 12px;border-radius:10px;"
+                "background:#f6f8f7;color:#52655c;font-weight:600;"
+            )
+
+    def configure_table(self) -> None:
+        table = self.tabela
+        if table.columnCount() < 9:
+            return
+
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        table.setAlternatingRowColors(False)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(44)
+
+        headers = {
+            0: "Fornecedor",
+            1: "Vencimento",
+            2: "Valor",
+            3: "Status",
+            4: "Enviado em",
+            5: "Sugerido em",
+        }
+        for logical, title in headers.items():
+            item = table.horizontalHeaderItem(logical)
+            if item is None:
+                item = ui.QTableWidgetItem(title)
+                table.setHorizontalHeaderItem(logical, item)
+            else:
+                item.setText(title)
+
+        header = table.horizontalHeader()
+        order = [0, 1, 2, 5, 4, 3]
+        for target, logical in enumerate(order):
+            current = header.visualIndex(logical)
+            if current >= 0 and current != target:
+                header.moveSection(current, target)
+
+        table.setColumnHidden(6, True)
+        table.setColumnHidden(7, True)
+        table.setColumnHidden(8, True)
+
+        header.setSectionResizeMode(0, ui.QHeaderView.ResizeMode.Stretch)
+        for logical in (1, 2, 3, 4, 5):
+            header.setSectionResizeMode(logical, ui.QHeaderView.ResizeMode.ResizeToContents)
+
+        table.setStyleSheet(
+            """
+            QTableWidget {
+                background:#ffffff;
+                alternate-background-color:#ffffff;
+                border:1px solid #e4ebe7;
+                border-radius:12px;
+                gridline-color:transparent;
+                selection-background-color:#e9f7f0;
+                selection-color:#173127;
+                font-size:12px;
+            }
+            QTableWidget::item {
+                border-bottom:1px solid #eef2f0;
+                padding:7px 8px;
+            }
+            QTableWidget::item:selected {
+                background:#e9f7f0;
+                color:#173127;
+            }
+            QHeaderView::section {
+                background:#f7f9f8;
+                color:#64756d;
+                border:0;
+                border-bottom:1px solid #e4ebe7;
+                padding:9px 8px;
+                font-size:11px;
+                font-weight:700;
+            }
+            """
+        )
+
     def apply_activity_markers(self) -> None:
         try:
-            activity = _activity_map()
             table = self.tabela
-            for row in range(table.rowCount()):
-                id_item = table.item(row, 7)
-                if id_item is None:
-                    continue
-                try:
-                    account_id = int(id_item.text())
-                except Exception:
-                    continue
-                info = activity.get(account_id) or {}
-                copied = _is_future(info.get("copied_until"))
-                suggested = _is_future(info.get("suggested_until"))
+            configure_table(self)
+            activity = _activity_map()
+            checked = set(getattr(self, "_bulk_checked_ids", set()))
+            visible_ids: set[int] = set()
 
-                envio_item = table.item(row, 4)
-                if envio_item is None:
-                    continue
+            table.blockSignals(True)
+            try:
+                for row in range(table.rowCount()):
+                    account_id = row_account_id(self, row)
+                    if not account_id:
+                        continue
+                    visible_ids.add(account_id)
 
-                original_text = str(envio_item.data(ui.Qt.ItemDataRole.UserRole) or "")
-                if not original_text:
-                    original_text = envio_item.text()
-                    envio_item.setData(ui.Qt.ItemDataRole.UserRole, original_text)
+                    supplier = table.item(row, 0)
+                    if supplier is not None:
+                        supplier.setFlags(
+                            supplier.flags() | Qt.ItemFlag.ItemIsUserCheckable
+                        )
+                        supplier.setCheckState(
+                            Qt.CheckState.Checked
+                            if account_id in checked
+                            else Qt.CheckState.Unchecked
+                        )
+                        supplier.setFont(QFont("Arial", 10, QFont.Weight.DemiBold))
 
-                if copied:
-                    when = _format_activity_time(info.get("copied_at"))
-                    until = _format_activity_time(info.get("copied_until"))
-                    envio_item.setText("⚠ CÓDIGO COPIADO")
-                    envio_item.setBackground(ui.QColor("#fff0db"))
-                    envio_item.setForeground(ui.QColor("#9a5a00"))
-                    envio_item.setFont(ui.QFont("Arial", 10, ui.QFont.Weight.Bold))
-                    envio_item.setToolTip(
-                        "Código de pagamento copiado no mobile"
-                        + (f" em {when}" if when else "")
-                        + (f". Sinalização até {until}." if until else ".")
-                        + "\nIsso NÃO significa que a conta já foi paga."
+                    info = activity.get(account_id) or {}
+                    suggested_item = table.item(row, 5)
+                    if suggested_item is None:
+                        suggested_item = ui.QTableWidgetItem("")
+                        table.setItem(row, 5, suggested_item)
+
+                    suggested_at = _format_activity_time(info.get("suggested_at"))
+                    suggested_item.setText(suggested_at or "—")
+                    suggested_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    suggested_item.setToolTip(
+                        f"Sugerido para pagamento em {suggested_at}"
+                        if suggested_at
+                        else "Ainda não sugerido para pagamento."
                     )
-                elif suggested:
-                    until = _format_activity_time(info.get("suggested_until"))
-                    envio_item.setText("💡 SUGERIDA")
-                    envio_item.setBackground(ui.QColor("#fff7ed"))
-                    envio_item.setForeground(ui.QColor("#b76500"))
-                    envio_item.setFont(ui.QFont("Arial", 10, ui.QFont.Weight.DemiBold))
-                    envio_item.setToolTip(
-                        "Sugestão de pagamento ativa no mobile"
-                        + (f" até {until}." if until else ".")
-                    )
-                else:
-                    envio_item.setText(original_text)
-                    envio_item.setToolTip("")
+
+                    sent_item = table.item(row, 4)
+                    if sent_item is not None and sent_item.text().strip().casefold() == "não enviada":
+                        sent_item.setText("—")
+
+                    status_item = table.item(row, 3)
+                    status = status_item.text() if status_item is not None else ""
+                    if status_item is not None:
+                        palette = {
+                            "Vencida": ("#fff0f0", "#b33939"),
+                            "Próxima": ("#fff7e5", "#9a6700"),
+                            "Em dia": ("#eef6ff", "#2f6792"),
+                            "Paga": ("#eaf8ef", "#28744d"),
+                        }
+                        bg, fg = palette.get(status, ("#f4f6f5", "#53655d"))
+                        status_item.setBackground(QColor(bg))
+                        status_item.setForeground(QColor(fg))
+                        status_item.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+
+                    # A cópia continua registrada por 24 h para o desktop,
+                    # mas não ocupa uma coluna extra: aparece no detalhe/tooltip.
+                    if supplier is not None:
+                        copied_at = _format_activity_time(info.get("copied_at"))
+                        if copied_at:
+                            supplier.setToolTip(
+                                "Última cópia do código no mobile: " + copied_at
+                            )
+                        else:
+                            supplier.setToolTip("")
+            finally:
+                table.blockSignals(False)
+
+            checked.intersection_update(visible_ids)
+            self._bulk_checked_ids = checked
+            update_bulk_state(self)
+            refresh_detail_panel(self)
         except Exception:
             pass
 
@@ -139,128 +348,359 @@ def integrate_cloud_mobile_button() -> None:
         apply_activity_markers(self)
         return result
 
+    def on_item_changed(self, item) -> None:
+        try:
+            if item.column() != 0:
+                return
+            account_id = row_account_id(self, item.row())
+            if not account_id:
+                return
+            selected = set(getattr(self, "_bulk_checked_ids", set()))
+            if item.checkState() == Qt.CheckState.Checked:
+                selected.add(account_id)
+            else:
+                selected.discard(account_id)
+            self._bulk_checked_ids = selected
+            update_bulk_state(self)
+        except Exception:
+            pass
+
+    def clear_checked(self) -> None:
+        self._bulk_checked_ids = set()
+        apply_activity_markers(self)
+
+    def suggest_checked(self) -> None:
+        ids = checked_ids(self)
+        if not ids:
+            return
+        if not cloud_enabled():
+            QMessageBox.warning(
+                self,
+                "Sugestão de pagamento",
+                "A sincronização em nuvem ainda não está configurada neste computador.",
+            )
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Sugerir pagamentos",
+            f"Sugerir {len(ids)} conta" + ("" if len(ids) == 1 else "s")
+            + " para pagamento no mobile por 3 horas?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            result = suggest_payments(ids)
+            count = int(result.get("quantidade") or len(ids))
+            self._bulk_checked_ids = set()
+            apply_activity_markers(self)
+            QMessageBox.information(
+                self,
+                "Sugestões enviadas",
+                f"{count} conta" + ("" if count == 1 else "s")
+                + " sugerida" + ("" if count == 1 else "s")
+                + " para pagamento.",
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Sugestão de pagamento",
+                f"Não foi possível enviar as sugestões.\n\n{exc}",
+            )
+
+    def mark_checked_sent(self) -> None:
+        ids = checked_ids(self)
+        if not ids:
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Marcar como enviado",
+            f"Registrar {len(ids)} conta" + ("" if len(ids) == 1 else "s")
+            + " como enviada" + ("" if len(ids) == 1 else "s")
+            + " para pagamento agora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        stamp = datetime.now().isoformat(timespec="seconds")
+        try:
+            with self.banco.conexao() as conn:
+                conn.executemany(
+                    """
+                    UPDATE contas
+                       SET enviado_pagamento_em = COALESCE(enviado_pagamento_em, ?),
+                           atualizado_em = ?
+                     WHERE id = ?
+                    """,
+                    [(stamp, stamp, int(account_id)) for account_id in ids],
+                )
+
+            self._bulk_checked_ids = set()
+            if hasattr(self, "atualizar"):
+                self.atualizar()
+            else:
+                self.atualizar_tabela()
+            QMessageBox.information(
+                self,
+                "Envio registrado",
+                "O horário de envio para pagamento foi registrado separadamente "
+                "da sugestão.",
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Marcar como enviado",
+                f"Não foi possível registrar o envio.\n\n{exc}",
+            )
+
+    def install_bulk_bar(self) -> None:
+        if getattr(self, "_bulk_bar", None) is not None:
+            return
+
+        table = self.tabela
+        parent = table.parentWidget()
+        parent_layout = parent.layout() if parent else None
+        if parent_layout is None:
+            return
+
+        bar = QFrame(parent)
+        bar.setObjectName("bulkPaymentBar")
+        bar.setStyleSheet(
+            """
+            QFrame#bulkPaymentBar {
+                background:#f8fbf9;
+                border:1px solid #e0e9e4;
+                border-radius:12px;
+            }
+            QFrame#bulkPaymentBar QLabel {
+                color:#274238;
+                font-weight:700;
+            }
+            QFrame#bulkPaymentBar QPushButton {
+                min-height:32px;
+                border:1px solid #d9e5de;
+                border-radius:9px;
+                padding:0 12px;
+                background:#ffffff;
+                color:#274238;
+                font-weight:700;
+            }
+            QFrame#bulkPaymentBar QPushButton#bulkPrimary {
+                background:#0b6b45;
+                color:#ffffff;
+                border-color:#0b6b45;
+            }
+            """
+        )
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(10, 7, 10, 7)
+        lay.setSpacing(8)
+
+        count = QLabel("0 selecionadas", bar)
+        lay.addWidget(count)
+        lay.addStretch(1)
+
+        suggest = QPushButton("Sugerir pagamento (0)", bar)
+        suggest.setObjectName("bulkPrimary")
+        sent = QPushButton("Marcar como enviado (0)", bar)
+        clear = QPushButton("Limpar seleção", bar)
+
+        suggest.clicked.connect(lambda: suggest_checked(self))
+        sent.clicked.connect(lambda: mark_checked_sent(self))
+        clear.clicked.connect(lambda: clear_checked(self))
+
+        lay.addWidget(suggest)
+        lay.addWidget(sent)
+        lay.addWidget(clear)
+
+        try:
+            index = parent_layout.indexOf(table)
+            if hasattr(parent_layout, "insertWidget") and index >= 0:
+                parent_layout.insertWidget(index, bar)
+            else:
+                parent_layout.addWidget(bar)
+        except Exception:
+            parent_layout.addWidget(bar)
+
+        self._bulk_bar = bar
+        self._bulk_count_label = count
+        self._bulk_suggest_button = suggest
+        self._bulk_sent_button = sent
+        self._bulk_clear_button = clear
+        bar.hide()
+
+    def install_detail_dock(self) -> None:
+        if getattr(self, "_cloud_detail_dock", None) is not None:
+            return
+
+        try:
+            dock = QDockWidget("Detalhes da conta", self)
+            dock.setObjectName("paymentDetailDock")
+            dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+            dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable)
+
+            body = QWidget(dock)
+            layout = QVBoxLayout(body)
+            layout.setContentsMargins(18, 16, 18, 18)
+            layout.setSpacing(10)
+
+            receiver = QLabel("Conta", body)
+            receiver.setWordWrap(True)
+            receiver.setStyleSheet("font-size:17px;font-weight:800;color:#183329;")
+            value = QLabel("R$ 0,00", body)
+            value.setStyleSheet("font-size:24px;font-weight:900;color:#10251c;")
+
+            meta = QHBoxLayout()
+            due = QLabel("Vencimento  —", body)
+            status = QLabel("—", body)
+            due.setStyleSheet("color:#66776f;font-size:12px;")
+            status.setStyleSheet(
+                "padding:5px 9px;border-radius:9px;background:#eef6ff;"
+                "color:#2d658f;font-weight:800;"
+            )
+            meta.addWidget(due)
+            meta.addStretch(1)
+            meta.addWidget(status)
+
+            title = QLabel("Linha do tempo", body)
+            title.setStyleSheet("margin-top:8px;font-weight:800;color:#274238;")
+
+            suggested = QLabel("Sugerido para pagamento\n—", body)
+            sent = QLabel("Enviado para pagamento\n—", body)
+            copied = QLabel("Última cópia do código\n—", body)
+            for label in (suggested, sent):
+                label.setStyleSheet(
+                    "padding:10px 12px;border-radius:10px;"
+                    "background:#f6f8f7;color:#52655c;font-weight:600;"
+                )
+
+            layout.addWidget(receiver)
+            layout.addWidget(value)
+            layout.addLayout(meta)
+            layout.addWidget(title)
+            layout.addWidget(suggested)
+            layout.addWidget(sent)
+            layout.addWidget(copied)
+            layout.addStretch(1)
+
+            dock.setWidget(body)
+            dock.setMinimumWidth(300)
+            dock.setMaximumWidth(380)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+            dock.hide()
+
+            self._cloud_detail_dock = dock
+            self._detail_receiver = receiver
+            self._detail_value = value
+            self._detail_due = due
+            self._detail_status = status
+            self._detail_suggested = suggested
+            self._detail_sent = sent
+            self._detail_copied = copied
+
+            def open_row_detail(row, _column):
+                dock.show()
+                refresh_detail_panel(self, row)
+
+            self.tabela.cellClicked.connect(open_row_detail)
+        except Exception:
+            pass
+
+    def simplify_existing_ui(self) -> None:
+        try:
+            # Mantém só os três indicadores operacionais mais úteis no topo.
+            for key, card in getattr(self, "cards", {}).items():
+                if "paga" in str(key).casefold():
+                    card.hide()
+
+            header = self.findChild(ui.QFrame, "headerPanel")
+            if header:
+                header.setStyleSheet(
+                    """
+                    QFrame#headerPanel {
+                        background:#ffffff;
+                        border:1px solid #e4ebe7;
+                        border-radius:12px;
+                    }
+                    """
+                )
+
+            configure_table(self)
+        except Exception:
+            pass
+
     def init_with_cloud_mobile(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
 
+        self._bulk_checked_ids = set()
+
         try:
+            simplify_existing_ui(self)
+            install_bulk_bar(self)
+            install_detail_dock(self)
+
+            if not getattr(self, "_cloud_table_connected", False):
+                self.tabela.itemChanged.connect(lambda item: on_item_changed(self, item))
+                self._cloud_table_connected = True
+
             header = self.findChild(ui.QFrame, "headerPanel")
             layout = header.layout() if header else None
-            if layout is None:
-                return
+            if layout is not None:
+                button = ui.QPushButton("📱  Acesso mobile")
+                button.setObjectName("secondaryButton")
+                button.setToolTip("Copia o link privativo do painel mobile em nuvem.")
 
-            button = ui.QPushButton("📱  Acesso mobile")
-            button.setObjectName("secondaryButton")
-            button.setToolTip("Copia o link privativo do painel mobile em nuvem.")
+                def show_mobile_access():
+                    if not cloud_enabled():
+                        QMessageBox.warning(
+                            self,
+                            "Acesso mobile",
+                            "A sincronização em nuvem ainda não está configurada neste computador.",
+                        )
+                        return
 
-            suggest_button = ui.QPushButton("💡  Sugerir pagamento")
-            suggest_button.setObjectName("secondaryButton")
-            suggest_button.setToolTip(
-                "Destaca a conta selecionada no mobile por 3 horas."
-            )
+                    link = get_cloud_private_link()
+                    if not link:
+                        QMessageBox.warning(
+                            self,
+                            "Acesso mobile",
+                            "Não foi possível localizar o link privativo do mobile.",
+                        )
+                        return
 
-            def show_mobile_access():
-                if not cloud_enabled():
-                    ui.QMessageBox.warning(
+                    ui.QApplication.clipboard().setText(link)
+                    QMessageBox.information(
                         self,
                         "Acesso mobile",
-                        "A sincronização em nuvem ainda não está configurada neste computador.",
-                    )
-                    return
-
-                link = get_cloud_private_link()
-                if not link:
-                    ui.QMessageBox.warning(
-                        self,
-                        "Acesso mobile",
-                        "Não foi possível localizar o link privativo do mobile.",
-                    )
-                    return
-
-                ui.QApplication.clipboard().setText(link)
-                ui.QMessageBox.information(
-                    self,
-                    "Acesso mobile",
-                    "O link privativo foi copiado para a área de transferência.\n\n"
-                    "O mobile usa a última versão sincronizada na nuvem e continua "
-                    "disponível mesmo quando este computador estiver desligado.\n\n"
-                    "Não compartilhe o link publicamente.",
-                )
-
-            def suggest_selected_account():
-                if not cloud_enabled():
-                    ui.QMessageBox.warning(
-                        self,
-                        "Sugestão de pagamento",
-                        "A sincronização em nuvem ainda não está configurada neste computador.",
-                    )
-                    return
-
-                account = self.conta_selecionada()
-                if not account:
-                    return
-                if str(account.get("status") or "") == "Paga":
-                    ui.QMessageBox.information(
-                        self,
-                        "Sugestão de pagamento",
-                        "Essa conta já está paga.",
-                    )
-                    return
-
-                response = ui.QMessageBox.question(
-                    self,
-                    "Sugestão de pagamento",
-                    "Sugerir esta conta para pagamento no mobile por 3 horas?\n\n"
-                    f"{account.get('fornecedor') or 'Conta'} — "
-                    f"R$ {float(account.get('valor') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                    ui.QMessageBox.StandardButton.Yes | ui.QMessageBox.StandardButton.No,
-                )
-                if response != ui.QMessageBox.StandardButton.Yes:
-                    return
-
-                try:
-                    result = suggest_payment(int(account["id"]))
-                    until = _format_activity_time(result.get("suggested_until"))
-                    apply_activity_markers(self)
-                    ui.QMessageBox.information(
-                        self,
-                        "Sugestão enviada",
-                        "A conta foi destacada no mobile por 3 horas."
-                        + (f"\n\nAtiva até {until}." if until else ""),
-                    )
-                except Exception as exc:
-                    ui.QMessageBox.warning(
-                        self,
-                        "Sugestão de pagamento",
-                        f"Não foi possível enviar a sugestão.\n\n{exc}",
+                        "O link privativo foi copiado para a área de transferência.",
                     )
 
-            button.clicked.connect(show_mobile_access)
-            suggest_button.clicked.connect(suggest_selected_account)
+                button.clicked.connect(show_mobile_access)
 
-            new_account_index = -1
-            for i in range(layout.count()):
-                item = layout.itemAt(i)
-                widget = item.widget() if item else None
-                if isinstance(widget, ui.QPushButton) and "Nova conta" in widget.text():
-                    new_account_index = i
-                    break
+                new_account_index = -1
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    widget = item.widget() if item else None
+                    if isinstance(widget, ui.QPushButton) and "Nova conta" in widget.text():
+                        new_account_index = i
+                        break
 
-            if new_account_index >= 0:
-                layout.insertWidget(new_account_index, button)
-                layout.insertWidget(new_account_index + 1, suggest_button)
-            else:
-                layout.addWidget(button)
-                layout.addWidget(suggest_button)
+                if new_account_index >= 0:
+                    layout.insertWidget(new_account_index, button)
+                else:
+                    layout.addWidget(button)
 
-            self._cloud_mobile_button = button
-            self._cloud_suggest_button = suggest_button
+                self._cloud_mobile_button = button
 
-            # O sincronizador consulta os eventos em segundo plano. A interface
-            # apenas relê o cache local para nunca travar por causa de rede.
             try:
                 pull_cloud_activity_once()
             except Exception:
                 pass
+
             apply_activity_markers(self)
 
             timer = QTimer(self)
