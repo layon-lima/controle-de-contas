@@ -76,3 +76,18 @@ jobs:
             $errors | Format-List | Out-Host
             throw 'PowerShell do build local 1.4.8 possui erro de sintaxe.'
           }
+
+      - name: Validate local 1.4.9 UI installer
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\tools\BUILD_AND_INSTALL_LOCAL_1.4.9.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-Host
+            throw 'PowerShell do build local 1.4.9 possui erro de sintaxe.'
+          }
