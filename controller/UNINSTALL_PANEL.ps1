@@ -5,10 +5,14 @@ Remove-ItemProperty -Path $RunKey -Name "ControleContasPainel" -ErrorAction Sile
 
 $AppData = Join-Path $env:LOCALAPPDATA "ControleContas"
 $Launcher = Join-Path $AppData "start_panel.vbs"
+$OpenLauncher = Join-Path $AppData "open_panel.vbs"
 Remove-Item $Launcher -Force -ErrorAction SilentlyContinue
+Remove-Item $OpenLauncher -Force -ErrorAction SilentlyContinue
 
 $Desktop = [Environment]::GetFolderPath("Desktop")
-$UrlFile = Join-Path $Desktop "Controle de Contas - Painel.url"
-Remove-Item $UrlFile -Force -ErrorAction SilentlyContinue
+$ShortcutPath = Join-Path $Desktop "Controle de Contas - Painel.lnk"
+$LegacyUrl = Join-Path $Desktop "Controle de Contas - Painel.url"
+Remove-Item $ShortcutPath -Force -ErrorAction SilentlyContinue
+Remove-Item $LegacyUrl -Force -ErrorAction SilentlyContinue
 
 Write-Host "Inicializacao automatica e atalho do painel removidos." -ForegroundColor Green
