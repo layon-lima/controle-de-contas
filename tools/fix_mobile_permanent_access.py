@@ -399,7 +399,7 @@ async function ensureViewSession(){
 
     text = text.replace(
         'navigator.serviceWorker.register("/sw.js?v=10")',
-        'navigator.serviceWorker.register("/sw.js?v=12")',
+        'navigator.serviceWorker.register("/sw.js?v=13")',
     )
 
     path.write_text(text, encoding="utf-8")
@@ -412,14 +412,14 @@ def patch_assets() -> None:
         '<link rel="manifest" href="/manifest.json?v=11">',
         '<link rel="manifest" href="/api/manifest">',
     )
-    text = text.replace('/app.js?v=11', '/app.js?v=12')
+    text = re.sub(r'/app\\.js\\?v=\\d+', '/app.js?v=13', text)
     index_path.write_text(text, encoding="utf-8")
 
     sw_path = CLOUD / "public" / "sw.js"
     sw = sw_path.read_text(encoding="utf-8")
     sw = re.sub(
         r'const CACHE = "controle-contas-cloud-v\d+";',
-        'const CACHE = "controle-contas-cloud-v12";',
+        'const CACHE = "controle-contas-cloud-v13";',
         sw,
     )
     sw_path.write_text(sw, encoding="utf-8")
