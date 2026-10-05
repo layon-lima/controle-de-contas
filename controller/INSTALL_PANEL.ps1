@@ -38,6 +38,19 @@ $Shortcut.WorkingDirectory = $Projeto
 $Shortcut.Description = "Painel de Controle do Controle de Contas"
 $Shortcut.Save()
 
+# Encerra uma instancia antiga do painel que ainda esteja usando a porta.
+try {
+    $listeners = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+    foreach ($listener in $listeners) {
+        if ($listener.OwningProcess) {
+            Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Milliseconds 700
+} catch {
+    # Se Get-NetTCPConnection nao estiver disponivel, seguimos normalmente.
+}
+
 Start-Process -FilePath "wscript.exe" -ArgumentList "`"$Launcher`"" -WindowStyle Hidden
 Start-Sleep -Milliseconds 900
 
