@@ -54,6 +54,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#08150f;border:1px sol
       <button onclick="post('/api/app/restart')">↻ Reiniciar</button>
       <button class="danger" onclick="post('/api/app/stop')">■ Fechar</button>
       <button id="updateBtn" onclick="installUpdate()">⬆ Atualizar programa</button>
+      <button onclick="syncPanel()">⟳ Sincronizar painel</button>
+      <button onclick="deployMobile()">☁ Publicar mobile</button>
     </div>
     <div id="updateBox" class="card update" style="margin-top:16px;display:none">
       <div class="row between">
@@ -71,6 +73,11 @@ pre{white-space:pre-wrap;word-break:break-word;background:#08150f;border:1px sol
       <b>Mensagem</b><span id="commitMsg">—</span>
       <b>Build</b><span id="buildUrl">—</span>
     </div>
+  </section>
+
+  <section class="card span12">
+    <div class="row between"><h2 class="section-title">Operação do painel</h2><span class="muted" id="jobState">Nenhuma operação em andamento</span></div>
+    <pre id="jobLog">Sem operações recentes.</pre>
   </section>
 
   <section class="card span12">
@@ -101,6 +108,23 @@ async function installUpdate(){
   if(!confirm('Baixar do GitHub e iniciar o atualizador aprovado mais recente?')) return;
   await post('/api/update/install');
 }
+async function syncPanel(){
+  const j=await post('/api/panel/pull');
+  if(j&&j.ok) toast('Painel sincronizado com o GitHub. As novas alterações ficam disponíveis ao reiniciar o painel.',true);
+}
+async function deployMobile(){
+  if(!confirm('Publicar agora as alterações do mobile/Cloudflare que estão no GitHub?')) return;
+  const j=await post('/api/mobile/deploy');
+  if(j&&j.ok) setTimeout(loadJob,700);
+}
+async function loadJob(){
+  try{
+    const r=await fetch('/api/job',{cache:'no-store'}); const j=await r.json();
+    $('jobState').textContent=j.running?'EM ANDAMENTO':(j.ok===true?'CONCLUÍDO':(j.ok===false?'FALHOU':'Nenhuma operação em andamento'));
+    $('jobState').className='muted '+(j.running?'warn':(j.ok===true?'ok':(j.ok===false?'bad':'')));
+    $('jobLog').textContent=(j.log_tail||[]).join('\n')||j.message||'Sem operações recentes.';
+  }catch(e){}
+}
 async function load(){
   try{
     const r=await fetch('/api/status',{cache:'no-store'}); const s=await r.json();
@@ -125,7 +149,7 @@ async function load(){
     $('logs').textContent=(s.cloud_log_tail||[]).join('\n')||'Sem registros.';
   }catch(e){toast('Falha ao carregar painel: '+e,false)}
 }
-load(); setInterval(load,5000);
+load(); loadJob(); setInterval(load,5000); setInterval(loadJob,2500);
 </script>
 </body>
 </html>
