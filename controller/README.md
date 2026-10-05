@@ -12,7 +12,7 @@ python .\controller\server.py
 
 O navegador abre em:
 
-`http://127.0.0.1:8765`
+`http://127.0.0.1:8766`
 
 ## O que esta primeira versão já faz
 
