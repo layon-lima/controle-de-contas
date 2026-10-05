@@ -1,0 +1,7 @@
+PySide6
+pypdf
+PyMuPDF
+opencv-python
+numpy
+pytesseract
+pyinstaller
