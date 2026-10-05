@@ -115,6 +115,76 @@ function displayDate(value){
   return match ? `${match[3]}/${match[2]}/${match[1]}` : (text || "—");
 }
 
+function activityDateTime(value){
+  const ms = Date.parse(String(value || ""));
+  if(!Number.isFinite(ms)) return "—";
+  return new Intl.DateTimeFormat("pt-BR",{
+    day:"2-digit",month:"2-digit",year:"numeric",
+    hour:"2-digit",minute:"2-digit"
+  }).format(new Date(ms));
+}
+
+function remainingCopyMinutes(account){
+  const until = Date.parse(String(account?.codigo_copiado_ate || ""));
+  if(!Number.isFinite(until)) return 0;
+  return Math.max(0, Math.ceil((until - Date.now()) / 60000));
+}
+
+function renderPaymentActivity(account){
+  const box = el("paymentActivity");
+  if(!box) return;
+
+  const pieces = [];
+  if(account?.sugerido_em){
+    pieces.push(`
+      <div class="activity-line">
+        <span class="activity-dot suggested"></span>
+        <div><strong>Sugerido para pagamento</strong><small>${escapeHtml(activityDateTime(account.sugerido_em))}</small></div>
+      </div>
+    `);
+  }
+
+  if(account?.enviado_pagamento_em){
+    pieces.push(`
+      <div class="activity-line">
+        <span class="activity-dot sent"></span>
+        <div><strong>Enviado para pagamento</strong><small>${escapeHtml(activityDateTime(account.enviado_pagamento_em))}</small></div>
+      </div>
+    `);
+  }
+
+  const minutes = remainingCopyMinutes(account);
+  if(minutes > 0){
+    pieces.push(`
+      <div class="copy-payment-tag">
+        <strong>Copiado para pagamento</strong>
+        <span>expira em ${minutes} min</span>
+      </div>
+    `);
+  }
+
+  box.innerHTML = pieces.join("");
+  box.classList.toggle("hidden", pieces.length === 0);
+}
+
+function refreshTemporaryCopyFlags(){
+  let changed = false;
+  for(const account of accounts){
+    if(account.codigo_copiado_recente && remainingCopyMinutes(account) <= 0){
+      account.codigo_copiado_recente = false;
+      account.codigo_copiado_ate = null;
+      changed = true;
+    }
+  }
+  if(currentAccount && currentAccount.codigo_copiado_recente && remainingCopyMinutes(currentAccount) <= 0){
+    currentAccount.codigo_copiado_recente = false;
+    currentAccount.codigo_copiado_ate = null;
+    changed = true;
+  }
+  if(changed) renderList();
+  if(currentAccount) renderPaymentActivity(currentAccount);
+}
+
 function renderList(){
   const items = filteredAccounts();
   const list = el("accountsList");
@@ -152,7 +222,9 @@ function renderList(){
           </div>
         </div>
         <div class="account-right">
-          ${account.sugestao_pagamento ? `<span class="suggestion-flag">✦ SUGESTÃO DE PAGAMENTO</span>` : ""}
+          ${account.sugestao_pagamento ? `<span class="suggestion-flag">SUGERIDO</span>` : ""}
+          ${account.enviado_pagamento_em ? `<span class="sent-flag">ENVIADO PARA PAGAMENTO</span>` : ""}
+          ${account.codigo_copiado_recente ? `<span class="copied-flag">COPIADO PARA PAGAMENTO</span>` : ""}
           <div class="account-value">${money(account.valor)}</div>
         </div>
       </div>
@@ -224,6 +296,7 @@ function openDetail(account){
     hasCode ? "Copiar código" : "Sem código";
 
   el("viewPdf").classList.toggle("hidden", !account.tem_pdf);
+  renderPaymentActivity(account);
 
   el("scrim").classList.remove("hidden");
   el("detailSheet").classList.add("open");
@@ -259,14 +332,34 @@ async function copyPayment(){
   setTimeout(()=>feedback.classList.remove("show"),1400);
 
   // Registra apenas o ato de copiar. Isso NÃO marca a conta como paga.
-  // O desktop usará este evento como sinalização temporária por 24 horas.
+  // No mobile a tag fica 15 minutos; o desktop mantém o histórico da cópia.
   try{
-    await fetch(`/api/mobile/copied/${encodeURIComponent(currentAccount.id)}?t=${Date.now()}`, {
+    const response = await fetch(`/api/mobile/copied/${encodeURIComponent(currentAccount.id)}?t=${Date.now()}`, {
       method:"POST",
       cache:"no-store",
       keepalive:true,
       headers:viewHeaders()
     });
+    if(response.ok){
+      const payload = await response.json().catch(()=>({}));
+      const copiedAt = payload.copied_at || new Date().toISOString();
+      const copiedUntil = payload.mobile_copied_until ||
+        new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      currentAccount.codigo_copiado_recente = true;
+      currentAccount.codigo_copiado_em = copiedAt;
+      currentAccount.codigo_copiado_ate = copiedUntil;
+
+      const stored = accounts.find(a=>Number(a.id)===Number(currentAccount.id));
+      if(stored){
+        stored.codigo_copiado_recente = true;
+        stored.codigo_copiado_em = copiedAt;
+        stored.codigo_copiado_ate = copiedUntil;
+      }
+
+      renderPaymentActivity(currentAccount);
+      renderList();
+    }
   }catch{}
 }
 
@@ -442,6 +535,7 @@ el("clearSearch").addEventListener("click",()=>{
 el("closeSheet").addEventListener("click",closeDetail);
 el("scrim").addEventListener("click",closeDetail);
 el("copyPayment").addEventListener("click",copyPayment);
+setInterval(refreshTemporaryCopyFlags, 30000);
 
 function revokePdfImageUrl(){
   if(currentPdfImageUrl){
