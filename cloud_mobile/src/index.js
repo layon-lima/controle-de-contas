@@ -336,14 +336,20 @@ async function listAccounts(request, env) {
     try {
       const item = JSON.parse(row.payload);
       const suggestedUntilMs = Date.parse(String(row.suggested_until || ""));
-      const copiedUntilMs = Date.parse(String(row.copied_until || ""));
+      const copiedAtMs = Date.parse(String(row.copied_at || ""));
+      const copiedMobileUntilMs = Number.isFinite(copiedAtMs)
+        ? copiedAtMs + 15 * 60 * 1000
+        : NaN;
       item.tem_pdf = Number(row.pdf_pages || 0) > 0;
       item.status = statusConta(item.vencimento, item.data_pagamento);
       item.sugestao_pagamento = item.status !== "Paga" && Number.isFinite(suggestedUntilMs) && suggestedUntilMs > now;
+      item.sugerido_em = row.suggested_at || null;
       item.sugestao_ate = item.sugestao_pagamento ? row.suggested_until : null;
-      item.codigo_copiado_recente = item.status !== "Paga" && Number.isFinite(copiedUntilMs) && copiedUntilMs > now;
+      item.codigo_copiado_recente = item.status !== "Paga" && Number.isFinite(copiedMobileUntilMs) && copiedMobileUntilMs > now;
       item.codigo_copiado_em = row.copied_at || null;
-      item.codigo_copiado_ate = item.codigo_copiado_recente ? row.copied_until : null;
+      item.codigo_copiado_ate = item.codigo_copiado_recente
+        ? new Date(copiedMobileUntilMs).toISOString()
+        : null;
       contas.push(item);
     } catch {}
   }
@@ -396,6 +402,46 @@ async function suggestPayment(request, env, id) {
   return json({ok:true, account_id:id, suggested_at:suggestedAt, suggested_until:suggestedUntil});
 }
 
+async function suggestPaymentsBatch(request, env) {
+  if (!authorized(request, env.SYNC_TOKEN, "X-Sync-Token")) {
+    return json({ok:false, erro:"Não autorizado."}, 401);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const ids = [...new Set(
+    (Array.isArray(body?.account_ids) ? body.account_ids : [])
+      .map(Number)
+      .filter(id => Number.isInteger(id) && id > 0)
+  )].slice(0, 500);
+
+  if (!ids.length) {
+    return json({ok:true, quantidade:0, account_ids:[]});
+  }
+
+  const suggestedAt = new Date().toISOString();
+  const suggestedUntil = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+
+  const statements = ids.map(id => env.DB.prepare(`
+    INSERT INTO payment_activity(account_id,suggested_at,suggested_until)
+    SELECT ?,?,?
+     WHERE EXISTS (SELECT 1 FROM accounts WHERE id=?)
+    ON CONFLICT(account_id) DO UPDATE SET
+      suggested_at=excluded.suggested_at,
+      suggested_until=excluded.suggested_until
+  `).bind(id, suggestedAt, suggestedUntil, id));
+
+  if (statements.length) await env.DB.batch(statements);
+
+  return json({
+    ok:true,
+    quantidade:ids.length,
+    account_ids:ids,
+    suggested_at:suggestedAt,
+    suggested_until:suggestedUntil,
+  });
+}
+
+
 async function cancelSuggestion(request, env, id) {
   if (!authorized(request, env.SYNC_TOKEN, "X-Sync-Token")) return json({ok:false, erro:"Não autorizado."}, 401);
   await env.DB.prepare(`
@@ -429,7 +475,14 @@ async function markPaymentCodeCopied(request, env, id) {
       copy_count=COALESCE(payment_activity.copy_count,0)+1
   `).bind(id, copiedAt, copiedUntil).run();
 
-  return json({ok:true, account_id:id, copied_at:copiedAt, copied_until:copiedUntil});
+  const mobileCopiedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  return json({
+    ok:true,
+    account_id:id,
+    copied_at:copiedAt,
+    copied_until:copiedUntil,
+    mobile_copied_until:mobileCopiedUntil,
+  });
 }
 
 async function desktopActivity(request, env) {
@@ -438,10 +491,10 @@ async function desktopActivity(request, env) {
   const result = await env.DB.prepare(`
     SELECT account_id,suggested_at,suggested_until,copied_at,copied_until,copy_count
       FROM payment_activity
-     WHERE (suggested_until IS NOT NULL AND suggested_until > ?)
-        OR (copied_until IS NOT NULL AND copied_until > ?)
+     WHERE suggested_at IS NOT NULL
+        OR copied_at IS NOT NULL
      ORDER BY COALESCE(copied_at,suggested_at) DESC
-  `).bind(now, now).all();
+  `).all();
   return json({ok:true, activities:result.results || [], server_time:now});
 }
 
@@ -494,6 +547,10 @@ export default {
         const body = await request.json().catch(() => ({}));
         await setMeta(env, "last_synced", body.synced_at || new Date().toISOString());
         return json({ok:true});
+      }
+
+      if (path === "/api/desktop/suggest-batch" && method === "POST") {
+        return suggestPaymentsBatch(request, env);
       }
 
       let m = path.match(/^\/api\/desktop\/suggest\/(\d+)$/);
