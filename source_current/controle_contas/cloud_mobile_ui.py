@@ -217,7 +217,11 @@ def integrate_cloud_mobile_button() -> None:
                 item.setText(title)
 
         header = table.horizontalHeader()
-        order = [0, 1, 2, 5, 4, 3]
+        order = (
+            [0, 1, 2, 3, 5, 4, 9]
+            if getattr(self, "_desktop_dashboard", None)
+            else [0, 1, 2, 5, 4, 3]
+        )
         for target, logical in enumerate(order):
             current = header.visualIndex(logical)
             if current >= 0 and current != target:
@@ -231,38 +235,39 @@ def integrate_cloud_mobile_button() -> None:
         for logical in (1, 2, 3, 4, 5):
             header.setSectionResizeMode(logical, ui.QHeaderView.ResizeMode.ResizeToContents)
 
-        table.setStyleSheet(
-            """
-            QTableWidget {
-                background:#ffffff;
-                alternate-background-color:#ffffff;
-                border:1px solid #e4ebe7;
-                border-radius:12px;
-                gridline-color:transparent;
-                selection-background-color:#e9f7f0;
-                selection-color:#173127;
-                font-size:12px;
-            }
-            QTableWidget::item {
-                border-bottom:1px solid #eef2f0;
-                padding:7px 8px;
-            }
-            QTableWidget::item:selected {
-                background:#e9f7f0;
-                color:#173127;
-            }
-            QHeaderView::section {
-                background:#f7f9f8;
-                color:#64756d;
-                border:0;
-                border-bottom:1px solid #e4ebe7;
-                padding:9px 8px;
-                font-size:11px;
-                font-weight:700;
-            }
-            """
-        )
-
+        if getattr(self, "_desktop_dashboard", None) is None:
+            table.setStyleSheet(
+                """
+                QTableWidget {
+                    background:#ffffff;
+                    alternate-background-color:#ffffff;
+                    border:1px solid #e4ebe7;
+                    border-radius:12px;
+                    gridline-color:transparent;
+                    selection-background-color:#e9f7f0;
+                    selection-color:#173127;
+                    font-size:12px;
+                }
+                QTableWidget::item {
+                    border-bottom:1px solid #eef2f0;
+                    padding:7px 8px;
+                }
+                QTableWidget::item:selected {
+                    background:#e9f7f0;
+                    color:#173127;
+                }
+                QHeaderView::section {
+                    background:#f7f9f8;
+                    color:#64756d;
+                    border:0;
+                    border-bottom:1px solid #e4ebe7;
+                    padding:9px 8px;
+                    font-size:11px;
+                    font-weight:700;
+                }
+                """
+            )
+    
     def apply_activity_markers(self) -> None:
         try:
             table = self.tabela
@@ -347,6 +352,9 @@ def integrate_cloud_mobile_button() -> None:
     def update_table_with_activity(self, *args, **kwargs):
         result = original_update_table(self, *args, **kwargs)
         apply_activity_markers(self)
+        dashboard = getattr(self, "_desktop_dashboard", None)
+        if dashboard is not None:
+            dashboard.decorate_rows()
         return result
 
     def on_item_changed(self, item) -> None:
@@ -657,320 +665,12 @@ def integrate_cloud_mobile_button() -> None:
         except Exception:
             pass
 
-    def _find_button_by_text(self, needle: str):
-        target = needle.casefold()
-        detail_dock = getattr(self, "_cloud_detail_dock", None)
-        for button in self.findChildren(QPushButton):
-            if button.objectName() in {"detailOpenReceipt", "detailEditAccount"}:
-                continue
-            if detail_dock is not None and detail_dock.isAncestorOf(button):
-                continue
-            if target in str(button.text() or "").casefold():
-                return button
-        return None
-
-    def _click_existing(self, needle: str) -> None:
-        button = _find_button_by_text(self, needle)
-        if button is not None and button.isEnabled():
-            button.click()
-
-    def install_modern_shell(self) -> None:
-        if getattr(self, "_modern_shell_installed", False):
-            return
-
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background:#f4f7fb;
-            }
-            QWidget {
-                font-family:"Segoe UI";
-                font-size:12px;
-                color:#17243a;
-            }
-            QFrame#headerPanel {
-                background:#ffffff;
-                border:1px solid #e3e9f1;
-                border-radius:14px;
-            }
-            QLineEdit, QComboBox {
-                min-height:36px;
-                border:1px solid #d9e1eb;
-                border-radius:9px;
-                background:#ffffff;
-                padding:0 11px;
-                selection-background-color:#dbeafe;
-            }
-            QLineEdit:focus, QComboBox:focus {
-                border:1px solid #7aa7f8;
-            }
-            QPushButton {
-                min-height:34px;
-                border:1px solid #d6dfeb;
-                border-radius:9px;
-                background:#ffffff;
-                color:#24364f;
-                padding:0 13px;
-                font-weight:600;
-            }
-            QPushButton:hover {
-                background:#f6f9fd;
-                border-color:#b9c8da;
-            }
-            QPushButton:disabled {
-                color:#98a4b4;
-                background:#f7f8fa;
-            }
-            QPushButton#primaryButton, QPushButton#bulkPrimary {
-                background:#126e4d;
-                color:#ffffff;
-                border-color:#126e4d;
-            }
-            QPushButton#dangerButton {
-                color:#c33131;
-                border-color:#efc3c3;
-                background:#fffafa;
-            }
-            QTabBar::tab {
-                min-height:34px;
-                padding:0 18px;
-                color:#65748a;
-                background:transparent;
-                border:0;
-                border-bottom:2px solid transparent;
-                font-weight:600;
-            }
-            QTabBar::tab:selected {
-                color:#1f6feb;
-                border-bottom:2px solid #1f6feb;
-                font-weight:700;
-            }
-            QScrollBar:vertical {
-                width:10px;
-                background:transparent;
-            }
-            QScrollBar::handle:vertical {
-                min-height:28px;
-                border-radius:5px;
-                background:#cbd5e1;
-            }
-            """
-        )
-
-        # Título compacto no cabeçalho, sem consumir altura útil.
-        header = self.findChild(ui.QFrame, "headerPanel")
-        header_layout = header.layout() if header else None
-        if header_layout is not None and getattr(self, "_modern_brand", None) is None:
-            brand = QWidget(header)
-            brand_layout = QVBoxLayout(brand)
-            brand_layout.setContentsMargins(0, 0, 18, 0)
-            brand_layout.setSpacing(0)
-            title = QLabel("Controle de Contas", brand)
-            title.setStyleSheet("font-size:18px;font-weight:800;color:#142238;")
-            subtitle = QLabel("Gestão de contas e pagamentos", brand)
-            subtitle.setStyleSheet("font-size:10px;color:#8793a5;")
-            brand_layout.addWidget(title)
-            brand_layout.addWidget(subtitle)
-            header_layout.insertWidget(0, brand)
-            try:
-                header_layout.insertStretch(1, 1)
-            except Exception:
-                pass
-            self._modern_brand = brand
-
-        # Navegação lateral igual à proposta: simples e sem páginas intermediárias.
-        nav = QDockWidget(self)
-        nav.setObjectName("modernNavigation")
-        nav.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        nav.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
-        nav.setTitleBarWidget(QWidget(nav))
-        nav.setMinimumWidth(185)
-        nav.setMaximumWidth(205)
-
-        nav_body = QFrame(nav)
-        nav_body.setObjectName("modernNavBody")
-        nav_body.setStyleSheet(
-            """
-            QFrame#modernNavBody {
-                background:#f8fbff;
-                border-right:1px solid #e1e8f1;
-            }
-            QPushButton#navButton {
-                min-height:42px;
-                border:0;
-                border-radius:10px;
-                background:transparent;
-                color:#43536a;
-                text-align:left;
-                padding-left:15px;
-                font-weight:600;
-            }
-            QPushButton#navButton:hover {
-                background:#eef4fd;
-            }
-            QPushButton#navButton[active="true"] {
-                background:#e9f2ff;
-                color:#1769e0;
-                font-weight:800;
-            }
-            QLabel#navBrand {
-                color:#142238;
-                font-size:16px;
-                font-weight:800;
-                padding:4px 6px 12px 6px;
-            }
-            """
-        )
-        nav_layout = QVBoxLayout(nav_body)
-        nav_layout.setContentsMargins(10, 14, 10, 14)
-        nav_layout.setSpacing(6)
-
-        nav_title = QLabel("▣  Controle de Contas", nav_body)
-        nav_title.setObjectName("navBrand")
-        nav_layout.addWidget(nav_title)
-
-        overview = QPushButton("⌂   Visão geral", nav_body)
-        payables = QPushButton("▤   Contas a pagar", nav_body)
-        paid = QPushButton("✓   Contas pagas", nav_body)
-        for button in (overview, payables, paid):
-            button.setObjectName("navButton")
-            nav_layout.addWidget(button)
-
-        nav_layout.addStretch(1)
-
-        help_button = QPushButton("?   Ajuda", nav_body)
-        help_button.setObjectName("navButton")
-        nav_layout.addWidget(help_button)
-
-        nav.setWidget(nav_body)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, nav)
-
-        def update_nav(index=None):
-            try:
-                current = self.abas.currentIndex() if index is None else int(index)
-            except Exception:
-                current = 0
-            for button, active in (
-                (overview, current == 0),
-                (payables, current == 0),
-                (paid, current == 1),
-            ):
-                button.setProperty("active", bool(active))
-                button.style().unpolish(button)
-                button.style().polish(button)
-
-        overview.clicked.connect(lambda: self.abas.setCurrentIndex(0))
-        payables.clicked.connect(lambda: self.abas.setCurrentIndex(0))
-        paid.clicked.connect(lambda: self.abas.setCurrentIndex(1))
-        help_button.clicked.connect(
-            lambda: QMessageBox.information(
-                self,
-                "Ajuda",
-                "Use a busca para localizar contas, marque várias pelo checkbox "
-                "e use as ações em lote para sugerir ou registrar o envio.",
-            )
-        )
-        try:
-            self.abas.currentChanged.connect(update_nav)
-        except Exception:
-            pass
-        update_nav()
-
-        self._modern_nav = nav
-        self._modern_nav_overview = overview
-        self._modern_nav_payables = payables
-        self._modern_nav_paid = paid
-        self._modern_shell_installed = True
-
-    def style_summary_cards(self) -> None:
-        palettes = [
-            ("#fff7f7", "#efcaca", "#b42318"),
-            ("#fffaf0", "#f0ddb2", "#9a6700"),
-            ("#f2fbf7", "#cce9da", "#177a52"),
-        ]
-        cards = [
-            card for _key, card in getattr(self, "cards", {}).items()
-            if card is not None and card.isVisible()
-        ]
-        for idx, card in enumerate(cards[:3]):
-            bg, border, accent = palettes[idx]
-            card.setMinimumHeight(82)
-            card.setMaximumHeight(92)
-            card.setStyleSheet(
-                f"""
-                QFrame {{
-                    background:{bg};
-                    border:1px solid {border};
-                    border-radius:14px;
-                }}
-                QFrame QLabel {{
-                    border:0;
-                    background:transparent;
-                    color:#26364c;
-                }}
-                """
-            )
-            for label in card.findChildren(QLabel):
-                text = str(label.text() or "").strip()
-                if text.isdigit():
-                    label.setStyleSheet(
-                        f"border:0;background:transparent;color:{accent};"
-                        "font-size:25px;font-weight:900;"
-                    )
-
-    def simplify_existing_ui(self) -> None:
-        try:
-            # Mantém só os três indicadores operacionais mais úteis no topo.
-            for key, card in getattr(self, "cards", {}).items():
-                if "paga" in str(key).casefold():
-                    card.hide()
-
-            central = self.centralWidget()
-            if central:
-                central.setStyleSheet("background:#f4f7fb;")
-                if central.layout():
-                    central.layout().setContentsMargins(14, 12, 14, 12)
-                    central.layout().setSpacing(10)
-
-            header = self.findChild(ui.QFrame, "headerPanel")
-            if header:
-                header.setMinimumHeight(62)
-                header.setMaximumHeight(68)
-
-            if getattr(self, "area_drop", None):
-                self.area_drop.setMinimumHeight(28)
-                self.area_drop.setMaximumHeight(32)
-                self.area_drop.setStyleSheet(
-                    "background:#ffffff;border:1px dashed #d4dde8;"
-                    "border-radius:9px;color:#718096;"
-                )
-
-            style_summary_cards(self)
-            configure_table(self)
-
-            # Ações antigas permanecem funcionais, só recebem hierarquia visual.
-            for button in self.findChildren(QPushButton):
-                text = str(button.text() or "").casefold()
-                if "nova conta" in text or "registrar pagamento" in text:
-                    button.setObjectName("primaryButton")
-                elif "excluir" in text:
-                    button.setObjectName("dangerButton")
-
-            try:
-                self.statusBar().hide()
-            except Exception:
-                pass
-        except Exception:
-            pass
-
     def init_with_cloud_mobile(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
 
         self._bulk_checked_ids = set()
 
         try:
-            install_modern_shell(self)
-            simplify_existing_ui(self)
             install_bulk_bar(self)
             install_detail_dock(self)
 
@@ -1033,6 +733,8 @@ def integrate_cloud_mobile_button() -> None:
                 pass
 
             apply_activity_markers(self)
+            from .desktop_dashboard import install_dashboard
+            install_dashboard(self)
 
             timer = QTimer(self)
             timer.setInterval(5000)
