@@ -18,7 +18,7 @@ os.environ["LOCALAPPDATA"] = temp
 os.environ["APPDATA"] = temp
 
 from PySide6.QtWidgets import QApplication, QDockWidget, QFrame, QHBoxLayout
-from controle_contas.desktop_dashboard import _asset_icon
+from controle_contas.desktop_dashboard import _asset_icon, DueDateDelegate
 app = QApplication.instance() or QApplication(sys.argv)
 
 from controle_contas.patches import aplicar_patches
@@ -41,6 +41,16 @@ assert window.tabela.isColumnHidden(7), "ID interno exposto"
 assert window.tabela.horizontalHeader().visualIndex(8) == 1, "Observacoes fora de ordem"
 assert window.tabela.columnWidth(1) >= 155, "Vencimento estreito"
 assert window.tabela.columnWidth(9) >= 120, "Acoes cortadas"
+assert isinstance(window.tabela.itemDelegateForColumn(1), DueDateDelegate), (
+    "Vencimento continua com renderizacao original/duplicada"
+)
+assert window.tabela.verticalHeader().defaultSectionSize() >= 48, (
+    "Altura insuficiente para data e prazo"
+)
+for row in range(window.tabela.rowCount()):
+    assert window.tabela.cellWidget(row, 1) is None, (
+        "Data duplicada: widget transparente sobre QTableWidgetItem"
+    )
 for name in ("brand","smartphone","upload","plus","overdue","upcoming","ontime",
              "paid","home","accounts","payments","reports","settings",
              "document","send","more","edit","receipt","trash"):
@@ -77,6 +87,20 @@ assert window._desktop_dashboard._paid_month_value is not None, "Valor do card n
 
 dash = window._desktop_dashboard
 dash.decorate_rows()
+for row in range(window.tabela.rowCount()):
+    assert window.tabela.cellWidget(row, 1) is None, "Widget de data reapareceu"
+# Prova o desenho de uma data real sem duplicar o item ou depender do banco.
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+sample = QTableWidget(1, 1)
+sample.setItemDelegateForColumn(0, DueDateDelegate(sample))
+sample.setItem(0, 0, QTableWidgetItem("09/10/2026"))
+sample.resize(220, 100)
+sample.show()
+app.processEvents()
+assert sample.item(0, 0).text() == "09/10/2026", "Vencimento original modificado"
+assert not sample.viewport().grab().isNull(), "Delegate nao renderizou"
+assert sample.cellWidget(0, 0) is None, "Renderizacao duplicada na celula"
+sample.close()
 dash._navigate("payments")
 assert window.abas.currentIndex() == 1, "Pagamentos não navega à aba existente"
 dash._navigate("accounts")

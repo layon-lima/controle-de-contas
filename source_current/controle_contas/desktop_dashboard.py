@@ -9,14 +9,14 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QRect
 from PySide6 import QtSvg  # inclui plugin de SVG no build PyInstaller
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy,
     QTableWidgetItem, QToolButton, QVBoxLayout, QWidget, QMenu,
-    QHeaderView,
+    QHeaderView, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QApplication,
 )
 
 
@@ -125,6 +125,90 @@ def _asset_icon(name):
             if not icon.isNull():
                 return icon
     return QIcon()
+
+
+
+class DueDateDelegate(QStyledItemDelegate):
+    """Desenha o vencimento UMA vez: preserva o texto original no item.
+
+    O widget transparente anterior sobrepunha a propria data que a tabela
+    ainda pintava por baixo. Uma unica delegate evita sobreposicao, mantém
+    busca, selecao, ordenacao, tooltip e dados sem alteracoes.
+    """
+
+    @staticmethod
+    def date_context(raw_text):
+        try:
+            due = datetime.strptime(str(raw_text or "").strip(), "%d/%m/%Y").date()
+        except (TypeError, ValueError):
+            return None
+        delta = (due - datetime.now().date()).days
+        if delta < -1:
+            description = f"{-delta} dias atrás"
+        elif delta == -1:
+            description = "Ontem"
+        elif delta == 0:
+            description = "Hoje"
+        elif delta == 1:
+            description = "Amanhã"
+        else:
+            description = f"Em {delta} dias"
+        tint = "#d43a42" if delta < 0 else (
+            "#bf820e" if delta <= 1 else "#657d9d"
+        )
+        return description, tint
+
+    def paint(self, painter, option, index):
+        raw = str(index.data(Qt.ItemDataRole.DisplayRole) or "").strip()
+        context = self.date_context(raw)
+        if context is None:
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        try:
+            # Deixe o proprio estilo Qt desenhar selecao e fundo, SEM texto.
+            # Assim a data original nao aparece atras da nossa apresentacao.
+            cell = QStyleOptionViewItem(option)
+            self.initStyleOption(cell, index)
+            cell.text = ""
+            style = option.widget.style() if option.widget else QApplication.style()
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, cell,
+                              painter, option.widget)
+
+            rect = option.rect.adjusted(8, 3, -6, -3)
+            if rect.width() <= 0 or rect.height() <= 0:
+                return
+            painter.setClipRect(option.rect)
+            line = max(13, rect.height() // 2)
+
+            main_font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+            painter.setFont(main_font)
+            painter.setPen(QColor("#263e60"))
+            main = painter.fontMetrics().elidedText(raw, Qt.TextElideMode.ElideRight,
+                                                   rect.width())
+            painter.drawText(QRect(rect.x(), rect.y(), rect.width(), line),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                             main)
+
+            secondary, color = context
+            painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+            painter.setPen(QColor(color))
+            caption = painter.fontMetrics().elidedText(
+                secondary, Qt.TextElideMode.ElideRight, rect.width()
+            )
+            painter.drawText(QRect(rect.x(), rect.y() + line,
+                                   rect.width(), max(0, rect.height() - line)),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                             caption)
+        finally:
+            painter.restore()
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        if self.date_context(index.data(Qt.ItemDataRole.DisplayRole)) is not None:
+            size.setHeight(max(size.height(), 48))
+        return size
 
 
 class DesktopDashboard:
@@ -453,7 +537,10 @@ class DesktopDashboard:
         table.setColumnHidden(8, False) # Observacoes obrigatorias
         table.setIconSize(QSize(28, 28))
         table.verticalHeader().hide()
-        table.verticalHeader().setDefaultSectionSize(44)
+        table.verticalHeader().setDefaultSectionSize(50)
+        # A coluna tem UMA fonte de renderizacao; sem QWidget transparente
+        # por cima do texto original do QTableWidgetItem.
+        table.setItemDelegateForColumn(1, DueDateDelegate(table))
         table.setShowGrid(False)
         table.setAlternatingRowColors(False)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -622,43 +709,13 @@ class DesktopDashboard:
                         item.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
             date_item = table.item(row, 1)
             if date_item:
-                raw_date = date_item.text().strip()
-                try:
-                    due = datetime.strptime(raw_date, "%d/%m/%Y").date()
-                    delta = (due - datetime.now().date()).days
-                except (TypeError, ValueError):
-                    delta = None
-                if delta is not None:
-                    time_label = (
-                        f"{abs(delta)} dias atrás" if delta < -1
-                        else "Ontem" if delta == -1
-                        else "Hoje" if delta == 0
-                        else "Amanhã" if delta == 1
-                        else f"Em {delta} dias"
-                    )
-                    color = "#d43a42" if delta < 0 else (
-                        "#bf820e" if delta <= 1 else "#657d9d"
-                    )
-                    date_wrap = QWidget(table)
-                    date_wrap.setAttribute(
-                        Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-                    )
-                    date_layout = QVBoxLayout(date_wrap)
-                    date_layout.setContentsMargins(5, 1, 2, 1)
-                    date_layout.setSpacing(0)
-                    main_date = QLabel(raw_date, date_wrap)
-                    main_date.setStyleSheet(
-                        "color:#263e60;font-size:11px;font-weight:650;"
-                    )
-                    rel = QLabel(time_label, date_wrap)
-                    rel.setStyleSheet(
-                        f"color:{color};font-size:10px;font-weight:700;"
-                    )
-                    date_layout.addWidget(main_date, 0, Qt.AlignmentFlag.AlignVCenter)
-                    date_layout.addWidget(rel, 0, Qt.AlignmentFlag.AlignVCenter)
-                    main_date.setToolTip(raw_date)
-                    rel.setToolTip(time_label)
-                    table.setCellWidget(row, 1, date_wrap)
+                # Preserva o QTableWidgetItem como fonte unica do vencimento.
+                # Tooltip complementa, sem instalar widgets que repintam a data.
+                date_text = date_item.text().strip()
+                context = DueDateDelegate.date_context(date_text)
+                date_item.setToolTip(
+                    f"{date_text} — {context[0]}" if context else date_text
+                )
 
             status = table.item(row, 3)
             if status:

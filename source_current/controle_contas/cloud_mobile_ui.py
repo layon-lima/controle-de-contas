@@ -198,7 +198,7 @@ def integrate_cloud_mobile_button() -> None:
         table.setAlternatingRowColors(False)
         table.setShowGrid(False)
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(44)
+        table.verticalHeader().setDefaultSectionSize(50)
 
         headers = {
             0: "Fornecedor",
