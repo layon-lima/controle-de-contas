@@ -3301,15 +3301,12 @@ def _atualizar_tabela_com_obs(self, *args, **kwargs):
         for coluna, valor in enumerate(valores):
             item = ui.QTableWidgetItem(str(valor))
 
-            if coluna in (1, 2, 3, 4, 5, 6):
-                item.setTextAlignment(
-                    ui.Qt.AlignmentFlag.AlignCenter
-                )
-            else:
-                item.setTextAlignment(
-                    ui.Qt.AlignmentFlag.AlignLeft
-                    | ui.Qt.AlignmentFlag.AlignVCenter
-                )
+            # O conteúdo começa sempre na margem esquerda: ao arrastar
+            # a borda direita da coluna, o texto não anda com ela.
+            item.setTextAlignment(
+                ui.Qt.AlignmentFlag.AlignLeft
+                | ui.Qt.AlignmentFlag.AlignVCenter
+            )
 
             try:
                 item.setBackground(ui.QColor(cor_fundo))
