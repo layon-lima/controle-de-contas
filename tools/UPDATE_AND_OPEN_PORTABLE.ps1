@@ -3,8 +3,11 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $AppDir = Join-Path $Root "portable_app"
 $Launcher = Join-Path $AppDir "launcher.py"
-$StartLog = Join-Path $env:LOCALAPPDATA "ControleContas\portable_startup.log"
+$StartLogDir = Join-Path $env:LOCALAPPDATA "ControleContas"
+$StartLog = Join-Path $StartLogDir ("portable_startup_" + (Get-Date -Format "yyyyMMdd_HHmmss_fff") + "_" + [guid]::NewGuid().ToString("N").Substring(0,6) + ".log")
+$ErrorLog = $StartLog + ".errors"
 $ProgressPreference = "SilentlyContinue"
+Set-Location -LiteralPath $Root
 
 function Progress([int]$Percent, [string]$Title) {
     Write-Host "CC_PROGRESS|$Percent|$Title"
@@ -36,13 +39,12 @@ $TargetCommit = (& git -C $Root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or !$TargetCommit) { throw "Nao foi possivel confirmar a revisao GitHub." }
 
 Progress 68 "Iniciando a versao portatil sem instalacao"
-$StartDir = Split-Path $StartLog -Parent
-New-Item -ItemType Directory -Force -Path $StartDir | Out-Null
+New-Item -ItemType Directory -Force -Path $StartLogDir | Out-Null
 # O launcher reinicia APENAS o servidor portatil, e nao o app instalado.
 # Nao abrir console; manter um unico processo Python com logs em arquivo.
 $Process = Start-Process -FilePath $PythonPath -ArgumentList @(
     "-u", ('"' + $Launcher + '"')
-) -WorkingDirectory $Root -WindowStyle Hidden -PassThru -RedirectStandardOutput $StartLog -ErrorAction Stop
+) -WorkingDirectory $Root -WindowStyle Hidden -PassThru -RedirectStandardOutput $StartLog -RedirectStandardError $ErrorLog -ErrorAction Stop
 
 Progress 77 "Aguardando o servidor portatil ficar disponivel"
 $Online = $false
@@ -64,6 +66,7 @@ for ($i=0; $i -lt 90; $i++) {
 }
 if (-not $Online) {
     if (Test-Path $StartLog) { Get-Content $StartLog -Tail 30 | Out-Host }
+    if (Test-Path $ErrorLog) { Get-Content $ErrorLog -Tail 30 | Out-Host }
     throw "O aplicativo portatil nao respondeu com a revisao atual. Nao sera marcado como atualizado."
 }
 Progress 88 "Controle de Contas portatil atualizado e aberto"
