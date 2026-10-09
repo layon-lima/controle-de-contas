@@ -339,6 +339,21 @@ $('uploadFile').addEventListener('change',async e=>{
   const file=e.target.files[0];if(file){try{await uploadAccountPDF(file)}catch(err){notice(err.message,true)}}
   e.target.value='';
 });
+$('folderBtn').addEventListener('click',async()=>{
+  try{
+    const data=await api('/api/settings/folder');
+    showModal('Pasta de boletos',
+      'Mesma pasta-base usada no Controle de Contas instalado. Os PDFs são separados por ano e mês de vencimento.',
+      '<label class="field wide">Pasta-base no PC<input id="folderPath" type="text" placeholder="C:\\Meus Documentos\\Boletos" value="'+esc(data.folder||'')+'"></label>'+
+      '<p class="hint">Escolha uma pasta que já exista. O aplicativo criará as subpastas BOLETOS ANO / MÊS automaticamente.</p>',
+      'Salvar pasta',async()=>{
+        const folder=$('folderPath').value.trim();
+        const saved=await api('/api/settings/folder','POST',{folder});
+        notice('Pasta-base atualizada: '+saved.folder);
+        return true;
+      });
+  }catch(e){notice(e.message||String(e),true)}
+});
 $('mobileBtn').addEventListener('click',async()=>{
   try{const data=await api('/api/mobile-link');window.open(data.url,'_blank','noopener');}
   catch(e){notice(e.message,true)}
