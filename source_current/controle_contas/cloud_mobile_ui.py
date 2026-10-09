@@ -637,8 +637,14 @@ def integrate_cloud_mobile_button() -> None:
                 "min-height:40px;border:1px solid #1f6feb;color:#ffffff;"
                 "background:#1f6feb;border-radius:9px;font-weight:800;"
             )
-            open_receipt.clicked.connect(lambda: _click_existing(self, "Abrir comprovante"))
-            edit_account.clicked.connect(lambda: _click_existing(self, "Editar"))
+            open_receipt.clicked.connect(
+                lambda: getattr(self, "_desktop_dashboard", None)
+                and self._desktop_dashboard._click_original("Abrir comprovante")
+            )
+            edit_account.clicked.connect(
+                lambda: getattr(self, "_desktop_dashboard", None)
+                and self._desktop_dashboard._click_original("Editar")
+            )
             layout.addWidget(open_receipt)
             layout.addWidget(edit_account)
 
