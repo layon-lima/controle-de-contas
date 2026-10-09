@@ -37,6 +37,24 @@ def check_pdf(data: bytes):
         raise ValueError("O PDF está danificado ou não pode ser aberto.") from exc
 
 
+def cleanup_staging(appdir: Path):
+    """Apaga PDFs temporários órfãos após uma reinicialização do servidor."""
+    directory = appdir / "portable_staging"
+    if not directory.is_dir():
+        return
+    now = time.time()
+    with PREVIEW_LOCK:
+        live = {record[0] for record in PREVIEWS.values()}
+        for file in directory.glob("*.pdf"):
+            if file in live:
+                continue
+            try:
+                if now - file.stat().st_mtime > PREVIEW_SECONDS:
+                    file.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def _purge_expired():
     now = time.monotonic()
     for ticket, (path, deadline, _filename, _fields) in list(PREVIEWS.items()):
@@ -50,6 +68,7 @@ def preview(data: bytes, filename: str, appdir: Path,
     check_pdf(data)
     temp_folder = appdir / "portable_staging"
     temp_folder.mkdir(parents=True, exist_ok=True)
+    cleanup_staging(appdir)
     ticket = secrets.token_urlsafe(24)
     pdf = temp_folder / (ticket + ".pdf")
     pdf.write_bytes(data)
