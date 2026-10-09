@@ -282,6 +282,16 @@ class DesktopFeatures:
                     )
         self._refresh_tags()
         self.window.atualizar_tabela()
+        return True
+
+    def _payment_recorded(self, account_id):
+        with self.window.banco.conexao() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM pagamentos WHERE conta_id=? "
+                "AND data_pagamento IS NOT NULL AND TRIM(data_pagamento) <> ''",
+                (int(account_id),),
+            ).fetchone()
+        return row is not None
 
     def _patch_row_dispatch(self):
         def action(dashboard, row, what):
@@ -302,9 +312,11 @@ class DesktopFeatures:
             elif what == "Enviar para pagamento":
                 return self.send_for_payment(account_id)
             elif what == "Registrar pagamento":
+                was_paid = self._payment_recorded(account_id)
                 self.window.registrar_pagamento()
+                return True if not was_paid and self._payment_recorded(account_id) else None
             elif what == "TAGs":
-                self.manage_tags([account_id])
+                return self.manage_tags([account_id])
             elif what == "Marcar como enviado":
                 return self.send_for_payment(account_id)
             elif what == "Editar":
