@@ -14,17 +14,17 @@ if not errorlevel 1 (
   )
 )
 if exist "%LocalAppData%\Programs\Python\Python313\python.exe" (
-  "%LocalAppData%\Programs\Python\Python313\python.exe" -u "%~dp0portable_app\server.py"
+  "%LocalAppData%\Programs\Python\Python313\python.exe" -u "%~dp0portable_app\launcher.py"
   exit /b %ERRORLEVEL%
 )
 where py >nul 2>nul
 if not errorlevel 1 (
-  py -3.13 -u "%~dp0portable_app\server.py"
+  py -3.13 -u "%~dp0portable_app\launcher.py"
   exit /b %ERRORLEVEL%
 )
 where python >nul 2>nul
 if not errorlevel 1 (
-  python -u "%~dp0portable_app\server.py"
+  python -u "%~dp0portable_app\launcher.py"
   exit /b %ERRORLEVEL%
 )
 echo Python 3 nao encontrado. O app portatil precisa do Python usado pelo projeto.
