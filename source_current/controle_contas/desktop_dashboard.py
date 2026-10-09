@@ -833,7 +833,7 @@ class DesktopDashboard:
             self._click_original(action)
 
     def _show_action_feedback(self, message, result="success"):
-        """Notificação dentro da listagem, sem abrir caixas de confirmação."""
+        """Aviso discreto, sem modal e sem cobrir a área de trabalho."""
         root = self.window.centralWidget()
         if root is None:
             return
@@ -841,7 +841,8 @@ class DesktopDashboard:
         if notice is None:
             notice = QLabel(root)
             notice.setObjectName("dashboardActionFeedback")
-            notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            notice.setAlignment(Qt.AlignmentFlag.AlignVCenter |
+                                Qt.AlignmentFlag.AlignLeft)
             notice.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             self._action_notice = notice
             timer = QTimer(root)
@@ -849,24 +850,30 @@ class DesktopDashboard:
             timer.timeout.connect(notice.hide)
             self._action_notice_timer = timer
         bg, fg, border, symbol = {
-            "success": ("#e5f7eb", "#08653c", "#9cdbb7", "✓"),
-            "waiting": ("#eaf3ff", "#225c98", "#a8c9f5", "●"),
-            "error": ("#fff0f0", "#a22534", "#e8a4a9", "!"),
-        }.get(result, ("#eaf3ff", "#225c98", "#a8c9f5", "●"))
-        notice.setText(symbol + "  " + message)
+            "success": ("#eef7f0", "#236044", "#c7dece", "✓"),
+            "waiting": ("#eff5fb", "#315e8a", "#d0ddea", "·"),
+            "error": ("#fff3f3", "#9e3440", "#edd0d2", "!"),
+        }.get(result, ("#eff5fb", "#315e8a", "#d0ddea", "·"))
+        width = max(125, min(284, root.width() - 20))
+        message = str(message or "")
+        notice.setToolTip(message)
+        notice.setText(
+            symbol + "  " + notice.fontMetrics().elidedText(
+                message, Qt.TextElideMode.ElideRight, max(50, width - 35)
+            )
+        )
         notice.setStyleSheet(
             f"QLabel#dashboardActionFeedback{{background:{bg};color:{fg};"
-            f"border:1px solid {border};border-radius:10px;"
-            "font-family:'Segoe UI';font-size:12px;font-weight:700;padding:8px 13px;}"
+            f"border:1px solid {border};border-radius:6px;"
+            "font-family:'Segoe UI';font-size:10px;"
+            "font-weight:600;padding:2px 8px;}"
         )
-        table = self.window.tabela
-        origin = table.mapTo(root, QPoint(0, 0))
-        width = min(495, max(240, table.width() - 20))
-        x = max(4, min(root.width() - width - 8, origin.x() + table.width() - width - 12))
-        notice.setGeometry(x, max(6, origin.y() + 9), width, 41)
+        # Sempre pequeno e junto ao rodapé, sem sobrepor cards nem filtros.
+        notice.setGeometry(max(4, root.width() - width - 12),
+                           max(0, root.height() - 96), width, 28)
         notice.show()
         notice.raise_()
-        self._action_notice_timer.start(3900)
+        self._action_notice_timer.start(2100)
 
     def _dispatch_row_action(self, button, row, action):
         """Feedback imediato no ícone e resultado após chamar a ação real."""
@@ -885,13 +892,13 @@ class DesktopDashboard:
             try:
                 result = self._activate_row(row, action)
             except Exception as exc:
-                self._show_action_feedback(
-                    action + ": " + str(exc), "error"
-                )
+                failure = str(exc)
                 result = False
+            else:
+                failure = ""
             if result is False:
                 color = "#fee4e7"
-                msg = action + " não concluído."
+                msg = failure or (action + " não concluído.")
                 state = "error"
             elif result is None:
                 color = "#e6f2ff"
@@ -1044,7 +1051,7 @@ class DesktopDashboard:
             for icon_name, action, tooltip in (
                 ("document", "Abrir conta", "Abrir PDF da conta"),
                 ("suggest", "Sugerir para pagamento", "Sugerir no mobile"),
-                ("sent", "Enviar para pagamento", "Marcar como enviado"),
+                ("sent", "Enviar para pagamento", "Copiar dados e registrar envio, com ou sem PDF"),
                 ("paid", "Registrar pagamento", "Registrar pagamento desta conta"),
                 ("tag", "TAGs", "Gerenciar TAGs desta conta"),
                 ("more", "menu", "Outras ações"),
