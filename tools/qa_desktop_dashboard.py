@@ -275,8 +275,18 @@ for size in (1380, 900, 590):
         assert cell is not None and cell.widget() is card, (
             "Card desapareceu ou ficou sobre outro após redimensionar"
         )
+    if usable < 760:
+        assert window._desktop_dashboard._buttons["import"].text() == "", (
+            "Importar PDF não ficou compacto em janela estreita"
+        )
+        assert features.tag_filter.width() <= 125, (
+            "Filtro por TAG continua ocupando espaço demais"
+        )
 window.resize(1380, 840)
 app.processEvents()
+dashboard._layout_kpis()
+assert window._desktop_dashboard._buttons["import"].text() == "Importar PDF"
+assert features.tag_filter.width() == 170
 
 window.banco.registrar_pagamento(qa_id, {
     "valor_pago": 123.45,
