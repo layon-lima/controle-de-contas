@@ -358,161 +358,86 @@ class DesktopFeatures:
             return False
 
     def _record_sent(self, account_id):
-        """A data só é gravada depois que os dados foram copiados."""
+        """Grava o envio apenas depois de copiar os dados com sucesso."""
         stamp = datetime.now().isoformat(timespec="seconds")
         with self.window.banco.conexao() as conn:
             result = conn.execute(
                 "UPDATE contas SET enviado_pagamento_em="
-                "COALESCE(NULLIF(TRIM(enviado_pagamento_em), ''), ?),"
+                "COALESCE(NULLIF(TRIM(enviado_pagamento_em), ''), ?), "
                 "atualizado_em=? WHERE id=?",
                 (stamp, stamp, int(account_id)),
             )
             if result.rowcount != 1:
-                raise RuntimeError("A conta não foi encontrada ao gravar o envio.")
-        # Não sinalizar sucesso apenas porque o UPDATE foi executado.
-        # A instalação anterior mostrava sucesso, mas a coluna permanecia vazia.
+                raise RuntimeError("Conta não encontrada ao registrar o envio.")
         with self.window.banco.conexao() as conn:
-            saved = conn.execute(
+            row = conn.execute(
                 "SELECT enviado_pagamento_em FROM contas WHERE id=?",
                 (int(account_id),),
             ).fetchone()
-        if not saved or not str(saved["enviado_pagamento_em"] or "").strip():
-            raise RuntimeError("A data de envio não foi persistida no banco.")
+        if row is None or not str(row["enviado_pagamento_em"] or "").strip():
+            raise RuntimeError("A data de envio não foi confirmada no banco.")
 
     def mark_sent(self, account_id):
+        # Ação legada e ação por linha têm exatamente o mesmo comportamento.
         return self.send_for_payment(account_id)
 
-    def _copy_payment_data(self, account_id, account):
-        """Plano de segurança se o handler antigo não conseguir copiar."""
-        code = str(account.get("codigo_pagamento") or "").strip()
-        raw_value = float(account.get("valor") or 0)
-        amount = f"{raw_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    @staticmethod
+    def _payment_message(account):
+        """Dados de pagamento do cadastro: PDF é opcional, nunca uma condição."""
+        supplier = str(account.get("fornecedor") or "").strip()
+        try:
+            amount_value = float(account.get("valor") or 0)
+        except (TypeError, ValueError):
+            amount_value = 0
+        if not supplier or not (0 < amount_value < float("inf")):
+            raise ValueError(
+                "Informe fornecedor e valor válido antes de enviar para pagamento."
+            )
+        amount = f"{amount_value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         fields = [
-            ("FORNECEDOR", account.get("fornecedor")),
+            ("FORNECEDOR", supplier),
             ("DOCUMENTO", account.get("documento")),
             ("PAGADOR", account.get("pagador")),
             ("REFERÊNCIA", account.get("referencia")),
             ("VALOR", "R$ " + amount),
             ("VENCIMENTO", account.get("vencimento")),
             ("TIPO DE PAGAMENTO", account.get("tipo_pagamento")),
-            ("CÓDIGO PIX / LINHA DIGITÁVEL", code),
+            ("CÓDIGO PIX / LINHA DIGITÁVEL", account.get("codigo_pagamento")),
             ("OBSERVAÇÕES", account.get("observacoes")),
         ]
-        details = "\n".join(
+        return "\n".join(
             f"{name}: {str(value).strip()}"
             for name, value in fields if str(value or "").strip()
         )
-        if not details:
-            raise RuntimeError("Não há dados cadastrados para copiar.")
-        clipboard = QApplication.clipboard()
-        if clipboard is None:
-            raise RuntimeError("Área de transferência indisponível.")
-        clipboard.setText(details)
-        if clipboard.text() != details:
-            raise RuntimeError("Não foi possível confirmar a cópia dos dados.")
-        self._record_sent(account_id)
-        self.window.atualizar_tabela()
-        self._flash("Dados copiados para pagamento. Envio registrado.")
-        return True
-
-    def _expire_pending_send(self, account_id):
-        if getattr(self, "_pending_send_account_id", None) == account_id:
-            self._pending_send_account_id = None
-
-    def _on_send_clipboard_changed(self):
-        account_id = getattr(self, "_pending_send_account_id", None)
-        if account_id is None:
-            return
-        account = self._account(account_id)
-        if not account:
-            self._pending_send_account_id = None
-            return
-        code = str(account.get("codigo_pagamento") or "").strip()
-        supplier = str(account.get("fornecedor") or "").strip()
-        text = QApplication.clipboard().text()
-        if not text.strip() or not (
-            (code and code in text)
-            or (supplier and supplier.casefold() in text.casefold())
-        ):
-            return
-        self._pending_send_account_id = None
-        try:
-            self._record_sent(account_id)
-            self.window.atualizar_tabela()
-            self._flash("Dados copiados para pagamento. Envio registrado.")
-            self.dashboard._show_action_feedback(
-                "Dados copiados e envio registrado.", "success"
-            )
-        except Exception as exc:
-            self.dashboard._show_action_feedback(
-                "Falha ao registrar o envio: " + str(exc), "error"
-            )
 
     def send_for_payment(self, account_id):
-        """Abre o handler original de cópia e só registra envio após copiar."""
+        """Copiar primeiro, confirmar o clipboard, registrar no banco por último.
+
+        O handler anterior era dependente do PDF e podia alterar o estado da
+        conta sem realizar a cópia. Não acionamos aquele handler nem observamos
+        o clipboard global (que pode conter ações de outros aplicativos).
+        """
         account = self._account(account_id)
         if not account:
-            QMessageBox.warning(self.window, "Enviar para pagamento",
-                                "Conta não encontrada.")
+            self._flash("Conta não encontrada. Nada foi registrado.")
             return False
-        original = self.dashboard._buttons.get("original_send")
-        if original is None:
-            original = self.dashboard._find_action("Enviar para pagamento")
-        if original is None or not original.isEnabled():
-            # Instalações antigas nem sempre possuem o botão herdado.
-            return self._copy_payment_data(account_id, account)
-
-        clipboard = QApplication.clipboard()
-        before = clipboard.text() if clipboard is not None else ""
-        previous_stamp = str(account.get("enviado_pagamento_em") or "")
-        # A linha já está selecionada. A rotina nativa mantém seu formato.
-        original.click()
-        after = clipboard.text() if clipboard is not None else ""
-        code = str(account.get("codigo_pagamento") or "").strip()
-        copied = bool(after.strip()) and (
-            after != before or (bool(code) and code in after)
-        )
-
-        # A UI anterior podia marcar como enviado mesmo sem copiar.
-        current_stamp = str(self._account(account_id).get("enviado_pagamento_em") or "")
-        if not copied and current_stamp != previous_stamp:
-            with self.window.banco.conexao() as conn:
-                conn.execute(
-                    "UPDATE contas SET enviado_pagamento_em=? "
-                    "WHERE id=? AND enviado_pagamento_em=?",
-                    (previous_stamp or None, int(account_id), current_stamp),
-                )
-
-        if copied:
+        try:
+            details = self._payment_message(account)
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                raise RuntimeError("Área de transferência indisponível.")
+            clipboard.setText(details)
+            if clipboard.text() != details:
+                raise RuntimeError("Não foi possível copiar os dados de pagamento.")
+            # Não existe exigência de PDF ou de comprovante nesta operação.
             self._record_sent(account_id)
-            self.window.atualizar_tabela()
-            self._flash("Dados copiados para pagamento. Envio registrado.")
-            return True
-
-        # Se a UI antiga abriu uma tela de cópia não modal, aguarde a
-        # interação do usuário sem registrar a conta prematuramente.
-        dialog = QApplication.activeModalWidget()
-        if dialog is None:
-            dialog = next(
-                (d for d in self.window.findChildren(QDialog) if d.isVisible()), None
-            )
-        if dialog is not None:
-            self._pending_send_account_id = account_id
-            if not getattr(self, "_send_clipboard_watch_connected", False):
-                clipboard.dataChanged.connect(self._on_send_clipboard_changed)
-                self._send_clipboard_watch_connected = True
-            # Nunca reter uma cópia pendente indefinidamente: o clipboard
-            # pode mudar por motivos não relacionados ao app.
-            QTimer.singleShot(
-                300000,
-                lambda aid=account_id: self._expire_pending_send(aid),
-            )
-            self._flash("Copie os dados na janela aberta para registrar o envio.")
-            return None
-
-        # Se o callback legado não copiou nem abriu sua janela, não deixa
-        # o ícone inerte: copia os campos reais da conta diretamente.
-        return self._copy_payment_data(account_id, account)
+        except (ValueError, RuntimeError, OSError) as exc:
+            self._flash("Envio não concluído: " + str(exc))
+            self.dashboard._show_action_feedback(str(exc), "error")
+            return False
+        self.window.atualizar_tabela()
+        self._flash("Dados copiados para pagamento; envio registrado.")
+        return True
 
     def _flash(self, message):
         status = self.window.statusBar() if hasattr(self.window, "statusBar") else None
