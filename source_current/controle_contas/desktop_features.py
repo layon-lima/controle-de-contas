@@ -56,75 +56,76 @@ class DesktopFeatures:
         return self.window.banco.buscar_conta(int(account_id)) or {}
 
     def _install_toolbar(self):
+        """Faixa única e compacta: filtros discretos + busca junto à tabela."""
         w = self.window
         bulk = w._bulk_bar
         lay = bulk.layout()
-        bulk.setFixedHeight(42)
-        lay.setContentsMargins(6, 2, 6, 2)
-        lay.setSpacing(5)
-
-        # Apenas controles de trabalho: sem seleção total, limpar ou marcar enviado.
-        for name in ("_bulk_select_all_button", "_bulk_sent_button",
-                     "_bulk_clear_button"):
-            button = getattr(w, name, None)
-            if button is not None:
-                button.hide()
-
-        # Reaproveita o seletor de status original, com sinal/filtro intactos.
+        bulk.setFixedHeight(48)
+        bulk.setStyleSheet(
+            "QFrame#bulkPaymentBar{background:#f8fbff;"
+            "border:1px solid #dfebf6;border-radius:12px;}"
+            "QFrame#bulkPaymentBar QLabel{color:#657b99;font-size:10px;"
+            "font-weight:800;border:0;}"
+            "QFrame#bulkPaymentBar QComboBox{background:#ffffff;"
+            "border:1px solid #dbe7f4;border-radius:8px;"
+            "min-height:30px;padding:0 8px;color:#294566;font-weight:650;}"
+        )
+        lay.setContentsMargins(10, 4, 10, 4)
+        lay.setSpacing(7)
+        # As operações agora são exclusivamente por linha.
+        for name in (
+            "_bulk_select_all_button", "_bulk_sent_button", "_bulk_clear_button",
+            "_bulk_suggest_button", "_bulk_count_label",
+        ):
+            old = getattr(w, name, None)
+            if old:
+                old.hide()
+        # O botão original de pagamento foi ocultado pelo dashboard.
+        # O próprio método registrar_pagamento continua disponível por linha.
+        title = QLabel("FILTROS", bulk)
+        lay.insertWidget(0, title)
         filt = getattr(w, "filtro", None)
         if filt is not None:
             parent = filt.parentWidget()
-            if parent is not None and parent.layout() is not None:
+            if parent and parent.layout():
                 parent.layout().removeWidget(filt)
             filt.setParent(bulk)
-            filt.setFixedWidth(138)
-            filt.setFixedHeight(32)
-            filt.setToolTip("Filtrar por situação")
-            lay.insertWidget(0, filt)
-
-        tag_combo = QComboBox(bulk)
-        tag_combo.setObjectName("desktopTagFilter")
-        tag_combo.setFixedWidth(156)
-        tag_combo.setFixedHeight(32)
-        lay.insertWidget(1, tag_combo)
-        self.tag_filter = tag_combo
+            filt.setFixedSize(135, 34)
+            filt.setToolTip("Situação da conta")
+            lay.insertWidget(1, filt)
+        tags = QComboBox(bulk)
+        tags.setObjectName("desktopTagFilter")
+        tags.setFixedSize(170, 34)
+        tags.setToolTip("Filtrar contas por TAG")
+        lay.insertWidget(2, tags)
+        self.tag_filter = tags
         self._refresh_tags()
-        tag_combo.currentIndexChanged.connect(self._filter_tags)
+        tags.currentIndexChanged.connect(self._filter_tags)
+        search = getattr(w, "busca", None)
+        if search is not None:
+            parent = search.parentWidget()
+            if parent and parent.layout():
+                parent.layout().removeWidget(search)
+            search.setParent(bulk)
+            search.setMinimumWidth(260)
+            search.setMaximumWidth(16777215)
+            search.setFixedHeight(35)
+            search.setObjectName("desktopSearch")
+            search.setPlaceholderText("Pesquisar fornecedor, valor, descrição ou vencimento...")
+            lay.addWidget(search, 1)
 
-        tag_button = QPushButton("TAGs", bulk)
-        tag_button.setObjectName("desktopTagsButton")
-        tag_button.setToolTip("Criar e atribuir TAGs às contas selecionadas")
-        tag_button.clicked.connect(lambda: self.manage_tags(self._ids()))
-        lay.insertWidget(max(0, lay.count()-1), tag_button)
-
-        pay_button = QPushButton("Pagar selecionadas", bulk)
-        pay_button.setObjectName("desktopPayBatchButton")
-        pay_button.setToolTip("Registrar pagamentos sem exigir comprovante PDF")
-        pay_button.clicked.connect(self.pay_selected)
-        lay.insertWidget(max(0, lay.count()-1), pay_button)
-
-        # Refaz a conexão das sugestões: a rota remota antiga precisa ser
-        # diagnosticada e uma chamada não pode ser contada como sucesso sem OK.
-        suggest = getattr(w, "_bulk_suggest_button", None)
-        if suggest:
-            try:
-                suggest.clicked.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            suggest.clicked.connect(self.suggest_checked)
-        # A antiga faixa de filtros ficava alta e praticamente vazia.
         parent = w.tabela.parentWidget()
-        layout = parent.layout() if parent else None
-        if layout:
-            layout.setSpacing(3)
-            layout.setContentsMargins(7, 4, 7, 6)
-            position = layout.indexOf(bulk)
-            for i in range(position):
-                it = layout.itemAt(i)
-                widget = it.widget() if it else None
-                if widget and widget is not w.tabela:
+        listing = parent.layout() if parent else None
+        if listing:
+            listing.setSpacing(4)
+            listing.setContentsMargins(7, 4, 7, 6)
+            position = listing.indexOf(bulk)
+            for index in range(max(position, 0)):
+                item = listing.itemAt(index)
+                widget = item.widget() if item else None
+                if widget is not None and widget is not w.tabela:
                     widget.hide()
-                nested = it.layout() if it else None
+                nested = item.layout() if item else None
                 if nested:
                     nested.setContentsMargins(0, 0, 0, 0)
                     nested.setSpacing(0)
