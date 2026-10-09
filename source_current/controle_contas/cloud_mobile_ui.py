@@ -469,7 +469,7 @@ def integrate_cloud_mobile_button() -> None:
                 conn.executemany(
                     """
                     UPDATE contas
-                       SET enviado_pagamento_em = COALESCE(enviado_pagamento_em, ?),
+                       SET enviado_pagamento_em = COALESCE(NULLIF(TRIM(enviado_pagamento_em), ''), ?),
                            atualizado_em = ?
                      WHERE id = ?
                     """,
