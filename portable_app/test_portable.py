@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 import tempfile
 import threading
 import unittest
@@ -40,7 +41,7 @@ class PortableDataTests(unittest.TestCase):
         self.data = self.root / "data"
         self.data.mkdir()
         self.db = self.data / "controle_contas.db"
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn:
             conn.executescript(SCHEMA)
             conn.execute(
                 "INSERT INTO contas (fornecedor,valor,vencimento,observacoes,"
@@ -49,6 +50,7 @@ class PortableDataTests(unittest.TestCase):
                 ("PROVA SEM PDF", 123.45, date.today().isoformat(),
                  "Teste de cadastro", "123 456 789", s.stamp(), s.stamp(), "")
             )
+            conn.commit()
         self.patchers = [
             patch.object(s, "DB_PATH", self.db),
             patch.object(s, "APP_DIR", self.root),
@@ -70,7 +72,7 @@ class PortableDataTests(unittest.TestCase):
     def test_send_is_not_persisted_until_acknowledgment(self):
         ready = s.prepare_send(1)
         self.assertIn("VALOR: R$ 123,45", ready["text"])
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn:
             before = conn.execute(
                 "SELECT enviado_pagamento_em FROM contas WHERE id=1").fetchone()
         self.assertEqual(before[0], "")
@@ -87,7 +89,7 @@ class PortableDataTests(unittest.TestCase):
 
     def test_account_edit_does_not_touch_pdf_or_sent_status(self):
         s.confirm_send(1, s.prepare_send(1)["nonce"])
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn:
             before = conn.execute(
                 "SELECT enviado_pagamento_em FROM contas WHERE id=1").fetchone()[0]
         s.edit_account(1, {
@@ -140,7 +142,7 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("window.__CONTAS_TOKEN__", js)
 
     def test_shutdown_only_local_portable_service_with_token(self):
-        httpd = s.ThreadingHTTPServer(("127.0.0.1", 0), s.Handler)
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
@@ -159,8 +161,22 @@ class PortableDataTests(unittest.TestCase):
         thread.join(timeout=3)
         self.assertFalse(thread.is_alive(), "Servidor portátil não fechou")
 
+    def test_database_handles_closed_before_temp_cleanup(self):
+        """A edição, o backup e a consulta não devem deixar .db travados."""
+        s.assign_tags(1, [], "TESTE")
+        s.prepare_send(1)
+        s.list_accounts()
+        backup = next((self.root / "backups").glob("*.db"))
+        # Em Windows, renomear um arquivo aberto pelo SQLite dá WinError 32.
+        renamed = backup.with_suffix(".renamed")
+        backup.rename(renamed)
+        renamed.rename(backup)
+        moved = self.db.with_suffix(".moved")
+        self.db.rename(moved)
+        moved.rename(self.db)
+
     def test_http_api_rejects_request_without_token_or_from_other_origin(self):
-        httpd = s.ThreadingHTTPServer(("127.0.0.1", 0), s.Handler)
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
