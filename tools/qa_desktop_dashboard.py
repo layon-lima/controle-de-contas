@@ -64,6 +64,28 @@ for name in ("brand","smartphone","upload","plus","overdue","upcoming","ontime",
     asset = _asset_icon(name)
     assert not asset.isNull(), "Icone ausente: " + name
     assert not asset.pixmap(20, 20).isNull(), "Falha ao renderizar SVG: " + name
+# Aparência: superfícies, hierarquia tipográfica e estados de interação
+# usam uma só linguagem visual. Não alteram o layout nem os dados.
+from controle_contas.desktop_dashboard import DASHBOARD_STYLE
+assert "QTableWidget::item:hover" in DASHBOARD_STYLE
+assert "QHeaderView::section:hover" in DASHBOARD_STYLE
+assert "QPushButton:pressed" in DASHBOARD_STYLE
+assert "QMenu::item:selected" in DASHBOARD_STYLE
+assert "QTableWidget QToolButton#sendPaymentIcon" in DASHBOARD_STYLE
+assert "QTableWidget QToolButton#registerPaymentIcon" in DASHBOARD_STYLE
+assert "QToolTip" in DASHBOARD_STYLE
+assert "background: #f3f6fa" in DASHBOARD_STYLE, "Tema geral não foi aplicado"
+assert "gridline-color: #e7edf4" in DASHBOARD_STYLE, (
+    "Divisórias perderam consistência visual"
+)
+for kpi in window._desktop_dashboard._kpi_cards:
+    assert "border-left:3px solid" in kpi.styleSheet(), (
+        "Cards deveriam usar superfície neutra e uma faixa de status discreta"
+    )
+assert "background:#ffffff" in window._desktop_dashboard._kpi_cards[0].styleSheet()
+assert "#ffffff" in window._bulk_bar.styleSheet(), (
+    "Barra de filtros mantém tema diferente"
+)
 assert window._bulk_bar.maximumHeight() <= 50, "Faixa de filtros alta"
 assert window.busca.parentWidget() is window._bulk_bar, "Busca longe da tabela"
 strip = window.findChild(QWidget, "dashboardKpiStrip")
@@ -342,6 +364,12 @@ paid_rows = [
 assert len(paid_rows) == 1, "Conta paga nao apareceu em Pagamentos"
 actions = window.tabela.cellWidget(paid_rows[0],9)
 assert actions is not None and len(actions.findChildren(QToolButton)) == 6, "Ações de linha incompletas"
+assert len(actions.findChildren(QToolButton, "sendPaymentIcon")) == 1, (
+    "Ícone Enviar não tem identidade visual própria"
+)
+assert len(actions.findChildren(QToolButton, "registerPaymentIcon")) == 1, (
+    "Ícone Registrar pagamento não tem identidade visual própria"
+)
 assert ui.PagamentoDialog.validar.__name__ == "_validar_pagamento_com_pasta"
 assert ui.PagamentoDialog.dados.__name__ == "_dados_pagamento_sem_copia"
 obs = window.tabela.item(paid_rows[0],8)
