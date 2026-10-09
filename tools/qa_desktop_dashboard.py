@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from PySide6.QtCore import Qt
 
 # Consoles Windows may default to cp1252; keep the test functional and
 # escape only characters the console cannot encode (e.g. status bullet).
@@ -73,11 +74,31 @@ assert [b.text() for b in nav_buttons] == ["Em aberto", "Pagas"]
 header = window.tabela.horizontalHeader()
 for col in (0,1,2,3,4,5,8,9):
     assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
+    title = window.tabela.horizontalHeaderItem(col)
+    assert title.textAlignment() & Qt.AlignmentFlag.AlignLeft, (
+        "O título deve permanecer à esquerda"
+    )
+assert window.tabela.showGrid(), "As divisórias das colunas não estão visíveis"
+assert "border-right: 2px solid" in window.tabela.styleSheet(), (
+    "Separadores visíveis no cabeçalho não foram aplicados"
+)
+minima = window._desktop_dashboard._minimum_column_widths
+assert minima[9] >= 225, "Ações deve comportar todos os seis ícones"
+for col in (0, 1, 2, 3, 4, 5, 8, 9):
+    window.tabela.setColumnWidth(col, 15)
+    assert window.tabela.columnWidth(col) >= minima[col], (
+        f"A coluna {col} desaparece quando é arrastada"
+    )
+    assert not window.tabela.isColumnHidden(col), "Coluna visível foi escondida"
 window.tabela.setColumnWidth(1, 212)
 window._desktop_dashboard._save_column_widths()
 import json
 settings = Path(temp) / "ControleContas" / "desktop_columns.json"
 assert json.loads(settings.read_text(encoding="utf-8"))["1"] == 212
+# O app não deve aceitar larguras salvas antigas menores que o limite.
+window.tabela.setColumnWidth(9, 10)
+window._desktop_dashboard._save_column_widths()
+assert json.loads(settings.read_text(encoding="utf-8"))["9"] >= minima[9]
 window.tabela.setColumnWidth(1, 160)
 assert window.abas.isHidden(), "Barra antiga de abas ainda visível"
 assert getattr(window, "busca", None) is not None, "Busca antiga perdida"
@@ -221,6 +242,16 @@ with window.banco.conexao() as conn:
 window._desktop_dashboard._desktop_features._refresh_tags()
 window.abas.setCurrentIndex(0)
 window.atualizar_tabela()
+assert window.tabela.showGrid(), "Atualização desligou a grade"
+qa_items = [
+    window.tabela.item(i, col)
+    for i in range(window.tabela.rowCount())
+    for col in (0, 1, 2, 3, 4, 5, 8)
+    if window.tabela.item(i, col) is not None
+]
+assert all(item.textAlignment() & Qt.AlignmentFlag.AlignLeft for item in qa_items), (
+    "O texto das células deve ficar preso à esquerda"
+)
 pending_ids = [
     int(window.tabela.item(i,7).text()) for i in range(window.tabela.rowCount())
     if window.tabela.item(i,7)
@@ -228,6 +259,7 @@ pending_ids = [
 assert qa_id not in pending_ids, "Conta paga sem PDF ainda aparece como pendente"
 window.abas.setCurrentIndex(1)
 window.atualizar_tabela()
+assert window.tabela.showGrid(), "A aba Pagas perdeu as divisórias"
 paid_rows = [
     i for i in range(window.tabela.rowCount())
     if window.tabela.item(i,7) and int(window.tabela.item(i,7).text()) == qa_id
