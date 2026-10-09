@@ -152,6 +152,7 @@ class PortableDataTests(unittest.TestCase):
             urlopen(Request(url, data=b"{}", method="POST",
                             headers={"Content-Type": "application/json"}),timeout=4)
         self.assertEqual(response.exception.code, 403)
+        response.exception.close()
         request = Request(
             url, data=b"{}", method="POST",
             headers={"Content-Type": "application/json", "X-Local-Token": s.TOKEN}
@@ -184,12 +185,14 @@ class PortableDataTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as response:
             urlopen(base + "/api/accounts", timeout=4)
         self.assertEqual(response.exception.code, 403)
+        response.exception.close()
         with self.assertRaises(HTTPError) as response:
             urlopen(Request(
                 base + "/api/accounts",headers={"X-Local-Token": s.TOKEN,
                                                 "Origin": "https://outro-site.com"}
             ), timeout=4)
         self.assertEqual(response.exception.code, 403)
+        response.exception.close()
         req = Request(base + "/api/accounts",headers={"X-Local-Token":s.TOKEN})
         with urlopen(req, timeout=4) as reply:
             items = json.loads(reply.read())
