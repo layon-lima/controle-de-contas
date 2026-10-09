@@ -116,12 +116,52 @@ class PortableDataTests(unittest.TestCase):
         self.assertEqual(s.list_accounts()["accounts"][0]["tags"], [])
 
     def test_attach_pdf_and_do_not_delete_physical_document(self):
-        name = s.upload_pdf(1, b"%PDF-1.4\nsample content", "nota fiscal.pdf")
-        self.assertTrue(name.endswith(".pdf"))
+        result = s.upload_pdf(1, b"%PDF-1.4\nsample content", "nota fiscal.pdf")
+        self.assertTrue(result["name"].endswith(".pdf"))
+        self.assertFalse(result["organized"])  # sem pasta-base configurada
         saved = s.pdf_path(1)
         self.assertTrue(saved.exists())
+        self.assertEqual(saved.parent, self.root / "documents" / "portatil")
         s.remove_account(1)
         self.assertTrue(saved.exists())  # nunca apagar documentos ao excluir cadastro
+
+    def test_imported_pdf_uses_existing_year_month_structure(self):
+        """Mesmo destino definido no app legado: BOLETOS ano / mês."""
+        base = self.root / "MINHA PASTA DE BOLETOS"
+        base.mkdir()
+        (self.root / "config_documentos.json").write_text(
+            json.dumps({"pasta_base": str(base)}, ensure_ascii=False),
+            encoding="utf-8"
+        )
+        s.edit_account(1, {
+            "fornecedor": "FORNECEDOR/TESTE", "valor": 123.45,
+            "vencimento": "2026-10-15", "observacoes": "BOLETO FATURA TESTE.pdf"
+        })
+        result = s.upload_pdf(1, b"%PDF-1.4\nfirst content", "qualquer.pdf")
+        target = s.pdf_path(1)
+        self.assertTrue(result["organized"])
+        self.assertEqual(
+            target.parent, base / "BOLETOS 2026" / "10 - OUTUBRO"
+        )
+        self.assertEqual(target.name, "BOLETO FATURA TESTE.pdf")
+        self.assertEqual(target.read_bytes(), b"%PDF-1.4\nfirst content")
+        repeated = s.upload_pdf(1, b"%PDF-1.4\nsecond content", "qualquer.pdf")
+        other = s.pdf_path(1)
+        self.assertEqual(other.name, "BOLETO FATURA TESTE (1).pdf")
+        self.assertNotEqual(target, other)
+        self.assertEqual(target.read_bytes(), b"%PDF-1.4\nfirst content")
+        self.assertEqual(other.read_bytes(), b"%PDF-1.4\nsecond content")
+        self.assertTrue(repeated["organized"])
+        self.assertEqual(len(list((self.root / "backups").glob("*.db"))), 1)
+
+    def test_configured_base_already_boletos_year_is_normalized(self):
+        base = self.root / "ARQUIVOS"
+        (base / "BOLETOS 2026").mkdir(parents=True)
+        (self.root / "config_documentos.json").write_text(
+            json.dumps({"pasta_base": str(base / "BOLETOS 2026")}),
+            encoding="utf-8"
+        )
+        self.assertEqual(s._pasta_documentos_configurada(), base)
 
     def test_cannot_write_to_missing_database(self):
         with patch.object(s, "DB_PATH", self.root / "not_exists.db"):
@@ -140,6 +180,14 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("addEventListener('dblclick'", js)
         self.assertIn("/icons/sent.svg", html)
         self.assertIn("window.__CONTAS_TOKEN__", js)
+        self.assertNotIn('class="footer"', html)
+        self.assertNotIn('data-tab="paid"', html)
+        self.assertIn('id="paidCard"', html)
+        self.assertIn("<small>PAGAS</small>", html)
+        self.assertNotIn("PAGAS (ESTE MÊS)", html)
+        self.assertIn("totals.Paga[0]++", js)
+        self.assertIn("togglePaidView", js)
+        self.assertIn("setAccountView('paid')", js)
 
     def test_shutdown_only_local_portable_service_with_token(self):
         httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
