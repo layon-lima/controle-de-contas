@@ -517,6 +517,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "GET" and route == "/api/mobile-link":
                     self._json({"ok": True, "url": get_mobile_link()})
                     return
+                if self.command == "POST" and route == "/api/control/stop":
+                    self._body()
+                    self._json({"ok": True, "message": "Servidor portátil finalizando."})
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    return
                 if len(parts) >= 3 and parts[:2] == ["api", "accounts"]:
                     try:
                         account_id = int(parts[2])
