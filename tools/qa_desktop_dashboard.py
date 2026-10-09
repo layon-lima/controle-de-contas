@@ -17,7 +17,7 @@ temp = tempfile.mkdtemp(prefix="cc_ui_qa_")
 os.environ["LOCALAPPDATA"] = temp
 os.environ["APPDATA"] = temp
 
-from PySide6.QtWidgets import QApplication, QDockWidget, QFrame, QHBoxLayout, QComboBox, QPushButton
+from PySide6.QtWidgets import QApplication, QDockWidget, QFrame, QHBoxLayout, QComboBox, QPushButton, QWidget, QHeaderView, QToolButton
 from controle_contas.desktop_dashboard import _asset_icon, DueDateDelegate
 app = QApplication.instance() or QApplication(sys.argv)
 
@@ -37,7 +37,8 @@ assert window.findChild(QDockWidget, "paymentDetailDock") is None, "Painel de de
 assert window.findChild(QComboBox, "desktopTagFilter") is not None, "Filtro por TAG ausente"
 assert window._desktop_dashboard._desktop_features is not None, "Fluxos desktop ausentes"
 assert window.tabela.columnCount() >= 10, "Tabela perdeu colunas"
-assert window.findChild(QPushButton, "desktopPayBatchButton") is not None, "Pagamento em lote ausente"
+assert window.findChild(QPushButton, "desktopPayBatchButton") is None, "Ação em lote deveria ter sido removida"
+assert window.findChild(QPushButton, "desktopTagsButton") is None, "TAGs no topo devem sair"
 assert window.tabela.columnCount() >= 10, "Faltou coluna de ações"
 assert window.tabela.horizontalHeaderItem(9).text() == "Ações", "Coluna de ações errada"
 assert window.tabela.horizontalHeaderItem(8).text() == "Observações", "Observacoes ausentes"
@@ -58,11 +59,26 @@ for row in range(window.tabela.rowCount()):
     )
 for name in ("brand","smartphone","upload","plus","overdue","upcoming","ontime",
              "paid","home","accounts","payments","reports","settings",
-             "document","send","more","edit","receipt","trash"):
+             "document","send","more","edit","receipt","trash","suggest","sent","tag"):
     asset = _asset_icon(name)
     assert not asset.isNull(), "Icone ausente: " + name
     assert not asset.pixmap(20, 20).isNull(), "Falha ao renderizar SVG: " + name
-assert window._bulk_bar.maximumHeight() <= 45, "Barra de acoes nao compactada"
+assert window._bulk_bar.maximumHeight() <= 50, "Faixa de filtros alta"
+assert window.busca.parentWidget() is window._bulk_bar, "Busca longe da tabela"
+strip = window.findChild(QWidget, "dashboardKpiStrip")
+assert strip is not None, "Cards não foram movidos ao cabeçalho"
+assert all(c.parentWidget() is strip for c in window.cards.values())
+nav_buttons = bottom.findChildren(QPushButton)
+assert [b.text() for b in nav_buttons] == ["Em aberto", "Pagas"]
+header = window.tabela.horizontalHeader()
+for col in (0,1,2,3,4,5,8,9):
+    assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.Interactive
+window.tabela.setColumnWidth(1, 212)
+window._desktop_dashboard._save_column_widths()
+import json
+settings = Path(temp) / "ControleContas" / "desktop_columns.json"
+assert json.loads(settings.read_text(encoding="utf-8"))["1"] == 212
+window.tabela.setColumnWidth(1, 160)
 assert window.abas.isHidden(), "Barra antiga de abas ainda visível"
 assert getattr(window, "busca", None) is not None, "Busca antiga perdida"
 
@@ -110,7 +126,7 @@ dash._navigate("payments")
 assert window.abas.currentIndex() == 1, "Pagamentos não navega à aba existente"
 dash._navigate("accounts")
 assert window.abas.currentIndex() == 0, "Contas não navega à aba existente"
-dash._navigate("overview")
+dash._navigate("accounts")
 print("BOTTOM NAV OK")
 
 # Teste isolado: cadastro e baixa de conta SEM PDF usando o Banco real.
@@ -165,6 +181,10 @@ paid_rows = [
     if window.tabela.item(i,7) and int(window.tabela.item(i,7).text()) == qa_id
 ]
 assert len(paid_rows) == 1, "Conta paga nao apareceu em Pagamentos"
+actions = window.tabela.cellWidget(paid_rows[0],9)
+assert actions is not None and len(actions.findChildren(QToolButton)) == 6, "Ações de linha incompletas"
+assert ui.PagamentoDialog.validar.__name__ == "_validar_pagamento_com_pasta"
+assert ui.PagamentoDialog.dados.__name__ == "_dados_pagamento_sem_copia"
 obs = window.tabela.item(paid_rows[0],8)
 assert obs is not None and "#HOLERITES QA" in obs.text(), (
     "TAG nao foi apresentada na listagem"
