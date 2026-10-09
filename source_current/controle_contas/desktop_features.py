@@ -62,13 +62,15 @@ class DesktopFeatures:
         lay = bulk.layout()
         bulk.setFixedHeight(48)
         bulk.setStyleSheet(
-            "QFrame#bulkPaymentBar{background:#f8fbff;"
-            "border:1px solid #dfebf6;border-radius:12px;}"
-            "QFrame#bulkPaymentBar QLabel{color:#657b99;font-size:10px;"
-            "font-weight:800;border:0;}"
+            "QFrame#bulkPaymentBar{background:#ffffff;"
+            "border:1px solid #e0e7ef;border-radius:9px;}"
+            "QFrame#bulkPaymentBar QLabel{color:#748598;font-size:10px;"
+            "font-weight:700;border:0;}"
             "QFrame#bulkPaymentBar QComboBox{background:#ffffff;"
-            "border:1px solid #dbe7f4;border-radius:8px;"
-            "min-height:30px;padding:0 8px;color:#294566;font-weight:650;}"
+            "border:1px solid #dce5ee;border-radius:8px;"
+            "min-height:30px;padding:0 9px;color:#293d53;font-weight:600;}"
+            "QFrame#bulkPaymentBar QComboBox:hover{border-color:#bfd0e2;}"
+            "QFrame#bulkPaymentBar QComboBox:focus{border-color:#4f8bc8;}"
         )
         lay.setContentsMargins(10, 4, 10, 4)
         lay.setSpacing(7)
