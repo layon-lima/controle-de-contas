@@ -163,6 +163,14 @@ with window.banco.conexao() as conn:
     ).fetchone()
     assert row and row["enviado_pagamento_em"], "Data de envio não foi registrada"
 window._desktop_dashboard._buttons["original_send"] = original_send
+# Ausência de handler herdado não pode deixar a ação inerte.
+window._desktop_dashboard._buttons["original_send"] = None
+QApplication.clipboard().setText("texto externo")
+assert features.send_for_payment(qa_id) is True, "Fluxo de cópia alternativo falhou"
+copied_text = QApplication.clipboard().text()
+assert "FORNECEDOR: QA PAGAMENTO SEM COMPROVANTE" in copied_text
+assert "VALOR: R$ 123,45" in copied_text
+window._desktop_dashboard._buttons["original_send"] = original_send
 dashboard = window._desktop_dashboard
 dashboard._show_action_feedback("Cópia concluída", "success")
 notice = window.findChild(QLabel, "dashboardActionFeedback")
