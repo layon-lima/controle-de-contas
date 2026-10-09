@@ -44,9 +44,44 @@ def run(engine: Path, path: Path):
     }
 
 
+def learn(engine: Path, path: Path, payload: dict):
+    if not engine.is_dir() or not path.is_file():
+        raise FileNotFoundError("Motor de leitura ou PDF indisponível.")
+    sys.path.insert(0, str(engine))
+    with contextlib.redirect_stdout(io.StringIO()):
+        from controle_contas import patches
+        patches.aplicar_patches()
+        final = payload.get("final") or {}
+        predicted = payload.get("predicted") or {}
+        output = patches._LAYOUT_V2.learn(
+            str(path),
+            final_values={
+                "recebedor": str(final.get("fornecedor") or ""),
+                "pagador": str(final.get("pagador") or ""),
+                "referencia": str(final.get("referencia") or ""),
+                "vencimento": str(final.get("vencimento") or ""),
+                "valor": final.get("valor") or 0,
+                "codigo_pagamento": str(final.get("codigo_pagamento") or ""),
+            },
+            predicted_values={
+                "recebedor": str(predicted.get("fornecedor") or ""),
+                "pagador": str(predicted.get("pagador") or ""),
+                "referencia": str(predicted.get("referencia") or ""),
+                "vencimento": str(predicted.get("vencimento") or ""),
+                "valor": predicted.get("valor") or 0,
+                "codigo_pagamento": str(predicted.get("codigo_pagamento") or ""),
+            },
+        )
+    return {"ok": True, "learning": output}
+
+
 if __name__ == "__main__":
     try:
-        result = run(Path(sys.argv[1]), Path(sys.argv[2]))
+        if len(sys.argv) > 3 and sys.argv[3] == "--learn":
+            result = learn(Path(sys.argv[1]), Path(sys.argv[2]),
+                           json.loads(sys.stdin.read()))
+        else:
+            result = run(Path(sys.argv[1]), Path(sys.argv[2]))
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
