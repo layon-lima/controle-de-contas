@@ -229,6 +229,13 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
         self.assertIn('-PassThru -ErrorAction Stop', script)
         self.assertIn('$Installation.WaitForExit()', script)
         self.assertIn('$Installation.ExitCode -ne 0', script)
+        self.assertIn('"/VERYSILENT"', script)
+        self.assertIn('"/SUPPRESSMSGBOXES"', script)
+        self.assertIn('"/NORESTART"', script)
+        self.assertIn('"/CLOSEAPPLICATIONS"', script)
+        self.assertIn('"/LOG="', script)
+        self.assertIn("Get-Content -LiteralPath $InstallerLog -Tail 70", script)
+        self.assertNotIn('Start-Process -FilePath $LaunchExe -WorkingDirectory', script)
         self.assertIn('/api/update/full', (
             root / "controller" / "server.py"
         ).read_text(encoding="utf-8"))
