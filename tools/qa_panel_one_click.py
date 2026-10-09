@@ -184,9 +184,9 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
                 self.assertTrue(snap["ok"])
                 self.assertEqual(snap["progress"], 100)
                 self.assertEqual(len(called), 2)
-                self.assertIn("BUILD_AND_INSTALL_DESKTOP.ps1", called[0])
+                self.assertIn("UPDATE_AND_OPEN_PORTABLE.ps1", called[0])
                 self.assertIn("DEPLOY_MOBILE_PERMANENT_ACCESS.ps1", called[1])
-                self.assertIn("PC e mobile", server._diagnostic_log())
+                self.assertIn("Portátil e mobile", server._diagnostic_log())
 
     def test_desktop_failure_skips_mobile_and_never_reaches_100(self):
         root = Path(__file__).resolve().parents[1]
@@ -255,6 +255,32 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
                     file.write("x" * 120_000)
                 persisted = server._job_snapshot()
                 self.assertEqual(persisted["progress"], 70)
+
+    def test_one_button_no_longer_runs_installer_for_portable(self):
+        """Painel antigo e novo atualizam o portátil, sem substituir o EXE."""
+        root = Path(__file__).resolve().parents[1]
+        legacy = (root / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1").read_text(
+            encoding="utf-8"
+        )
+        portable = (root / "tools" / "UPDATE_AND_OPEN_PORTABLE.ps1").read_text(
+            encoding="utf-8"
+        )
+        backend = (root / "controller" / "server.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("if (-not $LegacyDesktop)", legacy)
+        self.assertIn("UPDATE_AND_OPEN_PORTABLE.ps1", legacy)
+        self.assertIn('if ($LASTEXITCODE -ne 0)', legacy)
+        self.assertIn('$Installation.WaitForExit()', legacy)  # instalador legado preservado
+        self.assertIn('UPDATE_AND_OPEN_PORTABLE.ps1', backend)
+        self.assertIn('CONTROLLER_VERSION = "0.5.0"', backend)
+        self.assertNotIn('BUILD_AND_INSTALL_DESKTOP.ps1"\n            mobile_script', backend)
+        self.assertIn("unittest", portable)
+        self.assertIn("http://127.0.0.1:8767/health", portable)
+        self.assertIn('$Response.revision -eq $TargetCommit', portable)
+        self.assertIn('CC_PROGRESS|', portable)
+        self.assertNotIn('PyInstaller', portable)
+        self.assertNotIn('Inno Setup', portable)
 
     def test_job_never_starts_installer_when_sync_fails(self):
         with tempfile.TemporaryDirectory() as folder:
