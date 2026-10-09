@@ -408,9 +408,9 @@ class DesktopDashboard:
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(1)
         title = QLabel("Controle de Contas", brand_text)
-        title.setStyleSheet("color:#101d39;font-size:19px;font-weight:850;")
+        title.setStyleSheet("color:#18283d;font-size:18px;font-weight:700;")
         subtitle = QLabel("Gestão de contas a pagar e pagamentos", brand_text)
-        subtitle.setStyleSheet("color:#8797ac;font-size:10px;")
+        subtitle.setStyleSheet("color:#8191a4;font-size:10px;font-weight:400;")
         text_layout.addWidget(title)
         text_layout.addWidget(subtitle)
         brand_lay.addWidget(brand_text)
@@ -459,8 +459,8 @@ class DesktopDashboard:
             drag.setMaximumHeight(32)
             drag.setMinimumHeight(30)
             drag.setStyleSheet(
-                "background:#fbfdff;border:1px dashed #dee7f2;"
-                "border-radius:8px;color:#7185a0;font-size:11px;"
+                "background:#f8fafc;border:1px dashed #d6e2ee;"
+                "border-radius:7px;color:#8795a6;font-size:10px;"
             )
 
     def _import_pdf(self):
@@ -475,48 +475,56 @@ class DesktopDashboard:
         # duplicados. A altura compacta mantém mais linhas visíveis.
         cards = list(getattr(self.window, "cards", {}).items())
         colors = [
-            ("#fff5f5", "#fee6e8", "#db2938", "overdue"),
-            ("#fffbf3", "#fff0d6", "#c9880b", "upcoming"),
-            ("#f3fcf8", "#daf7e8", "#137b55", "ontime"),
-            ("#f4f8ff", "#e1edff", "#2470d8", "paid"),
+            ("#ffffff", "#fbebed", "#bf3945", "overdue"),
+            ("#ffffff", "#fff3df", "#a76b17", "upcoming"),
+            ("#ffffff", "#e8f5ee", "#137453", "ontime"),
+            ("#ffffff", "#eaf2fc", "#326ca8", "paid"),
         ]
         for index, (_key, card) in enumerate(cards[:4]):
             if card is None:
                 continue
             bg, icon_bg, accent, icon_name = colors[index]
-            card.setMinimumHeight(72)
-            card.setMaximumHeight(78)
+            card.setMinimumHeight(57)
+            card.setMaximumHeight(64)
             card.setObjectName(f"dashboardKpi{index}")
             card.setStyleSheet(
                 f"QFrame#dashboardKpi{index} {{"
-                f"background:{bg};border:1px solid #e9eff5;border-radius:14px;"
+                f"background:{bg};border:1px solid #e0e7ef;"
+                f"border-left:3px solid {accent};border-radius:10px;"
                 "}"
                 "QFrame QLabel{background:transparent;border:0;}"
             )
             existing_layout = card.layout()
             if existing_layout:
-                existing_layout.setContentsMargins(62, 5, 10, 5)
-                existing_layout.setSpacing(0)
+                existing_layout.setContentsMargins(52, 4, 9, 4)
+                existing_layout.setSpacing(1)
             for label in card.findChildren(QLabel):
                 text = str(label.text() or "").strip()
                 # Não herdar fontes enormes do layout legado: com quatro
                 # indicadores, o valor extrapolava a área disponível.
-                size = 14 if text.isdigit() else 12 if "R$" in text else 9
+                is_count = text.isdigit()
+                is_amount = "R$" in text
+                if text in ("●", "•", "·"):
+                    label.hide()
+                    continue
+                size = 16 if is_count else 10 if is_amount else 9
                 label.setFont(QFont(
                     "Segoe UI", size,
-                    QFont.Weight.Bold if text.isdigit() else QFont.Weight.Medium
+                    QFont.Weight.Bold if is_count else QFont.Weight.DemiBold
+                    if is_amount else QFont.Weight.Medium
                 ))
                 label.setMinimumWidth(0)
                 label.setWordWrap(False)
                 label.setStyleSheet(
-                    f"background:transparent;border:0;color:{accent};"
+                    f"background:transparent;border:0;"
+                    f"color:{accent if is_count else '#52657c' if is_amount else '#7a8a9c'};"
                 )
             icon = QLabel(card)
             icon.setObjectName("dashboardKpiIcon")
-            icon.setGeometry(10, 12, 45, 45)
+            icon.setGeometry(8, 10, 38, 38)
             icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon.setPixmap(_asset_icon(icon_name).pixmap(QSize(24, 24)))
-            icon.setStyleSheet(f"background:{icon_bg};border:0;border-radius:12px;")
+            icon.setPixmap(_asset_icon(icon_name).pixmap(QSize(21, 21)))
+            icon.setStyleSheet(f"background:{icon_bg};border:0;border-radius:10px;")
             icon.raise_()
 
             if index == 3:
@@ -564,11 +572,11 @@ class DesktopDashboard:
             )
             body = card.layout()
             if body is not None:
-                body.setContentsMargins(48, 3, 7, 3)
+                body.setContentsMargins(49, 3, 7, 3)
                 body.setSpacing(1)
             icon = card.findChild(QLabel, "dashboardKpiIcon")
             if icon is not None:
-                icon.setGeometry(5, 8, 40, 40)
+                icon.setGeometry(6, 10, 36, 36)
             self._kpi_cards.append(card)
             card.show()
         self._kpi_strip = strip
