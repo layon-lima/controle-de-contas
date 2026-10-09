@@ -4,6 +4,10 @@ const $=id=>document.getElementById(id);
 const token=window.__CONTAS_TOKEN__;
 let accounts=[], availableTags=[], selected=null, activeTab='open', dialogSave=null;
 const money=n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const localToday=()=>{
+  const d=new Date();
+  return String(d.getFullYear())+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+};
 const esc=v=>String(v===null||v===undefined?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dayLabel=v=>{
   if(!v)return '';
@@ -54,7 +58,7 @@ async function reload(){
 }
 function render(){
   const totals={'Vencida':[0,0],'Próxima':[0,0],'Em dia':[0,0],'Paga':[0,0]};
-  const today=new Date().toISOString().slice(0,7);
+  const today=localToday().slice(0,7);
   for(const a of accounts){
     if(a.status==='Paga'){
       if(String(a.data_pagamento||'').slice(0,7)===today){totals.Paga[0]++;totals.Paga[1]+=Number(a.valor_pago||a.valor||0);}
@@ -173,7 +177,7 @@ const accountFields=[
 function accountModal(a){
   const form=accountFields.map(([key,title,type])=>{
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
-    const value=a?a[key]||'':key==='vencimento'?new Date().toISOString().slice(0,10):'';
+    const value=a?a[key]||'':key==='vencimento'?localToday():'';
     const controls=type==='textarea'
       ?'<textarea name="'+key+'">'+esc(value)+'</textarea>'
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';
@@ -192,7 +196,7 @@ function accountModal(a){
 }
 function payModal(a){
   if(a.status==='Paga'){notice('Conta já paga.',true);return}
-  const now=new Date().toISOString().slice(0,10);
+  const now=localToday();
   showModal('Registrar pagamento',a.fornecedor+' · '+money(a.valor),
     '<label class="field">Data do pagamento<input type="date" id="paidDate" value="'+now+'"></label>'
     +'<p class="hint">Registro sem comprovante. Você poderá consultar a conta normalmente; a versão clássica permanece disponível para conciliação avançada de PDFs.</p>',
