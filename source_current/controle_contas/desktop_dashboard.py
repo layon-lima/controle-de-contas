@@ -804,6 +804,8 @@ class DesktopDashboard:
                 msg = {
                     "Enviar para pagamento": "Dados copiados e envio registrado.",
                     "Sugerir para pagamento": "Conta sugerida para pagamento.",
+                    "Registrar pagamento": "Pagamento registrado.",
+                    "TAGs": "TAGs salvas na conta.",
                     "Abrir conta": "PDF da conta aberto.",
                     "Abrir comprovante": "Comprovante aberto.",
                 }.get(action, action + " concluído.")
