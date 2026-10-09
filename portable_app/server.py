@@ -493,6 +493,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == "GET" and route == "/app.js":
                 self._send((WEB_DIR / "app.js").read_bytes(), mime="text/javascript; charset=utf-8")
                 return
+            if self.command == "GET" and route == "/search.svg":
+                self._send((WEB_DIR / "search.svg").read_bytes(), mime="image/svg+xml")
+                return
             if self.command == "GET" and route.startswith("/icons/"):
                 name = route.removeprefix("/icons/")
                 if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}\.svg", name):
