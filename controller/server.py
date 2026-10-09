@@ -551,8 +551,11 @@ def _start_mobile_deploy() -> tuple[bool, str]:
 
 
 def _pull_develop() -> tuple[bool, str]:
-    # A sincronizacao nao pode matar o proprio servidor que recebe o pedido.
-    # --ff-only evita merges inesperados na copia local.
+    # Evita pull concorrente enquanto o build de desktop já sincroniza a fonte.
+    with _JOB_LOCK:
+        if _JOB_STATE.get("running"):
+            return False, "Uma operação está em andamento. Aguarde no painel."
+    # --ff-only evita merges inesperados na cópia local.
     try:
         result = _run(["git", "pull", "--ff-only", "origin", "develop"],
                       timeout=90, cwd=ROOT)
@@ -589,11 +592,16 @@ def _start_local_desktop_update() -> tuple[bool, str]:
         "-File",
         str(script),
     ]
-    threading.Thread(
-        target=_run_logged_command,
-        args=("local_desktop_update", cmd, ROOT),
-        daemon=True,
-    ).start()
+    try:
+        threading.Thread(
+            target=_run_logged_command,
+            args=("local_desktop_update", cmd, ROOT),
+            daemon=True,
+        ).start()
+    except Exception as exc:
+        _set_job_state(running=False, ok=False,
+                       message="Não foi possível iniciar a atualização: " + str(exc))
+        return False, "Não foi possível iniciar a atualização: " + str(exc)
     return True, "Sincronização, testes e instalação iniciados em uma única operação."
 
 
