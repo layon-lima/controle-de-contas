@@ -116,7 +116,7 @@ let initiating=false;
 let cachedJob=null;
 let lastPercent=0;
 let lastStage='Pronto para começar';
-let legacyPhase=null;
+let legacyPhase=sessionStorage.getItem('cc_legacy_update')||null;
 let fallbackStarted=false;
 const sleep=(ms)=>new Promise(resolve=>setTimeout(resolve,ms));
 
@@ -178,8 +178,11 @@ function applyJob(job){
   if(job.running||initiating||legacyPhase!==null){
     setStatus('working','Em andamento',stage,job.message||'Processando atualização…',Math.min(99,percent));
   }else if(job.ok===true){
-    setStatus('success','Concluído','Tudo atualizado',job.message||'Atualização finalizada.',100);
-    lastPercent=100;
+    const allFinished=job.kind==='full_update'||job.kind==='mobile_deploy';
+    const title=allFinished?'Tudo atualizado':'Etapa concluída';
+    const progress=allFinished?100:Math.max(89,percent);
+    setStatus('success','Concluído',title,job.message||'Etapa finalizada.',progress);
+    lastPercent=progress;
   }else if(job.ok===false){
     setStatus('failed','Falhou',stage,job.message||'Falha na atualização. Copie o log e envie na conversa.',percent);
   }else{
@@ -194,6 +197,7 @@ async function startLegacy(){
     'Atualizando os arquivos antes de instalar…',2);
   await request('/api/panel/pull',{method:'POST'});
   legacyPhase='desktop';
+  sessionStorage.setItem('cc_legacy_update','desktop');
   await request('/api/update/local-desktop',{method:'POST'});
   lastPercent=2; lastStage='Preparando aplicativo Windows';
   updateButton();
@@ -214,7 +218,7 @@ async function runAll(){
     }
     await pollJob();
   }catch(err){
-    legacyPhase=null;
+    legacyPhase=null;sessionStorage.removeItem('cc_legacy_update');
     setStatus('failed','Falhou','Não foi possível iniciar',String(err.message||err),lastPercent);
   }finally{initiating=false;updateButton()}
 }
@@ -225,20 +229,21 @@ async function pollJob(){
     if(job.ok===true){
       lastPercent=89;lastStage='Preparando publicação mobile';
       legacyPhase='mobile';
+      sessionStorage.setItem('cc_legacy_update','mobile');
       setStatus('working','Em andamento',lastStage,'Desktop pronto. Publicando mobile…',89);
       try{await request('/api/mobile/deploy',{method:'POST'})}
       catch(err){
-        legacyPhase=null;
+        legacyPhase=null;sessionStorage.removeItem('cc_legacy_update');
         setStatus('failed','Falhou','Publicação mobile não iniciada',
           'PC atualizado, mas o mobile falhou: '+String(err.message||err),89);
         return;
       }
       return;
     }
-    if(job.ok===false)legacyPhase=null;
+    if(job.ok===false){legacyPhase=null;sessionStorage.removeItem('cc_legacy_update')}
   }else if(legacyPhase==='mobile'&&!job.running&&job.kind==='mobile_deploy'){
     if(job.ok===true){lastPercent=100;job={...job,progress:100,stage:'Concluído',message:'PC e mobile atualizados.'}}
-    legacyPhase=null;
+    legacyPhase=null;sessionStorage.removeItem('cc_legacy_update');
   }
   applyJob(job);
 }
