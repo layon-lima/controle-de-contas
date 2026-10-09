@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.3.3"
+CONTROLLER_VERSION = "0.4.0"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -396,7 +396,9 @@ _JOB_LOCK = threading.Lock()
 _JOB_STATE = {
     "running": False,
     "kind": "",
-    "message": "",
+    "message": "Pronto para atualizar.",
+    "stage": "Aguardando",
+    "progress": 0,
     "ok": None,
     "started_at": "",
     "finished_at": "",
@@ -409,11 +411,78 @@ def _set_job_state(**values) -> None:
         _JOB_STATE.update(values)
 
 
+def _recent_log_text(path: Path, limit: int = 128_000) -> str:
+    """Lê apenas o final do log, sem carregar gigabytes de output do build."""
+    try:
+        with path.open("rb") as file:
+            length = file.seek(0, 2)
+            file.seek(max(0, length - limit))
+            raw = file.read()
+        return raw.decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _job_snapshot() -> dict:
     with _JOB_LOCK:
         data = dict(_JOB_STATE)
-    data["log_tail"] = _tail(JOB_LOG_PATH, 80)
+    log = _recent_log_text(JOB_LOG_PATH, 96_000)
+    # A porcentagem corresponde a marcos confirmados, não a tempo estimado.
+    milestones = list(re.finditer(r"CC_PROGRESS\\|(\\d{1,3})\\|([^\\r\\n]+)", log))
+    if milestones and data.get("running"):
+        latest = milestones[-1]
+        pct = min(99, max(0, int(latest.group(1))))
+        if pct >= int(data.get("progress") or 0):
+            data["progress"] = pct
+            data["stage"] = latest.group(2).strip()
+    if data.get("running") and data.get("kind") == "full_update":
+        mobile_stages = {
+            "1": (90, "Preparando publicação mobile"),
+            "2": (92, "Autenticando no Cloudflare"),
+            "3": (94, "Validando migrações mobile"),
+            "4": (97, "Publicando aplicativo mobile"),
+            "5": (99, "Verificando servidor mobile"),
+        }
+        if int(data.get("progress") or 0) >= 89:
+            for match in re.finditer(r"\\[([1-5])/5\\]", log):
+                p, stage = mobile_stages[match.group(1)]
+                if p >= int(data["progress"]):
+                    data["progress"], data["stage"] = p, stage
+    data["progress"] = min(100, max(0, int(data.get("progress") or 0)))
+    # Mantém compatibilidade com consumidores antigos deste endpoint.
+    data["log_tail"] = log.splitlines()[-80:]
     return data
+
+
+def _diagnostic_log() -> str:
+    snapshot = _job_snapshot()
+    lines = [
+        "CONTROLE DE CONTAS - DIAGNOSTICO DO PAINEL",
+        "Resultado: " + ("EM ANDAMENTO" if snapshot["running"] else
+                          "CONCLUIDO" if snapshot.get("ok") is True else
+                          "FALHOU" if snapshot.get("ok") is False else "NAO EXECUTADO"),
+        "Etapa: " + str(snapshot.get("stage") or "-"),
+        "Progresso por etapas: " + str(snapshot["progress"]) + "%",
+        "Mensagem: " + str(snapshot.get("message") or "-"),
+        "Inicio: " + str(snapshot.get("started_at") or "-"),
+        "Fim: " + str(snapshot.get("finished_at") or "-"),
+        "",
+        "LOG DO PROCESSO (com final preservado):",
+    ]
+    try:
+        size = JOB_LOG_PATH.stat().st_size
+    except OSError:
+        size = 0
+    if size > 200_000:
+        lines.append("[Log grande: incluindo início e últimos 180 KB]")
+        with JOB_LOG_PATH.open("rb") as file:
+            beginning = file.read(12_000).decode("utf-8", errors="replace")
+        lines.append(beginning)
+        lines.append("\\n[... conteúdo intermediário omitido ...]\\n")
+        lines.append(_recent_log_text(JOB_LOG_PATH, 180_000))
+    else:
+        lines.append(_recent_log_text(JOB_LOG_PATH, 200_000))
+    return "\\n".join(lines)
 
 
 def _sync_develop_before_desktop_build(log) -> str:
@@ -523,6 +592,95 @@ def _run_logged_command(kind: str, cmd: list[str], cwd: Path) -> None:
             message=f"{type(exc).__name__}: {exc}",
             finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
+
+
+def _run_full_update() -> None:
+    """Único fluxo visível: sincronizar -> testar/instalar PC -> publicar mobile."""
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _set_job_state(
+        running=True, kind="full_update", ok=None,
+        progress=2, stage="Sincronizando com GitHub",
+        message="Atualização em andamento.",
+        started_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        finished_at="",
+    )
+    stage = "Sincronização"
+    try:
+        with JOB_LOG_PATH.open("w", encoding="utf-8", errors="replace") as log:
+            log.write("ATUALIZACAO COMPLETA: GITHUB > TESTES > PC > MOBILE\\n")
+            log.flush()
+            _sync_develop_before_desktop_build(log)
+            _set_job_state(progress=15, stage="Código sincronizado")
+            desktop_script = ROOT / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1"
+            mobile_script = ROOT / "tools" / "DEPLOY_MOBILE_PERMANENT_ACCESS.ps1"
+            if not desktop_script.is_file():
+                raise FileNotFoundError("Instalador desktop não encontrado.")
+            if not mobile_script.is_file():
+                raise FileNotFoundError("Script de publicação mobile não encontrado.")
+            def run_script(script: Path, label: str):
+                log.write("\\n" + label + "\\n")
+                log.flush()
+                process = subprocess.Popen(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                     "-File", str(script)],
+                    cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
+                    text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                return process.wait()
+
+            stage = "Instalação do aplicativo Windows"
+            if run_script(desktop_script, "ETAPA: ATUALIZANDO O DESKTOP") != 0:
+                raise RuntimeError(
+                    "O teste, a compilação ou a instalação do PC falhou. "
+                    "A publicação mobile não foi iniciada."
+                )
+            _set_job_state(progress=89, stage="Preparando publicação mobile")
+            stage = "Publicação mobile"
+            if run_script(mobile_script, "ETAPA: PUBLICANDO MOBILE") != 0:
+                raise RuntimeError(
+                    "O PC foi instalado, mas a publicação mobile falhou. "
+                    "Use Copiar log para enviar o erro."
+                )
+            log.write("\\nATUALIZACAO COMPLETA: PC e mobile finalizados.\\n")
+            log.flush()
+        _set_job_state(
+            running=False, ok=True, progress=100,
+            stage="Concluído", message="PC e mobile atualizados com sucesso.",
+            finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+    except Exception as exc:
+        description = f"{stage}: {exc}"
+        try:
+            with JOB_LOG_PATH.open("a", encoding="utf-8") as log:
+                log.write("\\nFALHA: " + description + "\\n")
+        except OSError:
+            pass
+        # Nunca marca 100% ou sucesso depois de uma falha intermediária.
+        _set_job_state(
+            running=False, ok=False, stage="Falhou em: " + stage,
+            message=description,
+            finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+
+def _start_full_update() -> tuple[bool, str]:
+    with _JOB_LOCK:
+        if _JOB_STATE.get("running"):
+            return False, "Já há uma atualização em andamento."
+        _JOB_STATE.update(
+            running=True, kind="full_update", ok=None,
+            progress=1, stage="Preparando",
+            message="Iniciando atualização completa...",
+        )
+    try:
+        threading.Thread(target=_run_full_update, daemon=True).start()
+    except Exception as exc:
+        _set_job_state(
+            running=False, ok=False, stage="Falha ao iniciar", message=str(exc)
+        )
+        return False, "Não foi possível iniciar a atualização: " + str(exc)
+    return True, "Sincronização, instalação do PC e publicação mobile iniciadas."
 
 
 def _start_mobile_deploy() -> tuple[bool, str]:
@@ -737,6 +895,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/job":
             self._json(_job_snapshot())
             return
+        if path == "/api/diagnostics":
+            self._json({"text": _diagnostic_log()})
+            return
         if path in ("/", "/index.html"):
             self._static(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
@@ -750,6 +911,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/app/restart": _restart_app,
             "/api/update/install": _install_latest_update,
             "/api/update/local-desktop": _start_local_desktop_update,
+            "/api/update/full": _start_full_update,
             "/api/mobile/deploy": _start_mobile_deploy,
             "/api/panel/pull": _pull_develop,
         }
