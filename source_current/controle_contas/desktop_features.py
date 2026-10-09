@@ -12,7 +12,7 @@ from types import MethodType
 from PySide6.QtCore import Qt, QDate, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel,
+    QApplication, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout,
 )
 
@@ -300,13 +300,13 @@ class DesktopFeatures:
             elif what == "Sugerir para pagamento":
                 self.suggest([account_id])
             elif what == "Enviar para pagamento":
-                self.mark_sent(account_id)
+                return self.send_for_payment(account_id)
             elif what == "Registrar pagamento":
                 self.window.registrar_pagamento()
             elif what == "TAGs":
                 self.manage_tags([account_id])
             elif what == "Marcar como enviado":
-                self.mark_sent(account_id)
+                return self.send_for_payment(account_id)
             elif what == "Editar":
                 self.window.editar_conta()
             elif what == "Excluir":
@@ -343,16 +343,85 @@ class DesktopFeatures:
         except OSError as exc:
             QMessageBox.warning(self.window, "Falha ao abrir o PDF", str(exc))
 
-    def mark_sent(self, account_id):
+    def _record_sent(self, account_id):
+        """A data só é gravada depois que os dados foram copiados."""
         stamp = datetime.now().isoformat(timespec="seconds")
         with self.window.banco.conexao() as conn:
-            conn.execute(
+            result = conn.execute(
                 "UPDATE contas SET enviado_pagamento_em="
                 "COALESCE(enviado_pagamento_em,?),atualizado_em=? WHERE id=?",
-                (stamp, stamp, int(account_id))
+                (stamp, stamp, int(account_id)),
             )
-        self.window.atualizar_tabela()
-        self._flash("Envio para pagamento registrado.")
+            if result.rowcount != 1:
+                raise RuntimeError("A conta não foi encontrada ao gravar o envio.")
+
+    def mark_sent(self, account_id):
+        # Compatibilidade: chamadas externas usam o mesmo fluxo de cópia.
+        return self.send_for_payment(account_id)
+
+    def send_for_payment(self, account_id):
+        """Executa o botão original de envio, que prepara/copia os dados.
+
+        Não simula o envio atualizando somente a coluna de data: essa era
+        a causa do botão aparentemente funcionar sem abrir o fluxo real.
+        """
+        account = self._account(account_id)
+        if not account:
+            QMessageBox.warning(self.window, "Enviar para pagamento",
+                                "Conta não encontrada.")
+            return False
+        original = self.dashboard._buttons.get("original_send")
+        if original is None:
+            original = self.dashboard._find_action("Enviar para pagamento")
+        if original is None or not original.isEnabled():
+            QMessageBox.warning(
+                self.window, "Enviar para pagamento",
+                "A rotina original de copiar dados para pagamento está indisponível."
+            )
+            return False
+
+        clipboard = QApplication.clipboard()
+        before = clipboard.text() if clipboard is not None else ""
+        previous_stamp = str(account.get("enviado_pagamento_em") or "")
+        # A linha correta já foi selecionada por _patch_row_dispatch.
+        # O handler original controla o texto e a apresentação de dados.
+        original.click()
+
+        after = clipboard.text() if clipboard is not None else ""
+        copied = bool(after.strip()) and after != before
+        # Copiar novamente o mesmo código é válido: o clipboard pode
+        # continuar idêntico à cópia anterior.
+        code = str(account.get("codigo_pagamento") or "").strip()
+        if not copied and code and code in after:
+            copied = True
+
+        current_stamp = str(
+            self._account(account_id).get("enviado_pagamento_em") or ""
+        )
+        if copied or (current_stamp and current_stamp != previous_stamp):
+            if not current_stamp:
+                self._record_sent(account_id)
+            self.window.atualizar_tabela()
+            self._flash("Dados de pagamento copiados. Envio registrado.")
+            return True
+
+        # A rotina original pode abrir uma tela para o usuário copiar
+        # manualmente. Nesse caso, não confirmar envio antes da cópia.
+        opened = QApplication.activeModalWidget()
+        if opened is None:
+            opened = next(
+                (dlg for dlg in self.window.findChildren(QDialog)
+                 if dlg.isVisible()), None
+            )
+        if opened is not None:
+            self._flash("Dados de pagamento abertos. Copie para concluir o envio.")
+            return None
+        QMessageBox.warning(
+            self.window, "Envio não concluído",
+            "A rotina de envio foi acionada, mas não confirmou a cópia dos dados. "
+            "A conta não foi marcada como enviada."
+        )
+        return False
 
     def _flash(self, message):
         status = self.window.statusBar() if hasattr(self.window, "statusBar") else None
