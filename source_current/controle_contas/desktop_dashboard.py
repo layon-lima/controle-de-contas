@@ -443,6 +443,8 @@ class DesktopDashboard:
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.ResizeToContents
             )
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(1, 185)
         header.setSectionResizeMode(9, QHeaderView.ResizeMode.Fixed)
         table.setColumnWidth(9, 124)
         table.setStyleSheet(DASHBOARD_STYLE[DASHBOARD_STYLE.index("QTableWidget {"):])
@@ -549,6 +551,45 @@ class DesktopDashboard:
                     item.setForeground(QColor("#263f61"))
                     if column == 2:
                         item.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+            date_item = table.item(row, 1)
+            if date_item:
+                raw_date = date_item.text().strip()
+                try:
+                    due = datetime.strptime(raw_date, "%d/%m/%Y").date()
+                    delta = (due - datetime.now().date()).days
+                except (TypeError, ValueError):
+                    delta = None
+                if delta is not None:
+                    time_label = (
+                        f"{abs(delta)} dias atrás" if delta < -1
+                        else "Ontem" if delta == -1
+                        else "Hoje" if delta == 0
+                        else "Amanhã" if delta == 1
+                        else f"Em {delta} dias"
+                    )
+                    color = "#d43a42" if delta < 0 else (
+                        "#bf820e" if delta <= 1 else "#657d9d"
+                    )
+                    date_wrap = QWidget(table)
+                    date_wrap.setAttribute(
+                        Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+                    )
+                    date_layout = QHBoxLayout(date_wrap)
+                    date_layout.setContentsMargins(4, 2, 4, 2)
+                    date_layout.setSpacing(7)
+                    main_date = QLabel(raw_date, date_wrap)
+                    main_date.setStyleSheet(
+                        "color:#263e60;font-size:11px;font-weight:650;"
+                    )
+                    rel = QLabel(time_label, date_wrap)
+                    rel.setStyleSheet(
+                        f"color:{color};font-size:10px;font-weight:700;"
+                    )
+                    date_layout.addWidget(main_date)
+                    date_layout.addWidget(rel)
+                    date_layout.addStretch(1)
+                    table.setCellWidget(row, 1, date_wrap)
+
             status = table.item(row, 3)
             if status:
                 status.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
