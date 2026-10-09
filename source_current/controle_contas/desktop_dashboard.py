@@ -106,6 +106,7 @@ QPushButton#bottomNavButton {
     font-size: 12px;
     min-height: 44px;
     font-weight: 600;
+    text-align: left;
     padding: 0 13px;
 }
 QPushButton#bottomNavButton:hover { background: #f2f6fb; color: #264c77; }
@@ -171,6 +172,18 @@ QTableWidget QToolButton:pressed {
 QTableWidget QToolButton:disabled {
     background: #f4f8fb;
     border-color: #d5e3f0;
+}
+QTableWidget QToolButton#sendPaymentIcon {
+    background: #f3f8fe; border-color: #dce9f8;
+}
+QTableWidget QToolButton#sendPaymentIcon:hover {
+    background: #e7f2ff; border-color: #9dbfe4;
+}
+QTableWidget QToolButton#registerPaymentIcon {
+    background: #f1faf5; border-color: #d6eadf;
+}
+QTableWidget QToolButton#registerPaymentIcon:hover {
+    background: #e3f6ec; border-color: #a3d5bc;
 }
 QMenu {
     background: #ffffff; color: #263b53;
@@ -1065,7 +1078,7 @@ class DesktopDashboard:
             (words[0][:1] + words[1][:1]) if len(words) >= 2
             else str(name or "?")[:2]
         ).upper()
-        palette = ["#287cf0", "#1fa477", "#9774eb", "#f06a76", "#d79a2d"]
+        palette = ["#5c7ca6", "#4b8d88", "#7174a1", "#63857b", "#8b7595"]
         seed = sum(ord(ch) for ch in name)
         color = QColor(palette[seed % len(palette)])
         pix = QPixmap(30, 30)
@@ -1089,13 +1102,13 @@ class DesktopDashboard:
             supplier = table.item(row, 0)
             if supplier:
                 supplier.setIcon(self._initials_icon(supplier.text()))
-                supplier.setForeground(QColor("#1c3251"))
+                supplier.setForeground(QColor("#25364c"))
                 supplier.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
             for column in (1, 2, 4, 5):
                 item = table.item(row, column)
                 if item:
                     item.setFont(QFont("Segoe UI", 9))
-                    item.setForeground(QColor("#263f61"))
+                    item.setForeground(QColor("#45576d"))
                     if column == 2:
                         item.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
             date_item = table.item(row, 1)
@@ -1112,12 +1125,12 @@ class DesktopDashboard:
             if status:
                 status.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
                 colors = {
-                    "Vencida": ("#fff0f1", "#be2330"),
-                    "Próxima": ("#fff5dd", "#a76900"),
-                    "Em dia": ("#e7f8ee", "#08794c"),
-                    "Paga": ("#e7f8ee", "#08794c"),
+                    "Vencida": ("#fcecef", "#ac3843"),
+                    "Próxima": ("#fff3dc", "#98651b"),
+                    "Em dia": ("#e9f6ee", "#267251"),
+                    "Paga": ("#e9f6ee", "#267251"),
                 }
-                bg, fg = colors.get(status.text(), ("#f1f5f9", "#536780"))
+                bg, fg = colors.get(status.text(), ("#eef2f7", "#536780"))
                 status.setBackground(QColor(bg))
                 status.setForeground(QColor(fg))
 
@@ -1141,7 +1154,7 @@ class DesktopDashboard:
                 pill.setFixedHeight(24)
                 pill.setStyleSheet(
                     f"background:{bg};color:{fg};border:0;border-radius:12px;"
-                    "font-size:11px;font-weight:700;padding:0 8px;"
+                    "font-size:10px;font-weight:700;padding:0 8px;"
                 )
                 pill_layout.addWidget(pill)
                 pill_layout.addStretch(1)
@@ -1150,7 +1163,7 @@ class DesktopDashboard:
             # Texto completo da observacao permanece no item e no tooltip.
             observation = table.item(row, 8)
             if observation is not None:
-                observation.setForeground(QColor("#4e6680"))
+                observation.setForeground(QColor("#65768a"))
                 observation.setFont(QFont("Segoe UI", 9))
                 observation.setToolTip(observation.text())
 
@@ -1177,6 +1190,10 @@ class DesktopDashboard:
                 button.setIconSize(QSize(17, 17))
                 button.setToolTip(tooltip)
                 button.setFixedSize(33, 29)
+                if action == "Enviar para pagamento":
+                    button.setObjectName("sendPaymentIcon")
+                elif action == "Registrar pagamento":
+                    button.setObjectName("registerPaymentIcon")
                 if action == "menu":
                     menu = QMenu(button)
                     for label, asset in (
