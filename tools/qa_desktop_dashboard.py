@@ -140,6 +140,38 @@ with window.banco.conexao() as conn:
         ("QA PAGAMENTO SEM COMPROVANTE", 123.45, "2026-10-09", now, now)
     )
     qa_id = int(cursor.lastrowid)
+# O ícone Enviar deve acionar o botão ORIGINAL de copiar dados,
+# e só então registrar o envio da conta selecionada.
+from PySide6.QtWidgets import QToolButton, QLabel
+features = window._desktop_dashboard._desktop_features
+original_send = window._desktop_dashboard._buttons.get("original_send")
+copy_action = QPushButton("Copiar dados da conta para pagamento", window)
+copy_action.clicked.connect(
+    lambda: QApplication.clipboard().setText(
+        "PAGAMENTO QA: dados da conta copiados para envio"
+    )
+)
+window._desktop_dashboard._buttons["original_send"] = copy_action
+QApplication.clipboard().setText("texto anterior")
+assert features.send_for_payment(qa_id) is True, "O envio não acionou a cópia"
+assert QApplication.clipboard().text().startswith("PAGAMENTO QA:"), (
+    "Dados não foram copiados para a área de transferência"
+)
+with window.banco.conexao() as conn:
+    row = conn.execute(
+        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+    assert row and row["enviado_pagamento_em"], "Data de envio não foi registrada"
+window._desktop_dashboard._buttons["original_send"] = original_send
+dashboard = window._desktop_dashboard
+dashboard._show_action_feedback("Cópia concluída", "success")
+notice = window.findChild(QLabel, "dashboardActionFeedback")
+assert notice is not None and "Cópia concluída" in notice.text(), (
+    "Feedback visual de sucesso não foi exibido"
+)
+dashboard._show_action_feedback("Falha de teste", "error")
+assert "Falha de teste" in notice.text(), "Feedback visual de erro não funciona"
+
 window.banco.registrar_pagamento(qa_id, {
     "valor_pago": 123.45,
     "data_pagamento": "2026-10-09",
