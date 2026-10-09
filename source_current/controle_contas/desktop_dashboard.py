@@ -530,18 +530,30 @@ class DesktopDashboard:
                 parent.layout().removeWidget(payment)
             payment.setParent(bulk)
             payment.setObjectName("primaryButton")
+            payment.setIcon(_asset_icon("plus"))
+            payment.setIconSize(QSize(17, 17))
             payment.setMinimumWidth(165)
             layout.insertWidget(max(1, layout.count() - 1), payment)
 
         clear = getattr(w, "_bulk_clear_button", None)
         if clear:
             clear.setText("Limpar seleção")
+            clear.setIcon(_asset_icon("trash"))
+            clear.setIconSize(QSize(16, 16))
+        select_all = getattr(w, "_bulk_select_all_button", None)
+        if select_all:
+            select_all.setIcon(_asset_icon("ontime"))
+            select_all.setIconSize(QSize(16, 16))
         suggest = getattr(w, "_bulk_suggest_button", None)
         if suggest:
             suggest.setText("Sugerir pagamento")
+            suggest.setIcon(_asset_icon("send"))
+            suggest.setIconSize(QSize(16, 16))
         sent = getattr(w, "_bulk_sent_button", None)
         if sent:
             sent.setText("Marcar como enviado")
+            sent.setIcon(_asset_icon("paid"))
+            sent.setIconSize(QSize(16, 16))
 
         # Mantém os outros handlers originais no app; botões no rodapé serão
         # acessados pelas ações por linha, sem criar novas regras de negócio.

@@ -44,7 +44,9 @@ assert window.tabela.columnWidth(9) >= 120, "Acoes cortadas"
 for name in ("brand","smartphone","upload","plus","overdue","upcoming","ontime",
              "paid","home","accounts","payments","reports","settings",
              "document","send","more","edit","receipt","trash"):
-    assert not _asset_icon(name).isNull(), "Icone ausente: " + name
+    asset = _asset_icon(name)
+    assert not asset.isNull(), "Icone ausente: " + name
+    assert not asset.pixmap(20, 20).isNull(), "Falha ao renderizar SVG: " + name
 assert window._bulk_bar.maximumHeight() <= 45, "Barra de acoes nao compactada"
 assert window.abas.isHidden(), "Barra antiga de abas ainda visível"
 assert getattr(window, "busca", None) is not None, "Busca antiga perdida"
