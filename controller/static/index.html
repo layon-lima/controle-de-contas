@@ -154,7 +154,9 @@ async function loadJob(){
     const r=await fetch('/api/job',{cache:'no-store'}); const j=await r.json();
     $('jobState').textContent=j.running?'EM ANDAMENTO':(j.ok===true?'CONCLUÍDO':(j.ok===false?'FALHOU':'Nenhuma operação em andamento'));
     $('jobState').className='muted '+(j.running?'warn':(j.ok===true?'ok':(j.ok===false?'bad':'')));
-    $('jobLog').textContent=(j.log_tail||[]).join('\n')||j.message||'Sem operações recentes.';
+    const log=$('jobLog');
+    log.textContent=(j.log_tail||[]).join('\n')||j.message||'Sem operações recentes.';
+    log.scrollTop=log.scrollHeight;
     const install=$('localInstallBtn');
     if(install){
       install.disabled=!!j.running;
