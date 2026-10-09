@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 
-from portable_app import server
+import server  # módulo irmão; funciona sem instalar o pacote no Python
 
 
 def restart_portable_if_running():
