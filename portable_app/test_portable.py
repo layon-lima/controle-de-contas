@@ -183,6 +183,13 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("addEventListener('dblclick'", js)
         self.assertIn("/icons/sent.svg", html)
         self.assertIn("window.__CONTAS_TOKEN__", js)
+        self.assertIn("/api/import/preview", js)
+        self.assertIn("/api/import/commit", js)
+        self.assertIn("/pay-with-receipt", js)
+        self.assertIn("data-action=\"reanalyze\"", html)
+        self.assertIn("data-action=\"copy-code\"", html)
+        self.assertIn('id="bulkBar"', html)
+        self.assertIn("await copyText(prepared.text)", js)
         self.assertNotIn('class="footer"', html)
         self.assertNotIn('data-tab="paid"', html)
         self.assertIn('id="paidCard"', html)
@@ -191,6 +198,27 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("totals.Paga[0]++", js)
         self.assertIn("togglePaidView", js)
         self.assertIn("setAccountView('paid')", js)
+
+    def test_cancelled_ocr_preview_leaves_no_record_or_document(self):
+        from portable_app import pdf_workflows as flow
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        data = self._real_pdf("DOCUMENTO CANCELADO")
+        staged = flow.preview(
+            data, "cancelado.pdf", self.root,
+            lambda _: {"fields": {
+                "fornecedor": "TESTE", "valor": 100,
+                "vencimento": "2026-12-20",
+            }},
+        )
+        temporary, _filename, _predicted = flow.take_preview(staged["ticket"])
+        self.assertTrue(temporary.is_file())
+        self.assertEqual(s.list_accounts()["count"], 1)
+        flow.consume_preview(staged["ticket"])
+        self.assertFalse(temporary.exists())
+        self.assertEqual(s.list_accounts()["count"], 1)
+        with self.assertRaises(ValueError):
+            flow.take_preview(staged["ticket"])
 
     def test_shutdown_only_local_portable_service_with_token(self):
         httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
