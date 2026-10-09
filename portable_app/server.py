@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import webbrowser
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -88,10 +88,21 @@ def before_first_write_backup():
         name = ("antes_portatil_" + datetime.now().strftime("%Y%m%d_%H%M%S")
                 + "_" + secrets.token_hex(3) + ".db")
         destination = directory / name
-        with sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro",
-                             uri=True, timeout=15) as source:
-            with sqlite3.connect(destination) as target:
-                source.backup(target)
+        # sqlite3.Connection.__exit__ confirma/reverte transações, mas NÃO
+        # fecha a conexão. No Windows, isso mantém o .db temporário bloqueado.
+        try:
+            with closing(sqlite3.connect(
+                DB_PATH.resolve().as_uri() + "?mode=ro", uri=True, timeout=15
+            )) as source:
+                with closing(sqlite3.connect(destination, timeout=15)) as target:
+                    source.backup(target)
+                    target.commit()
+                    result = target.execute("PRAGMA integrity_check").fetchone()
+                    if not result or result[0] != "ok":
+                        raise RuntimeError("Backup do banco não passou na verificação.")
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
         BACKUP_DONE = True
 
 
@@ -426,6 +437,13 @@ class ApiError(Exception):
         self.code, self.message = code, message
 
 
+class LocalServer(ThreadingHTTPServer):
+    # As threads de requisição devem terminar ANTES de fechar sockets/banco
+    # nos testes e no reinício do portátil; não abandonar handlers em daemon.
+    daemon_threads = False
+    block_on_close = True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ControleContasPortable/1.0"
 
@@ -614,7 +632,7 @@ def main():
         print("O modo portátil não cria nem substitui um banco vazio.")
         raise SystemExit(2)
     try:
-        httpd = ThreadingHTTPServer((HOST, PORT), Handler)
+        httpd = LocalServer((HOST, PORT), Handler)
     except OSError:
         # Se o iniciador for acionado novamente, o servidor existente permanece.
         webbrowser.open(f"http://{HOST}:{PORT}/")
