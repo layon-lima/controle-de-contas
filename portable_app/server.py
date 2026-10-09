@@ -45,6 +45,13 @@ try:
 except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
+if __package__:
+    from . import pdf_intelligence, pdf_workflows
+else:
+    import pdf_intelligence
+    import pdf_workflows
+
+
 FIELDS = ("fornecedor", "documento", "pagador", "referencia", "valor",
           "vencimento", "codigo_pagamento", "tipo_pagamento", "observacoes")
 TEXT_FIELDS = tuple(x for x in FIELDS if x != "valor")
@@ -216,6 +223,44 @@ def create_account(data):
         return int(record.lastrowid)
 
 
+def create_account_from_preview(data):
+    """Confirma campos corrigidos pelo usuário, grava PDF e cadastro atomicamente."""
+    ticket = str(data.get("ticket") or "")
+    source, source_name = pdf_workflows.take_preview(ticket)
+    fields = normalize(data)
+    # Primeiro validar conteúdo contra todos os PDFs existentes.
+    with LOCK:
+        with connection(write=True) as conn:
+            pdf_workflows.check_duplicate(conn, source, fields)
+            target, organized = _pdf_destination(fields, source_name, None)
+            temp = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".part")
+            try:
+                shutil.copyfile(source, temp)
+                # Não alterar PDFs de outros registros em nenhuma hipótese.
+                if target.exists():
+                    target, organized = _pdf_destination(fields, source_name, None)
+                if target.exists():
+                    raise RuntimeError("O PDF de destino já existe.")
+                os.replace(temp, target)
+                columns = ",".join(FIELDS)
+                marks = ",".join("?" for _ in FIELDS)
+                result = conn.execute(
+                    f"INSERT INTO contas ({columns},criado_em,atualizado_em,pdf_conta) "
+                    f"VALUES ({marks},?,?,?)",
+                    [fields[key] for key in FIELDS] + [stamp(), stamp(), str(target)],
+                )
+                account_id = int(result.lastrowid)
+            except Exception:
+                temp.unlink(missing_ok=True)
+                # O arquivo foi criado por nós e a operação falhou, sem excluir originais.
+                if 'target' in locals():
+                    target.unlink(missing_ok=True)
+                raise
+    pdf_workflows.consume_preview(ticket)
+    return {"id": account_id, "name": target.name,
+            "folder": str(target.parent), "organized": organized}
+
+
 def edit_account(account_id, data):
     values = normalize(data)
     with connection(write=True) as conn:
@@ -378,6 +423,102 @@ def register_payment(account_id, data):
         ).fetchone()
         if found is None or found["data_pagamento"] != paid_on:
             raise RuntimeError("Pagamento não foi confirmado.")
+
+
+def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes):
+    """Mescla comprovante ao PDF original, valida páginas e só então registra.
+
+    O banco e os arquivos originais são restaurados se alguma etapa falhar.
+    A cópia de segurança antes da primeira escrita já existe em connection().
+    """
+    pdf_workflows.check_pdf(data)
+    try:
+        date.fromisoformat(str(paid_on))
+    except ValueError as exc:
+        raise ValueError("Data do pagamento inválida.") from exc
+    with LOCK:
+        with connection() as conn:
+            info = account(conn, account_id)
+            previously = conn.execute(
+                "SELECT 1 FROM pagamentos WHERE conta_id=? AND "
+                "data_pagamento IS NOT NULL AND TRIM(data_pagamento)<>'' LIMIT 1",
+                (account_id,),
+            ).fetchone()
+            if previously:
+                raise ValueError("Esta conta já está paga. Nenhum PDF foi alterado.")
+        raw = str(info.get("pdf_conta") or "").strip()
+        existing = Path(raw) if raw else None
+        if existing and not existing.is_file():
+            raise FileNotFoundError(
+                "O PDF da conta não foi encontrado no caminho cadastrado. "
+                "Restaure o documento antes de adicionar comprovante."
+            )
+        if existing is None:
+            target, _ = _pdf_destination(info, "COMPROVANTE.pdf", account_id)
+        else:
+            target = existing
+        temporary = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".part.pdf")
+        backup = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".restore.pdf") if existing else None
+        replaced = False
+        try:
+            pages = pdf_workflows.merge_receipt(existing, data, temporary)
+            if backup:
+                shutil.copy2(target, backup)
+            os.replace(temporary, target)
+            replaced = True
+            # A função de registro preserva os campos originais e a conferência
+            # automática fica desativada, como no último desktop.
+            with connection(write=True) as conn:
+                account(conn, account_id)
+                if conn.execute(
+                    "SELECT 1 FROM pagamentos WHERE conta_id=? AND "
+                    "data_pagamento IS NOT NULL AND TRIM(data_pagamento)<>'' LIMIT 1",
+                    (account_id,),
+                ).fetchone():
+                    raise ValueError("Pagamento já registrado. Restaurei o PDF original.")
+                table = {r["name"]: r for r in conn.execute("PRAGMA table_info(pagamentos)")}
+                values = {
+                    "conta_id": account_id,
+                    "valor_pago": float(info["valor"]),
+                    "data_pagamento": str(paid_on),
+                    "beneficiario": str(info.get("fornecedor") or ""),
+                    "documento_beneficiario": str(info.get("documento") or ""),
+                    "pdf_comprovante": str(target),
+                    "resultado_conferencia": "Não conferido",
+                    "detalhes_conferencia": "Comprovante mesclado e páginas confirmadas; conferência automática desativada.",
+                    "criado_em": stamp(),
+                    "atualizado_em": stamp(),
+                }
+                missing = [
+                    row["name"] for row in table.values()
+                    if row["notnull"] and row["dflt_value"] is None
+                    and not row["pk"] and row["name"] not in values
+                ]
+                if missing:
+                    raise RuntimeError("Colunas necessárias desconhecidas: " + ", ".join(missing))
+                cols = [name for name in values if name in table]
+                conn.execute(
+                    "INSERT INTO pagamentos (" + ",".join(cols) + ") VALUES ("
+                    + ",".join("?" for _ in cols) + ")",
+                    [values[name] for name in cols],
+                )
+                if existing is None:
+                    conn.execute(
+                        "UPDATE contas SET pdf_conta=?,atualizado_em=? WHERE id=?",
+                        (str(target), stamp(), account_id),
+                    )
+            return {"paid": True, "merged": True, "pages": pages, "pdf": str(target)}
+        except Exception:
+            if replaced:
+                if backup and backup.is_file():
+                    os.replace(backup, target)
+                elif existing is None:
+                    target.unlink(missing_ok=True)
+            raise
+        finally:
+            temporary.unlink(missing_ok=True)
+            if backup:
+                backup.unlink(missing_ok=True)
 
 
 def pdf_path(account_id, receipt=False):
@@ -608,6 +749,24 @@ class Handler(BaseHTTPRequestHandler):
             if route.startswith("/api/"):
                 self._check(writing=self.command == "POST")
                 parts = route.strip("/").split("/")
+                if self.command == "POST" and route == "/api/import/preview":
+                    try:
+                        size = int(self.headers.get("Content-Length") or 0)
+                    except ValueError as exc:
+                        raise ApiError(400, "Tamanho inválido.") from exc
+                    if size < 5 or size > pdf_workflows.MAX_PDF:
+                        raise ApiError(413, "O PDF deve ter até 30 MB.")
+                    from urllib.parse import unquote
+                    filename = unquote(self.headers.get("X-Pdf-Name") or "boleto.pdf")
+                    parsed = pdf_workflows.preview(
+                        self.rfile.read(size), filename, APP_DIR,
+                        pdf_intelligence.analyze_pdf,
+                    )
+                    self._json({"ok": True, **parsed})
+                    return
+                if self.command == "POST" and route == "/api/import/commit":
+                    self._json({"ok": True, **create_account_from_preview(self._body())})
+                    return
                 if self.command == "GET" and route == "/api/accounts":
                     self._json({"ok": True, **list_accounts()})
                     return
@@ -635,6 +794,18 @@ class Handler(BaseHTTPRequestHandler):
                         path = pdf_path(account_id, receipt=receipt)
                         content = path.read_bytes()
                         self._send(content, mime="application/pdf")
+                        return
+                    if self.command == "POST" and op == "pay-with-receipt":
+                        try:
+                            size = int(self.headers.get("Content-Length") or 0)
+                        except ValueError as exc:
+                            raise ApiError(400, "Tamanho inválido.") from exc
+                        if size < 5 or size > pdf_workflows.MAX_PDF:
+                            raise ApiError(413, "Comprovante deve ter até 30 MB.")
+                        paid_on = self.headers.get("X-Paid-Date") or ""
+                        self._json({"ok": True, **register_payment_with_receipt(
+                            account_id, paid_on, self.rfile.read(size)
+                        )})
                         return
                     if self.command == "POST" and op == "upload-pdf":
                         try:
@@ -686,6 +857,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": exc.message}, exc.code)
         except (ValueError, LookupError, FileNotFoundError) as exc:
             self._json({"ok": False, "error": str(exc)}, 400)
+        except (pdf_intelligence.ReaderUnavailable,) as exc:
+            self._json({"ok": False, "error": str(exc)}, 503)
         except (sqlite3.Error, OSError, RuntimeError) as exc:
             self._json({"ok": False, "error": str(exc)}, 500)
 
