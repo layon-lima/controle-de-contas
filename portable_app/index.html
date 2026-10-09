@@ -47,10 +47,14 @@ tbody tr:last-child td{border-bottom:0}
 .pill:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .pill.Vencida{color:#bd3944;background:#ffebee}.pill.Próxima{color:#bc8217;background:#fff3dc}.pill.Emdia,.pill.Paga{color:#198357;background:#e6f7ed}
 .tag{padding:4px 11px;display:inline-block;border-radius:20px;background:#e9f2ff;color:#2466aa;font-size:11px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-.empty{color:#8595a6}.footer{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#8192a6;font-size:11px;padding:0 4px;min-height:43px}
-.tabs{display:flex;background:#fff;border:1px solid #e8edf4;border-radius:12px;padding:5px;gap:3px}
-.tab{display:flex;align-items:center;gap:8px;border:0;border-radius:9px;background:transparent;padding:9px 16px;color:#617b9a;font-weight:700}
-.tab img{width:17px;height:17px}.tab.active{background:#e6f2ff;color:#126cd2}
+.empty{color:#8595a6}
+.kpi.clickable{cursor:pointer;transition:border-color .16s,box-shadow .16s,transform .16s}
+.kpi.clickable:hover{border-color:#9cbdf0;box-shadow:0 4px 12px rgba(25,103,201,.12);transform:translateY(-1px)}
+.kpi.clickable:focus-visible{outline:3px solid #7bb7ff;outline-offset:2px}
+.kpi.clickable[aria-pressed="true"]{border:2px solid #367cde;box-shadow:0 0 0 2px rgba(51,131,224,.1);padding:7px 11px 7px 42px}
+.back-to-open{border:0;background:#eef5fd;border-radius:9px;color:#24629f;font-weight:700;padding:7px 10px;margin-right:10px}
+.back-to-open:hover{background:#dcecff}
+.back-to-open[hidden]{display:none}
 .menu{position:fixed;z-index:20;background:#fff;border:1px solid #e0e9f4;box-shadow:0 14px 40px rgba(15,43,77,.18);border-radius:14px;width:258px;padding:7px;display:none}
 .menu.visible{display:block;animation:pop .13s ease-out}@keyframes pop{from{opacity:.6;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .menu-title{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;font-weight:800;border-bottom:1px solid #edf1f7;margin-bottom:4px}
@@ -69,7 +73,7 @@ tbody tr:last-child td{border-bottom:0}
 .tag-options{display:flex;flex-wrap:wrap;gap:8px}.tag-option{border:1px solid #dae5f2;border-radius:9px;padding:9px;cursor:pointer}.tag-option input{accent-color:#147ce7}
 .hint{color:#8598ad;font-size:11px;margin-top:9px}
 @media(max-width:1350px){.topbar{flex-wrap:wrap}.kpis{order:3;min-width:100%;grid-template-columns:repeat(4,1fr)}.top-actions{margin-left:auto}}
-@media(max-width:760px){.app{padding:8px;gap:8px}.topbar{gap:8px}.brand{min-width:0}.kpis{grid-template-columns:repeat(2,1fr)}.top-actions{width:100%;justify-content:space-between}.top-actions button{padding:0 8px}.filters{flex-wrap:wrap}.filters .search{flex:1 0 100%;order:3}.formgrid{grid-template-columns:1fr}.footer>span{display:none}.footer{justify-content:center}}
+@media(max-width:760px){.app{padding:8px;gap:8px}.topbar{gap:8px}.brand{min-width:0}.kpis{grid-template-columns:repeat(2,1fr)}.top-actions{width:100%;justify-content:space-between}.top-actions button{padding:0 8px}.filters{flex-wrap:wrap}.filters .search{flex:1 0 100%;order:3}.formgrid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -80,7 +84,7 @@ tbody tr:last-child td{border-bottom:0}
       <div class="kpi red"><img src="/icons/overdue.svg" alt=""><small>VENCIDAS</small><b id="kOver">0</b><span class="subvalue" id="vOver">R$ 0,00</span></div>
       <div class="kpi yellow"><img src="/icons/upcoming.svg" alt=""><small>PRÓXIMAS</small><b id="kSoon">0</b><span class="subvalue" id="vSoon">R$ 0,00</span></div>
       <div class="kpi green"><img src="/icons/ontime.svg" alt=""><small>EM DIA</small><b id="kOk">0</b><span class="subvalue" id="vOk">R$ 0,00</span></div>
-      <div class="kpi blue"><img src="/icons/paid.svg" alt=""><small>PAGAS (ESTE MÊS)</small><b id="kPaid">0</b><span class="subvalue" id="vPaid">R$ 0,00</span></div>
+      <div class="kpi blue clickable" id="paidCard" role="button" tabindex="0" aria-pressed="false" title="Mostrar todas as contas pagas; clique novamente para voltar às contas em aberto"><img src="/icons/paid.svg" alt=""><small>PAGAS</small><b id="kPaid">0</b><span class="subvalue" id="vPaid">R$ 0,00</span></div>
     </div>
     <div class="top-actions">
       <button id="mobileBtn"><img src="/icons/smartphone.svg" width="15" alt=""> Acesso mobile</button>
@@ -90,7 +94,7 @@ tbody tr:last-child td{border-bottom:0}
     </div>
   </header>
   <main class="surface">
-    <div class="section-header"><h2>Visão geral</h2><span class="count">Lançamentos <strong id="count">0 registros</strong></span></div>
+    <div class="section-header"><h2 id="listTitle">Visão geral</h2><div><button type="button" class="back-to-open" id="backToOpen" hidden>← Em aberto</button><span class="count">Lançamentos <strong id="count">0 registros</strong></span></div></div>
     <div class="filters">
       <label>Status <select id="status"><option value="all">Todas</option><option>Vencida</option><option>Próxima</option><option>Em dia</option><option>Paga</option></select></label>
       <label>TAGs <select id="tagFilter"><option value="">Todas as TAGs</option></select></label>
@@ -104,7 +108,6 @@ tbody tr:last-child td{border-bottom:0}
       </table>
     </div>
   </main>
-  <div class="footer"><span>Dados locais · Armazenamento neste computador</span><div class="tabs"><button class="tab active" data-tab="open"><img src="/icons/accounts.svg" alt=""> Em aberto</button><button class="tab" data-tab="paid"><img src="/icons/payments.svg" alt=""> Pagas</button></div><span>CONTROLE DE CONTAS · PORTÁTIL</span></div>
 </div>
 <div id="menu" class="menu" role="menu" aria-label="Ações da conta">
   <div class="menu-title"><span>Ações da conta</span><button aria-label="Fechar" id="menuClose">×</button></div>
