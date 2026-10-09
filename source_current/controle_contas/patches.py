@@ -3141,18 +3141,24 @@ def _atualizar_tabela_com_obs(self, *args, **kwargs):
     aba_pagas = self.abas.currentIndex() == 1
     filtro = "Paga" if aba_pagas else self.filtro.currentText()
 
+    # Pagamento e contabilizado pelo historico, sem depender de comprovante PDF.
     try:
-        contas = list(_listar_contas_original(self.banco, "", filtro) or [])
+        contas = list(_listar_contas_original(self.banco, "", "Todas") or [])
+        with self.banco.conexao() as conn:
+            paid = {int(r["conta_id"]) for r in conn.execute(
+                "SELECT DISTINCT conta_id FROM pagamentos "
+                "WHERE data_pagamento IS NOT NULL AND TRIM(data_pagamento) <> ''"
+            ).fetchall()}
+        for conta in contas:
+            if int(conta.get("id") or 0) in paid:
+                conta["status"] = "Paga"
+        if aba_pagas:
+            contas = [c for c in contas if c.get("status") == "Paga"]
+        else:
+            contas = [c for c in contas if c.get("status") != "Paga"
+                      and (filtro == "Todas" or c.get("status") == filtro)]
     except Exception:
         contas = []
-
-    # Na aba principal não exibimos contas pagas, igual ao comportamento
-    # original do aplicativo.
-    if not aba_pagas:
-        contas = [
-            conta for conta in contas
-            if str(conta.get("status") or "") != "Paga"
-        ]
 
     consulta = ""
     try:

@@ -682,7 +682,7 @@ def integrate_cloud_mobile_button() -> None:
 
         try:
             install_bulk_bar(self)
-            install_detail_dock(self)
+            # O painel lateral foi eliminado da experiencia desktop.
 
             if not getattr(self, "_cloud_table_connected", False):
                 self.tabela.itemChanged.connect(lambda item: on_item_changed(self, item))

@@ -221,6 +221,8 @@ class DesktopDashboard:
         self._paid_month_value = None
         self._paid_month_count = None
         self._install()
+        from .desktop_features import install_desktop_features
+        install_desktop_features(self)
 
     def _find_action(self, text):
         for button in self.window.findChildren(QPushButton):

@@ -17,7 +17,7 @@ temp = tempfile.mkdtemp(prefix="cc_ui_qa_")
 os.environ["LOCALAPPDATA"] = temp
 os.environ["APPDATA"] = temp
 
-from PySide6.QtWidgets import QApplication, QDockWidget, QFrame, QHBoxLayout
+from PySide6.QtWidgets import QApplication, QDockWidget, QFrame, QHBoxLayout, QComboBox, QPushButton
 from controle_contas.desktop_dashboard import _asset_icon, DueDateDelegate
 app = QApplication.instance() or QApplication(sys.argv)
 
@@ -33,6 +33,9 @@ bottom = window.findChild(QFrame, "bottomNavigation")
 assert bottom is not None, "Navegação inferior não foi montada"
 assert getattr(window, "_desktop_dashboard", None) is not None, "Chrome novo não instalado"
 assert window.findChild(QDockWidget, "modernNavigation") is None, "Menu lateral antigo permanece"
+assert window.findChild(QDockWidget, "paymentDetailDock") is None, "Painel de detalhes ainda instalado"
+assert window.findChild(QComboBox, "desktopTagFilter") is not None, "Filtro por TAG ausente"
+assert window.findChild(QPushButton, "desktopPayBatchButton") is not None, "Pagamento em lote ausente"
 assert window.tabela.columnCount() >= 10, "Faltou coluna de ações"
 assert window.tabela.horizontalHeaderItem(9).text() == "Ações", "Coluna de ações errada"
 assert window.tabela.horizontalHeaderItem(8).text() == "Observações", "Observacoes ausentes"
