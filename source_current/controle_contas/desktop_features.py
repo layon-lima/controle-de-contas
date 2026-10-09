@@ -363,7 +363,8 @@ class DesktopFeatures:
         with self.window.banco.conexao() as conn:
             result = conn.execute(
                 "UPDATE contas SET enviado_pagamento_em="
-                "COALESCE(enviado_pagamento_em,?),atualizado_em=? WHERE id=?",
+                "COALESCE(NULLIF(TRIM(enviado_pagamento_em), ''), ?),"
+                "atualizado_em=? WHERE id=?",
                 (stamp, stamp, int(account_id)),
             )
             if result.rowcount != 1:
