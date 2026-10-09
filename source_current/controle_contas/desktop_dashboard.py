@@ -257,28 +257,28 @@ class DesktopDashboard:
             self.window.processar_pdf_solto(path)
 
     def _style_cards(self):
-        cards = [
-            (key, card)
-            for key, card in getattr(self.window, "cards", {}).items()
-            if card is not None
-        ]
+        # O app já possui os quatro cards; não criamos cartões/contadores
+        # duplicados. A altura compacta mantém mais linhas visíveis.
+        cards = list(getattr(self.window, "cards", {}).items())
         colors = [
             ("#fff5f5", "#fee6e8", "#db2938", "◷"),
             ("#fffbf3", "#fff0d6", "#c9880b", "▦"),
             ("#f3fcf8", "#daf7e8", "#137b55", "✓"),
+            ("#f4f8ff", "#e1edff", "#2470d8", "▥"),
         ]
-        for index, (_key, card) in enumerate(cards[:3]):
+        for index, (_key, card) in enumerate(cards[:4]):
+            if card is None:
+                continue
             bg, icon_bg, accent, symbol = colors[index]
             card.setMinimumHeight(72)
             card.setMaximumHeight(78)
             card.setObjectName(f"dashboardKpi{index}")
             card.setStyleSheet(
                 f"QFrame#dashboardKpi{index} {{"
-                f"background:{bg};border:1px solid #edf1f5;border-radius:14px;"
+                f"background:{bg};border:1px solid #e9eff5;border-radius:14px;"
                 "}"
                 "QFrame QLabel{background:transparent;border:0;}"
             )
-            # Preserva os rótulos e números originais, que seguem atualizados pelo app.
             existing_layout = card.layout()
             if existing_layout:
                 existing_layout.setContentsMargins(62, 5, 10, 5)
@@ -299,54 +299,17 @@ class DesktopDashboard:
             )
             icon.raise_()
 
-        # Usa os três indicadores originais. O quarto é derivado do banco local,
-        # sem interferir nas regras de status do sistema.
-        if len(cards) >= 3:
-            parent = cards[0][1].parentWidget()
-            row_layout = parent.layout() if parent else None
-            if isinstance(row_layout, (QHBoxLayout, QGridLayout)) :
-                frame = QFrame(parent)
-                frame.setObjectName("dashboardPaidMonth")
-                frame.setMinimumHeight(72)
-                frame.setMaximumHeight(78)
-                frame.setStyleSheet(
-                    "QFrame#dashboardPaidMonth {background:#f3f8ff;"
-                    "border:1px solid #e4ecf9;border-radius:14px;}"
-                    "QFrame#dashboardPaidMonth QLabel{border:0;background:transparent;}"
-                )
-                row = QHBoxLayout(frame)
-                row.setContentsMargins(10, 5, 10, 5)
-                row.setSpacing(10)
-                icon = QLabel("▥", frame)
-                icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                icon.setFixedSize(45, 45)
-                icon.setStyleSheet(
-                    "background:#e1edff;color:#2470d8;"
-                    "border-radius:12px;font-size:21px;"
-                )
-                labels = QWidget(frame)
-                column = QVBoxLayout(labels)
-                column.setContentsMargins(0, 0, 0, 0)
-                column.setSpacing(0)
-                heading = QLabel("Pagas (este mês)", labels)
-                heading.setStyleSheet("color:#48618a;font-size:11px;font-weight:700;")
-                self._paid_month_count = QLabel("—", labels)
-                self._paid_month_count.setStyleSheet(
-                    "color:#1767cf;font-weight:900;font-size:20px;"
-                )
-                self._paid_month_value = QLabel("—", labels)
-                self._paid_month_value.setStyleSheet(
-                    "color:#4b6491;font-weight:600;font-size:10px;"
-                )
-                for label in (heading, self._paid_month_count, self._paid_month_value):
-                    column.addWidget(label)
-                row.addWidget(icon)
-                row.addWidget(labels, 1)
-                if isinstance(row_layout, QGridLayout):
-                    row_layout.addWidget(frame, 0, row_layout.columnCount())
-                else:
-                    row_layout.addWidget(frame, 1)
-                self._paid_month_card = frame
+            if index == 3:
+                self._paid_month_card = card
+                for label in card.findChildren(QLabel):
+                    text = str(label.text() or "").strip()
+                    if "paga" in text.casefold():
+                        label.setText("PAGAS (ESTE MÊS)")
+                    elif text.isdigit():
+                        self._paid_month_count = label
+                    elif "R$" in text:
+                        self._paid_month_value = label
+
         self.refresh_paid_month()
 
     def refresh_paid_month(self):
