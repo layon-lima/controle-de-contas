@@ -113,6 +113,64 @@ assert window.abas.currentIndex() == 0, "Contas não navega à aba existente"
 dash._navigate("overview")
 print("BOTTOM NAV OK")
 
+# Teste isolado: cadastro e baixa de conta SEM PDF usando o Banco real.
+# O QA redirecionou LOCALAPPDATA/APPDATA para pasta temporaria no inicio.
+from datetime import datetime
+with window.banco.conexao() as conn:
+    now = datetime.now().isoformat(timespec="seconds")
+    cursor = conn.execute(
+        "INSERT INTO contas(fornecedor, valor, vencimento, criado_em, atualizado_em) "
+        "VALUES(?,?,?,?,?)",
+        ("QA PAGAMENTO SEM COMPROVANTE", 123.45, "2026-10-09", now, now)
+    )
+    qa_id = int(cursor.lastrowid)
+window.banco.registrar_pagamento(qa_id, {
+    "valor_pago": 123.45,
+    "data_pagamento": "2026-10-09",
+    "beneficiario": "QA PAGAMENTO SEM COMPROVANTE",
+    "documento_beneficiario": "",
+    "pdf_comprovante": "",
+    "resultado_conferencia": "Sem comprovante",
+    "detalhes_conferencia": "Teste local",
+})
+with window.banco.conexao() as conn:
+    record = conn.execute(
+        "SELECT data_pagamento,pdf_comprovante FROM pagamentos WHERE conta_id=?",
+        (qa_id,)
+    ).fetchone()
+    assert record is not None and record["data_pagamento"] == "2026-10-09", (
+        "Pagamento sem PDF nao persistiu"
+    )
+    assert not record["pdf_comprovante"], "QA deve aceitar comprovante opcional"
+    tag = conn.execute(
+        "INSERT INTO cc_tags(name) VALUES(?)", ("HOLERITES QA",)
+    )
+    conn.execute(
+        "INSERT INTO cc_account_tags(account_id,tag_id) VALUES(?,?)",
+        (qa_id, int(tag.lastrowid))
+    )
+
+window._desktop_dashboard._desktop_features._refresh_tags()
+window.abas.setCurrentIndex(0)
+window.atualizar_tabela()
+pending_ids = [
+    int(window.tabela.item(i,7).text()) for i in range(window.tabela.rowCount())
+    if window.tabela.item(i,7)
+]
+assert qa_id not in pending_ids, "Conta paga sem PDF ainda aparece como pendente"
+window.abas.setCurrentIndex(1)
+window.atualizar_tabela()
+paid_rows = [
+    i for i in range(window.tabela.rowCount())
+    if window.tabela.item(i,7) and int(window.tabela.item(i,7).text()) == qa_id
+]
+assert len(paid_rows) == 1, "Conta paga nao apareceu em Pagamentos"
+obs = window.tabela.item(paid_rows[0],8)
+assert obs is not None and "#HOLERITES QA" in obs.text(), (
+    "TAG nao foi apresentada na listagem"
+)
+print("PAYMENT WITHOUT RECEIPT AND TAGS PASS")
+
 window.close()
 app.quit()
 print("DASHBOARD UI SMOKE PASS")
