@@ -449,6 +449,14 @@ def _job_snapshot() -> dict:
                 if p >= int(data["progress"]):
                     data["progress"], data["stage"] = p, stage
     data["progress"] = min(100, max(0, int(data.get("progress") or 0)))
+    # Memoriza o último marco atingido: logs longos de compilação podem
+    # fazer as linhas antigas saírem dos últimos 96 KB do arquivo.
+    if data.get("running"):
+        with _JOB_LOCK:
+            if _JOB_STATE.get("running"):
+                if data["progress"] >= int(_JOB_STATE.get("progress") or 0):
+                    _JOB_STATE["progress"] = data["progress"]
+                    _JOB_STATE["stage"] = data["stage"]
     # Mantém compatibilidade com consumidores antigos deste endpoint.
     data["log_tail"] = log.splitlines()[-80:]
     return data
