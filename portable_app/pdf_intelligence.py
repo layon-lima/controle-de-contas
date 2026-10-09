@@ -96,3 +96,40 @@ def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT)
         "reason": data.get("reason") or {},
         "warnings": data.get("warnings") or [],
     }
+
+
+def learn_from_confirmed(path: Path, fields: dict, predicted: dict, *,
+                         root: Path = ROOT, timeout: int = 60) -> dict:
+    """Usa o mesmo aprendizado_layouts_v2.json do app original.
+
+    O aprendizado é posterior ao commit e não deve desfazer um cadastro válido.
+    """
+    engine = find_legacy_engine(root)
+    command = [
+        sys.executable, "-X", "utf8",
+        str(Path(__file__).with_name("ocr_worker.py")),
+        str(engine), str(path), "--learn",
+    ]
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["PYTHONUTF8"] = "1"
+    result = subprocess.run(
+        command,
+        input=json.dumps({"final": fields, "predicted": predicted},
+                         ensure_ascii=False),
+        capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=timeout, env=env,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode != 0:
+        raise ReaderUnavailable(
+            "O cadastro foi salvo, mas o aprendizado do layout não foi concluído: "
+            + (result.stderr or result.stdout or "")[-300:]
+        )
+    try:
+        response = json.loads(result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise ReaderUnavailable("Resposta inválida do aprendizado do leitor.") from exc
+    if not response.get("ok"):
+        raise ReaderUnavailable(str(response.get("error") or "Aprendizado não confirmado."))
+    return response.get("learning") or {}
