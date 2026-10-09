@@ -77,9 +77,10 @@ def before_first_write_backup():
             return
         directory = APP_DIR / "backups"
         directory.mkdir(parents=True, exist_ok=True)
-        name = "antes_portatil_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".db"
+        name = ("antes_portatil_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+                + "_" + secrets.token_hex(3) + ".db")
         destination = directory / name
-        with sqlite3.connect(f"file:{DB_PATH.resolve().as_posix()}?mode=ro",
+        with sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro",
                              uri=True, timeout=15) as source:
             with sqlite3.connect(destination) as target:
                 source.backup(target)
@@ -534,8 +535,9 @@ class Handler(BaseHTTPRequestHandler):
                             raise ApiError(400, "Tamanho inválido.") from exc
                         if size < 5 or size > 30 * 1024 * 1024:
                             raise ApiError(413, "O PDF deve ter até 30 MB.")
-                        result = upload_pdf(account_id, self.rfile.read(size),
-                                            self.headers.get("X-Pdf-Name") or "documento.pdf")
+                        from urllib.parse import unquote
+                        filename = unquote(self.headers.get("X-Pdf-Name") or "documento.pdf")
+                        result = upload_pdf(account_id, self.rfile.read(size), filename)
                         self._json({"ok": True, "name": result})
                         return
                     if self.command == "POST":
