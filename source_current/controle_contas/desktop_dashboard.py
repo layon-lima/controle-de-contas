@@ -253,7 +253,9 @@ class DesktopDashboard:
             central.layout().setSpacing(8)
         self._remove_old_sidebar()
         self._build_header()
-undefined
+        self._style_cards()
+        self._relocate_kpis_to_header()
+        self._build_bottom_navigation()
         self._configure_account_table()
         self._rearrange_actions()
 
@@ -314,7 +316,10 @@ undefined
         text_layout.addWidget(subtitle)
         brand_lay.addWidget(brand_text)
         lay.insertWidget(0, brand)
-undefined
+        if search is not None:
+            search.setPlaceholderText(
+                "Pesquisar fornecedor, valor, descrição ou vencimento..."
+            )
 
         importer = QPushButton("Importar PDF", header)
         importer.setIcon(_asset_icon("upload"))
@@ -416,7 +421,42 @@ undefined
                     elif "R$" in text:
                         self._paid_month_value = label
 
-undefined
+        self.refresh_paid_month()
+
+    def _relocate_kpis_to_header(self):
+        """Reorganiza os quatro cards reais no espaço da pesquisa antiga."""
+        header = self.window.findChild(QFrame, "headerPanel")
+        if header is None or header.layout() is None:
+            return
+        strip = QWidget(header)
+        strip.setObjectName("dashboardKpiStrip")
+        row = QHBoxLayout(strip)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(5)
+        for card in list(getattr(self.window, "cards", {}).values())[:4]:
+            if card is None:
+                continue
+            previous = card.parentWidget()
+            if previous and previous.layout():
+                previous.layout().removeWidget(card)
+            card.setParent(strip)
+            card.setMinimumSize(114, 60)
+            card.setMaximumHeight(63)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            body = card.layout()
+            if body:
+                body.setContentsMargins(49, 3, 3, 3)
+                body.setSpacing(0)
+            icon = card.findChild(QLabel, "dashboardKpiIcon")
+            if icon:
+                icon.setGeometry(5, 9, 40, 40)
+            row.addWidget(card, 1)
+            card.show()
+        header.setFixedHeight(86)
+        header.layout().insertWidget(1, strip, 1)
+        self._buttons["kpis"] = strip
+
+    def refresh_paid_month(self):
         if self._paid_month_card is None:
             return
         try:
