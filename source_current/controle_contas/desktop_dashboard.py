@@ -230,6 +230,12 @@ class DesktopDashboard:
         if mobile:
             mobile.setText("▯  Acesso mobile")
 
+        # A pasta já possui seu comando real em Configurações; não ocupa
+        # também espaço duplicado no cabeçalho compacto.
+        folder = getattr(w, "_patch_btn_pasta", None)
+        if folder:
+            folder.hide()
+
         drag = getattr(w, "area_drop", None)
         if drag:
             drag.setMaximumHeight(27)
@@ -294,7 +300,7 @@ class DesktopDashboard:
         if len(cards) >= 3:
             parent = cards[0][1].parentWidget()
             row_layout = parent.layout() if parent else None
-            if isinstance(row_layout, QHBoxLayout):
+            if isinstance(row_layout, (QHBoxLayout, QGridLayout)) :
                 frame = QFrame(parent)
                 frame.setObjectName("dashboardPaidMonth")
                 frame.setMinimumHeight(72)
@@ -332,7 +338,10 @@ class DesktopDashboard:
                     column.addWidget(label)
                 row.addWidget(icon)
                 row.addWidget(labels, 1)
-                row_layout.addWidget(frame, 1)
+                if isinstance(row_layout, QGridLayout):
+                    row_layout.addWidget(frame, 0, row_layout.columnCount())
+                else:
+                    row_layout.addWidget(frame, 1)
                 self._paid_month_card = frame
         self.refresh_paid_month()
 
@@ -582,6 +591,27 @@ class DesktopDashboard:
                 bg, fg = colors.get(status.text(), ("#f1f5f9", "#536780"))
                 status.setBackground(QColor(bg))
                 status.setForeground(QColor(fg))
+
+                # O item original mantém classificação/ordenação; o label
+                # é apenas a apresentação arredondada vista no mockup.
+                pill_wrap = QWidget(table)
+                pill_wrap.setAttribute(
+                    Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+                )
+                pill_layout = QHBoxLayout(pill_wrap)
+                pill_layout.setContentsMargins(5, 3, 5, 3)
+                pill_layout.setSpacing(0)
+                pill = QLabel(status.text(), pill_wrap)
+                pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pill.setMinimumWidth(78)
+                pill.setFixedHeight(24)
+                pill.setStyleSheet(
+                    f"background:{bg};color:{fg};border:0;border-radius:12px;"
+                    "font-size:11px;font-weight:700;padding:0 8px;"
+                )
+                pill_layout.addWidget(pill)
+                pill_layout.addStretch(1)
+                table.setCellWidget(row, 3, pill_wrap)
 
             # Ações existentes no contexto da linha; evita botões duplicados.
             cell = QWidget(table)
