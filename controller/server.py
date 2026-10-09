@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.3.2"
+CONTROLLER_VERSION = "0.3.3"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -416,6 +416,58 @@ def _job_snapshot() -> dict:
     return data
 
 
+def _sync_develop_before_desktop_build(log) -> str:
+    """Atualiza a fonte local e confere a revisão ANTES de construir o EXE.
+
+    Chamado pela tarefa do painel; nunca exige que o usuário execute Git
+    ou PowerShell manualmente. Não força reset nem sobrescreve alterações locais.
+    """
+    def step(command: list[str], description: str, timeout: int = 120):
+        log.write("\n" + description + "\n")
+        log.flush()
+        result = _run(command, timeout=timeout, cwd=ROOT)
+        output = "\n".join(
+            value.strip() for value in (result.stdout, result.stderr)
+            if value and value.strip()
+        )
+        if output:
+            log.write(output + "\n")
+        log.flush()
+        if result.returncode != 0:
+            raise RuntimeError(
+                description + " falhou. " + (output or "Verifique a conexão com o GitHub.")
+            )
+        return result.stdout.strip()
+
+    branch = step(
+        ["git", "branch", "--show-current"],
+        "Verificando a branch local...",
+        timeout=20,
+    )
+    if branch != "develop":
+        raise RuntimeError(
+            "O projeto está na branch '" + (branch or "(desconhecida)") +
+            "', mas o aplicativo usa develop. "
+            "A instalação foi interrompida sem sobrescrever arquivos locais."
+        )
+    step(
+        ["git", "pull", "--ff-only", "origin", "develop"],
+        "Sincronizando automaticamente a develop do GitHub...",
+    )
+    local = step(["git", "rev-parse", "HEAD"], "Verificando revisão local...", 20)
+    remote = step(
+        ["git", "rev-parse", "refs/remotes/origin/develop"],
+        "Verificando revisão remota...", 20,
+    )
+    if not local or local != remote:
+        raise RuntimeError(
+            "A versão local divergiu da develop; nenhuma instalação foi iniciada."
+        )
+    log.write("\nFonte confirmada em " + local[:10] + ". Iniciando testes e instalação...\n")
+    log.flush()
+    return local
+
+
 def _run_logged_command(kind: str, cmd: list[str], cwd: Path) -> None:
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
     _set_job_state(
@@ -431,6 +483,15 @@ def _run_logged_command(kind: str, cmd: list[str], cwd: Path) -> None:
         with JOB_LOG_PATH.open("w", encoding="utf-8", errors="replace") as log:
             log.write("$ " + " ".join(cmd) + "\n\n")
             log.flush()
+            # O botão Instalar faz pull + checagem de revisão + build.
+            # Se o pull falhar, não executamos sequer o PowerShell de instalação.
+            if kind == "local_desktop_update":
+                try:
+                    _sync_develop_before_desktop_build(log)
+                except Exception as exc:
+                    log.write("\nINSTALAÇÃO CANCELADA: " + str(exc) + "\n")
+                    log.flush()
+                    raise
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(cwd),
@@ -508,13 +569,17 @@ def _pull_develop() -> tuple[bool, str]:
 
 
 def _start_local_desktop_update() -> tuple[bool, str]:
+    # Reserva a tarefa ANTES de criar a thread, evitando clique duplo.
     with _JOB_LOCK:
         if _JOB_STATE.get("running"):
             return False, "Já existe uma operação em andamento no painel."
-
-    script = ROOT / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1"
-    if not script.is_file():
-        return False, "Script local da versão desktop não encontrado. Sincronize o painel primeiro."
+        script = ROOT / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1"
+        if not script.is_file():
+            return False, "O instalador local não foi encontrado. Nenhum arquivo foi alterado."
+        _JOB_STATE.update(
+            running=True, kind="local_desktop_update", ok=None,
+            message="Aguardando sincronização automática com o GitHub...",
+        )
 
     cmd = [
         "powershell",
@@ -529,7 +594,7 @@ def _start_local_desktop_update() -> tuple[bool, str]:
         args=("local_desktop_update", cmd, ROOT),
         daemon=True,
     ).start()
-    return True, "Build e instalação local do aplicativo iniciados."
+    return True, "Sincronização, testes e instalação iniciados em uma única operação."
 
 
 def _install_latest_update() -> tuple[bool, str]:
