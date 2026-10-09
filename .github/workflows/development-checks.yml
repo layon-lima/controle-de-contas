@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: development-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-checks:
     runs-on: windows-latest
