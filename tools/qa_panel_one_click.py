@@ -68,6 +68,26 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "divergiu"):
                 server._sync_develop_before_desktop_build(io.StringIO())
 
+    def test_locked_previous_updater_never_blocks_new_build(self):
+        """Regressão: Windows não permite apagar um instalador em execução."""
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Remove-Item -LiteralPath $PreferredWork", script)
+        self.assertIn("catch {", script)
+        self.assertIn('NewGuid().ToString', script)
+        self.assertIn("$Work = Join-Path ([System.IO.Path]::GetTempPath())", script)
+        self.assertIn("$LaunchExe = Join-Path $LaunchFolder", script)
+        self.assertIn("Copy-Item -LiteralPath $Updater -Destination $LaunchExe", script)
+        self.assertIn("Get-FileHash -LiteralPath $LaunchExe", script)
+        self.assertIn("Start-Process -FilePath $LaunchExe", script)
+        self.assertNotIn("Start-Process -FilePath $Updater", script)
+        self.assertLess(
+            script.index("Get-FileHash -LiteralPath $LaunchExe"),
+            script.index("Start-Process -FilePath $LaunchExe"),
+        )
+
     def test_job_never_starts_installer_when_sync_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
