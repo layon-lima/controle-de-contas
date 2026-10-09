@@ -28,6 +28,9 @@ class DesktopFeatures:
         self._patch_row_dispatch()
         self._patch_decorate()
         self.window.atualizar_tabela()
+        self.dashboard._adapt_header_to_width(
+            max(0, self.window.centralWidget().width() - 32)
+        )
 
     def _build_tag_tables(self):
         with self.window.banco.conexao() as conn:
@@ -87,6 +90,7 @@ class DesktopFeatures:
         # O botão original de pagamento foi ocultado pelo dashboard.
         # O próprio método registrar_pagamento continua disponível por linha.
         title = QLabel("FILTROS", bulk)
+        self._filter_title = title
         lay.insertWidget(0, title)
         filt = getattr(w, "filtro", None)
         if filt is not None:
