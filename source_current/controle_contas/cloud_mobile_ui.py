@@ -448,51 +448,24 @@ def integrate_cloud_mobile_button() -> None:
             )
 
     def mark_checked_sent(self) -> None:
+        """Compatibilidade: nunca marcar como enviado sem copiar a conta."""
         ids = checked_ids(self)
         if not ids:
             return
-
-        response = QMessageBox.question(
-            self,
-            "Marcar como enviado",
-            f"Registrar {len(ids)} conta" + ("" if len(ids) == 1 else "s")
-            + " como enviada" + ("" if len(ids) == 1 else "s")
-            + " para pagamento agora?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if response != QMessageBox.StandardButton.Yes:
+        # O desktop agora opera envio individual pela linha. Copiar vários
+        # lançamentos de uma vez deixaria somente o último no clipboard,
+        # embora todos fossem marcados como enviados.
+        dashboard = getattr(self, "_desktop_dashboard", None)
+        features = getattr(dashboard, "_desktop_features", None)
+        if features is None:
             return
-
-        stamp = datetime.now().isoformat(timespec="seconds")
-        try:
-            with self.banco.conexao() as conn:
-                conn.executemany(
-                    """
-                    UPDATE contas
-                       SET enviado_pagamento_em = COALESCE(NULLIF(TRIM(enviado_pagamento_em), ''), ?),
-                           atualizado_em = ?
-                     WHERE id = ?
-                    """,
-                    [(stamp, stamp, int(account_id)) for account_id in ids],
-                )
-
-            self._bulk_checked_ids = set()
-            if hasattr(self, "atualizar"):
-                self.atualizar()
-            else:
-                self.atualizar_tabela()
+        if len(ids) != 1:
             QMessageBox.information(
-                self,
-                "Envio registrado",
-                "O horário de envio para pagamento foi registrado separadamente "
-                "da sugestão.",
+                self, "Envio individual",
+                "Envie uma conta de cada vez pelo ícone da própria linha."
             )
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Marcar como enviado",
-                f"Não foi possível registrar o envio.\n\n{exc}",
-            )
+            return
+        features.send_for_payment(ids[0])
 
     def install_bulk_bar(self) -> None:
         if getattr(self, "_bulk_bar", None) is not None:
