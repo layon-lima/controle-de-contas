@@ -58,15 +58,19 @@ async function reload(){
 }
 function render(){
   const totals={'Vencida':[0,0],'Próxima':[0,0],'Em dia':[0,0],'Paga':[0,0]};
-  const today=localToday().slice(0,7);
   for(const a of accounts){
     if(a.status==='Paga'){
-      if(String(a.data_pagamento||'').slice(0,7)===today){totals.Paga[0]++;totals.Paga[1]+=Number(a.valor_pago||a.valor||0);}
+      // O card Pagas representa TODO o histórico, não apenas o mês atual.
+      totals.Paga[0]++;
+      totals.Paga[1]+=Number(a.valor_pago??a.valor??0);
     }else if(totals[a.status]){totals[a.status][0]++;totals[a.status][1]+=Number(a.valor||0);}
   }
   for(const [status,ids] of Object.entries({'Vencida':['kOver','vOver'],'Próxima':['kSoon','vSoon'],'Em dia':['kOk','vOk'],'Paga':['kPaid','vPaid']})){
     $(ids[0]).textContent=totals[status][0];$(ids[1]).textContent=money(totals[status][1]);
   }
+  $('paidCard').setAttribute('aria-pressed',String(activeTab==='paid'));
+  $('backToOpen').hidden=activeTab!=='paid';
+  $('listTitle').textContent=activeTab==='paid'?'Contas pagas':'Visão geral';
   const requested=$('status').value,tagId=$('tagFilter').value;
   const query=$('search').value.trim().toLocaleLowerCase('pt-BR');
   const visible=accounts.filter(a=>{
@@ -203,7 +207,7 @@ function payModal(a){
     'Confirmar pagamento',async()=>{
       if(!$('paidDate').value)throw new Error('Escolha a data.');
       await api('/api/accounts/'+a.id+'/pay','POST',{data_pagamento:$('paidDate').value});
-      notice('Pagamento registrado.');activeTab='paid';setTabs();await reload();return true;
+      notice('Pagamento registrado.');setAccountView('paid');await reload();return true;
     });
 }
 function tagModal(a){
@@ -242,9 +246,16 @@ async function action(kind){
     }
   }catch(e){notice(e.message||String(e),true)}
 }
-function setTabs(){
-  for(const button of document.querySelectorAll('.tab'))button.classList.toggle('active',button.dataset.tab===activeTab);
-  $('status').value='all';
+function setAccountView(mode){
+  // A única navegação entre aberto e pago fica no card superior.
+  // O histórico nunca é limitado ao mês e não mistura filtros incompatíveis.
+  activeTab=mode==='paid'?'paid':'open';
+  $('status').value=activeTab==='paid'?'Paga':'all';
+  closeMenu();
+  render();
+}
+function togglePaidView(){
+  setAccountView(activeTab==='paid'?'open':'paid');
 }
 async function uploadAccountPDF(file){
   if(!selected)throw new Error('Selecione uma conta na lista antes de importar um PDF.');
@@ -258,12 +269,18 @@ async function uploadAccountPDF(file){
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
   notice('PDF anexado à conta selecionada.');await reload();
 }
-$('status').addEventListener('change',render);
+$('status').addEventListener('change',()=>{
+  const value=$('status').value;
+  activeTab=value==='Paga'?'paid':'open';
+  render();
+});
+$('paidCard').addEventListener('click',togglePaidView);
+$('paidCard').addEventListener('keydown',e=>{
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();togglePaidView();}
+});
+$('backToOpen').addEventListener('click',()=>setAccountView('open'));
 $('tagFilter').addEventListener('change',render);
 $('search').addEventListener('input',render);
-for(const tab of document.querySelectorAll('.tab'))tab.addEventListener('click',()=>{
-  activeTab=tab.dataset.tab;closeMenu();setTabs();render();
-});
 $('newAccount').addEventListener('click',()=>accountModal(null));
 $('pdfImport').addEventListener('click',()=>{
   if(!selected){notice('Selecione uma conta primeiro. Depois clique em Importar PDF.',true);return}
