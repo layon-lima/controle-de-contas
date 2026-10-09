@@ -413,7 +413,7 @@ def _pasta_documentos_configurada():
             return None
         base = Path(raw).expanduser()
         if base.name.upper().startswith("BOLETOS ") and re.fullmatch(
-            r"BOLETOS\\s+\\d{4}", base.name, flags=re.IGNORECASE
+            r"BOLETOS\s+\d{4}", base.name, flags=re.IGNORECASE
         ):
             base = base.parent
         return base
@@ -424,7 +424,7 @@ def _pasta_documentos_configurada():
 def _nome_pdf_organizado(observacoes, fornecedor):
     # Mesmo criterio do legado: observacoes digitadas viram nome do boleto.
     text = str(observacoes or fornecedor or "BOLETO")
-    text = re.sub(r'[<>:"/\\|?*\\x00-\\x1f]', " ", text)
+    text = "".join(" " if ch in '<>:"/|?*' or ch == chr(92) or ord(ch) < 32 else ch for ch in text)
     text = " ".join(text.split()).strip().rstrip(".")
     if text.casefold().endswith(".pdf"):
         text = text[:-4].rstrip()
