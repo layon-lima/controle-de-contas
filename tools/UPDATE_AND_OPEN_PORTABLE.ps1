@@ -30,7 +30,16 @@ $PythonPath = $PythonPath.Trim()
 Write-Host "Python: $PythonPath"
 
 Progress 25 "Validando integridade do codigo local"
-Check $PythonPath @("-X", "utf8", "-m", "py_compile", (Join-Path $AppDir "server.py"), $Launcher) "Erro no codigo Python portatil."
+Check $PythonPath @("-X", "utf8", "-m", "py_compile",
+    (Join-Path $AppDir "server.py"),
+    (Join-Path $AppDir "pdf_intelligence.py"),
+    (Join-Path $AppDir "pdf_workflows.py"),
+    (Join-Path $AppDir "ocr_worker.py"),
+    (Join-Path $AppDir "verify_reader.py"), $Launcher
+) "Erro no codigo Python portatil."
+Write-Host "CC_PROGRESS|30|Conferindo motor OCR original"
+Check $PythonPath @("-X", "utf8", (Join-Path $AppDir "verify_reader.py")) "O motor OCR original nao passou na verificacao. Desktop instalado preservado."
+Write-Host "CC_PROGRESS|40|Verificando funcoes e seguranca do banco"
 Check $PythonPath @("-X", "utf8", "-m", "unittest", "discover", "-s", $AppDir, "-p", "test_*.py", "-v") "O aplicativo portatil nao passou nos testes. Nenhum dado foi alterado."
 # Testes isolados usam TEMP e nao acessam o banco real.
 Progress 50 "Testes do aplicativo portatil aprovados"
