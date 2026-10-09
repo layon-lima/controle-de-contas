@@ -26,7 +26,7 @@ DASHBOARD_STYLE = """
 /* Controle de Contas — visual desktop consistente, sem alterar a navegação. */
 QMainWindow { background: #f3f6fa; }
 QMainWindow > QWidget {
-    font-family: 'Segoe UI'; font-size: 12px; color: #233248;
+    font-family: 'Segoe UI'; font-size: 13px; color: #233248;
 }
 QFrame#headerPanel {
     background: #ffffff;
@@ -103,7 +103,7 @@ QPushButton#bottomNavButton {
     color: #687a8d;
     border: none;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: 13px;
     min-height: 44px;
     font-weight: 600;
     text-align: left;
@@ -124,7 +124,7 @@ QTableWidget {
     selection-background-color: #ecf4fc;
     selection-color: #20364e;
     font-family: 'Segoe UI';
-    font-size: 12px;
+    font-size: 13px;
     outline: none;
 }
 QTableWidget::item {
@@ -142,7 +142,7 @@ QHeaderView::section {
     border-right: 1px solid #c8d5e4;
     border-bottom: 1px solid #dbe4ee;
     padding: 8px 10px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
 }
 QHeaderView::section:hover {
@@ -1107,10 +1107,10 @@ class DesktopDashboard:
             for column in (1, 2, 4, 5):
                 item = table.item(row, column)
                 if item:
-                    item.setFont(QFont("Segoe UI", 9))
+                    item.setFont(QFont("Segoe UI", 10))
                     item.setForeground(QColor("#45576d"))
                     if column == 2:
-                        item.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+                        item.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
             date_item = table.item(row, 1)
             if date_item:
                 # Preserva o QTableWidgetItem como fonte unica do vencimento.
@@ -1123,7 +1123,7 @@ class DesktopDashboard:
 
             status = table.item(row, 3)
             if status:
-                status.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+                status.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
                 colors = {
                     "Vencida": ("#fcecef", "#ac3843"),
                     "Próxima": ("#fff3dc", "#98651b"),
@@ -1164,7 +1164,7 @@ class DesktopDashboard:
             observation = table.item(row, 8)
             if observation is not None:
                 observation.setForeground(QColor("#65768a"))
-                observation.setFont(QFont("Segoe UI", 9))
+                observation.setFont(QFont("Segoe UI", 10))
                 observation.setToolTip(observation.text())
 
             # Ações existentes no contexto da linha; evita botões duplicados.
