@@ -4,6 +4,7 @@ const $=id=>document.getElementById(id);
 const token=window.__CONTAS_TOKEN__;
 let accounts=[], availableTags=[], selected=null, activeTab='open', dialogSave=null;
 const checked=new Set();
+let activePreviewTicket=null;
 const money=n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const localToday=()=>{
   const d=new Date();
@@ -228,7 +229,11 @@ function showModal(title,description,bodyHTML,label,onSave){
   dialogSave=onSave;$('backdrop').classList.add('show');
   $('dialogBody').querySelector('input,select,textarea')?.focus();
 }
-function closeModal(){$('backdrop').classList.remove('show');dialogSave=null}
+function closeModal(){
+  $('backdrop').classList.remove('show');dialogSave=null;
+  const ticket=activePreviewTicket;activePreviewTicket=null;
+  if(ticket)api('/api/import/cancel','POST',{ticket}).catch(()=>{});
+}
 const accountFields=[
   ['fornecedor','Fornecedor *','text'],['valor','Valor (R$) *','number'],
   ['vencimento','Vencimento *','date'],['documento','CPF / CNPJ','text'],
@@ -238,6 +243,7 @@ const accountFields=[
   ['observacoes','Observações','textarea']
 ];
 function accountModal(a,preview=null,rerun=null){
+  if(preview?.ticket)activePreviewTicket=preview.ticket;
   const analysis=preview||rerun;
   const suggested=analysis?.fields||{};
   const unsafe=(analysis?.insecure_fields||[]).map(v=>String(v));
