@@ -247,7 +247,7 @@ async function uploadAccountPDF(file){
   if(!file.name.toLowerCase().endsWith('.pdf'))throw new Error('Selecione um documento PDF.');
   if(file.size>30*1024*1024)throw new Error('PDF maior que 30 MB.');
   const response=await fetch('/api/accounts/'+selected+'/upload-pdf',{
-    method:'POST',headers:{'X-Local-Token':token,'Content-Type':'application/pdf','X-Pdf-Name':file.name},
+    method:'POST',headers:{'X-Local-Token':token,'Content-Type':'application/pdf','X-Pdf-Name':encodeURIComponent(file.name)},
     body:file
   });
   const data=await response.json().catch(()=>({error:'Falha ao enviar PDF.'}));
