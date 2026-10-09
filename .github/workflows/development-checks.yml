@@ -18,6 +18,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Verify portable app without user data
+        shell: pwsh
+        run: |
+          python -m py_compile .\portable_app\server.py
+          python -m unittest discover -s portable_app -p "test_*.py" -v
+          node --check .\portable_app\app.js
+
       - name: Validate controller
         shell: pwsh
         run: |
