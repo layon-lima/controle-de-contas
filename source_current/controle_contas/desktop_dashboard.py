@@ -251,8 +251,7 @@ class DesktopDashboard:
             central.layout().setSpacing(8)
         self._remove_old_sidebar()
         self._build_header()
-        self._style_cards()
-        self._build_bottom_navigation()
+undefined
         self._configure_account_table()
         self._rearrange_actions()
 
@@ -313,11 +312,7 @@ class DesktopDashboard:
         text_layout.addWidget(subtitle)
         brand_lay.addWidget(brand_text)
         lay.insertWidget(0, brand)
-        if search is not None:
-            lay.insertWidget(1, search, 1)
-            search.setPlaceholderText(
-                "Pesquisar fornecedor, valor, descrição ou vencimento..."
-            )
+undefined
 
         importer = QPushButton("Importar PDF", header)
         importer.setIcon(_asset_icon("upload"))
@@ -419,9 +414,7 @@ class DesktopDashboard:
                     elif "R$" in text:
                         self._paid_month_value = label
 
-        self.refresh_paid_month()
-
-    def refresh_paid_month(self):
+undefined
         if self._paid_month_card is None:
             return
         try:
