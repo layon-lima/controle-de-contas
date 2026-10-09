@@ -26,7 +26,7 @@ assert getattr(window, "_desktop_dashboard", None) is not None, "Chrome novo nã
 assert window.findChild(QDockWidget, "modernNavigation") is None, "Menu lateral antigo permanece"
 assert window.tabela.columnCount() >= 10, "Faltou coluna de ações"
 assert window.tabela.horizontalHeaderItem(9).text() == "Ações", "Coluna de ações errada"
-assert window.abas.tabBar().isHidden(), "Barra antiga de abas ainda visível"
+assert window.abas.isHidden(), "Barra antiga de abas ainda visível"
 assert getattr(window, "busca", None) is not None, "Busca antiga perdida"
 
 print("UI INSTALLED")
@@ -34,7 +34,7 @@ print("window", window.size().width(), window.size().height())
 print("bottom", bottom.isHidden(), bottom.height())
 print("table", window.tabela.columnCount())
 print("search parent", window.busca.parentWidget().objectName())
-print("tabs hidden", window.abas.tabBar().isHidden())
+print("tabs hidden", window.abas.isHidden())
 for key, card in getattr(window, "cards", {}).items():
     parent=card.parentWidget()
     print("KPI",key,card.maximumHeight(),"layout",
