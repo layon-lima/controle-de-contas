@@ -77,7 +77,7 @@ footer{text-align:center;color:#91a0ae;font-size:12px;margin-top:20px}
 
   <section class="panel">
     <div class="paneltitle">Atualização</div>
-    <p class="explain">Um clique para sincronizar o GitHub, testar e instalar o aplicativo no PC e publicar o mobile.</p>
+    <p class="explain">Um clique para sincronizar o GitHub, testar e abrir a versão portátil, sem instalar EXE, e atualizar o mobile.</p>
     <button id="runBtn" type="button">Atualizar tudo</button>
   </section>
 
@@ -198,12 +198,12 @@ async function startLegacy(){
   // Compatibilidade com o servidor Python que ainda não foi reiniciado após o git pull.
   // Um único clique continua iniciando o fluxo, sem abrir terminal.
   setStatus('working','Em andamento','Sincronizando o painel',
-    'Atualizando os arquivos antes de instalar…',2);
+    'Atualizando arquivos para abrir a versão portátil…',2);
   await request('/api/panel/pull',{method:'POST'});
   legacyPhase='desktop';
   sessionStorage.setItem('cc_legacy_update','desktop');
   await request('/api/update/local-desktop',{method:'POST'});
-  lastPercent=2; lastStage='Preparando aplicativo Windows';
+  lastPercent=2; lastStage='Preparando aplicativo portátil';
   updateButton();
 }
 async function runAll(){
@@ -234,19 +234,19 @@ async function pollJob(){
       lastPercent=89;lastStage='Preparando publicação mobile';
       legacyPhase='mobile';
       sessionStorage.setItem('cc_legacy_update','mobile');
-      setStatus('working','Em andamento',lastStage,'Desktop pronto. Publicando mobile…',89);
+      setStatus('working','Em andamento',lastStage,'Portátil aberto. Atualizando mobile…',89);
       try{await request('/api/mobile/deploy',{method:'POST'})}
       catch(err){
         legacyPhase=null;sessionStorage.removeItem('cc_legacy_update');
         setStatus('failed','Falhou','Publicação mobile não iniciada',
-          'PC atualizado, mas o mobile falhou: '+String(err.message||err),89);
+          'Portátil aberto, mas o mobile falhou: '+String(err.message||err),89);
         return;
       }
       return;
     }
     if(job.ok===false){legacyPhase=null;sessionStorage.removeItem('cc_legacy_update')}
   }else if(legacyPhase==='mobile'&&!job.running&&job.kind==='mobile_deploy'){
-    if(job.ok===true){lastPercent=100;job={...job,progress:100,stage:'Concluído',message:'PC e mobile atualizados.'}}
+    if(job.ok===true){lastPercent=100;job={...job,progress:100,stage:'Concluído',message:'Portátil e mobile atualizados.'}}
     legacyPhase=null;sessionStorage.removeItem('cc_legacy_update');
   }
   applyJob(job);
