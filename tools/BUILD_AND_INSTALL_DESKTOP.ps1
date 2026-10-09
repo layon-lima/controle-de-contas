@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+# O PowerShell carrega o script inteiro antes da execucao. Quando git pull
+# atualiza este mesmo arquivo, o processo ainda executaria o codigo antigo.
+$BuildScriptPath = $MyInvocation.MyCommand.Path
+$LoadedScriptHash = (Get-FileHash -LiteralPath $BuildScriptPath -Algorithm SHA256).Hash
 
 # Sempre construa a partir da versão atual da develop.
 # Sem esta etapa, uma cópia local antiga executava testes já corrigidos no GitHub.
@@ -22,6 +26,22 @@ if ($LASTEXITCODE -ne 0 -or $LocalCommit -ne $RemoteCommit) {
     throw "A versão local não corresponde à develop remota; build interrompido para evitar usar testes antigos."
 }
 Write-Host "Origem confirmada: develop @ $($LocalCommit.Substring(0, 10))"
+
+# Se o arquivo foi atualizado enquanto o PowerShell executava o codigo
+# anterior, inicia um NOVO processo que le o arquivo atualizado do disco.
+# Nao compila nem instala com uma versao obsoleta ja carregada na memoria.
+$DiskScriptHash = (Get-FileHash -LiteralPath $BuildScriptPath -Algorithm SHA256).Hash
+if ($LoadedScriptHash -ne $DiskScriptHash) {
+    Write-Host "Instalador corrigido encontrado no GitHub. Reiniciando com a versao nova..."
+    $RestartArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $BuildScriptPath)
+    if ($Version) { $RestartArgs += @("-Version", $Version) }
+    & powershell.exe @RestartArgs
+    $RestartExitCode = $LASTEXITCODE
+    if ($RestartExitCode -ne 0) {
+        throw "A execucao da versao atualizada falhou com codigo $RestartExitCode."
+    }
+    exit 0
+}
 
 if (-not $Version) {
     $Version = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
