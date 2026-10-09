@@ -31,6 +31,9 @@ de uma conta não reorganiza automaticamente os arquivos já existentes.
 todos os períodos, menu por duplo clique, filtros por situação/TAG/pesquisa,
 cadastro/edição, TAGs, sugestão Cloudflare, cópia com confirmação de envio,
 pagamento manual, exclusão e leitura/anexo/visualização de PDFs.
+Também permite marcar várias contas diretamente na tabela e sugerir, copiar
+para pagamento ou registrar pagamento manual em lote. Ao copiar várias,
+o banco só recebe a data de envio após confirmação do clipboard.
 
 **Importação com autopreenchimento:** o botão **Importar PDF** abre o motor OCR
 original recuperado do desktop (incluindo perfis de aprendizado V1/V2,
@@ -61,9 +64,9 @@ contas legítimas.
 
 **Compatibilidade:** o modo portátil usa o mesmo banco de produção, mantendo
 um backup antes da primeira alteração em cada sessão. A versão instalada
-permanece disponível como alternativa durante a migração. Nem todas as telas
-especializadas e ações em lote do aplicativo instalado foram migradas ou
-validadas ainda; não desinstale a versão antiga até concluir o teste de paridade.
+permanece disponível como alternativa durante a migração. As operações em lote principais já foram portadas, mas as demais telas
+especializadas e integrações precisam passar por validação real antes de
+desinstalar a versão antiga. Não assuma equivalência total apenas pela interface.
 
 O servidor só escuta em `127.0.0.1`, protege a API com token de sessão e valida
 a origem das alterações. Nenhum endpoint de pagamento é publicado na nuvem.
