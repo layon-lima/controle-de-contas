@@ -2582,21 +2582,61 @@ def _banco_atualizar_conta_organizada(self, conta_id, dados):
 
 
 def _dados_pagamento_sem_copia(self):
+    # A conferencia comparativa foi removida; comprovante e apenas um anexo.
     dados = self.dados_parciais() or {}
-    resultado, detalhes = ui.comparar_pagamento(self.conta, dados)
     return {
         **dados,
         "pdf_comprovante": str(getattr(self, "pdf_origem", "") or ""),
-        "resultado_conferencia": resultado,
-        "detalhes_conferencia": detalhes,
+        "resultado_conferencia": "Não conferido",
+        "detalhes_conferencia": "Conferência automática desativada.",
     }
 
 
+_pagamento_init_original = ui.PagamentoDialog.__init__
+
+
+def _inicializar_pagamento_simples(self, *args, **kwargs):
+    _pagamento_init_original(self, *args, **kwargs)
+    # Elimina a etapa visual de comparacao. A anexacao segue opcional.
+    for button in self.findChildren(ui.QPushButton):
+        if "conferir" in button.text().casefold():
+            button.hide()
+    for label in self.findChildren(ui.QLabel):
+        if "conferência aparecerá" in label.text().casefold():
+            label.hide()
+
+
 def _validar_pagamento_com_pasta(self):
-    if getattr(self, "pdf_origem", "") and _obter_pasta_base(self, perguntar=False) is None:
+    # So uma confirmacao, imediatamente antes de efetivar o pagamento.
+    dados = self.dados_parciais() or {}
+    try:
+        valor = float(dados.get("valor_pago") or 0)
+    except (TypeError, ValueError):
+        valor = 0
+    if valor <= 0:
+        ui.QMessageBox.warning(self, "Pagamento inválido",
+                               "Informe um valor pago maior que zero.")
+        return
+    if not dados.get("data_pagamento"):
+        ui.QMessageBox.warning(self, "Pagamento inválido",
+                               "Informe a data do pagamento.")
+        return
+    comprovante = str(getattr(self, "pdf_origem", "") or "").strip()
+    if comprovante and not Path(comprovante).is_file():
+        ui.QMessageBox.warning(self, "Comprovante não encontrado",
+                               "Selecione um PDF de comprovante válido.")
+        return
+    if comprovante and _obter_pasta_base(self, perguntar=False) is None:
         if _selecionar_pasta_base(self) is None:
             return
-    return _validar_pagamento_original(self)
+    response = ui.QMessageBox.question(
+        self, "Confirmar pagamento",
+        "Confirma o registro deste pagamento?",
+        ui.QMessageBox.StandardButton.Yes | ui.QMessageBox.StandardButton.No,
+        ui.QMessageBox.StandardButton.No,
+    )
+    if response == ui.QMessageBox.StandardButton.Yes:
+        self.accept()
 
 
 def _atualizar_caminho_pdf_conta(banco, conta_id: int, caminho: str) -> None:
@@ -2677,7 +2717,7 @@ def _banco_registrar_pagamento_mesclado(self, conta_id, dados):
 
     comprovante = Path(comprovante_txt)
     if not comprovante.is_file():
-        return _banco_registrar_pagamento_original(self, conta_id, dados_novos)
+        raise FileNotFoundError(f"Comprovante PDF não encontrado: {comprovante}")
 
     conta = self.buscar_conta(int(conta_id))
     if not conta:
@@ -3591,6 +3631,7 @@ def aplicar_patches():
     ui.ContaDialog.dados = _dados_conta_sem_copia
     ui.ContaDialog.validar = _validar_conta_com_pasta
 
+    ui.PagamentoDialog.__init__ = _inicializar_pagamento_simples
     ui.PagamentoDialog.dados = _dados_pagamento_sem_copia
     ui.PagamentoDialog.validar = _validar_pagamento_com_pasta
 
