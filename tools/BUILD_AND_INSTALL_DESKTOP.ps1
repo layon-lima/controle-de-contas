@@ -27,15 +27,26 @@ if (-not $Version) {
     $Version = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
 }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Versão inválida: $Version" }
-$Work = Join-Path $Root ".local_build_$($Version.Replace('.','_'))"
+$PreferredWork = Join-Path $Root ".local_build_$($Version.Replace('.','_'))"
+$Work = $PreferredWork
 
 Write-Host "=== Controle de Contas $Version - build local ==="
 Write-Host "Raiz: $Root"
 
-if (Test-Path $Work) {
-    Remove-Item $Work -Recurse -Force
+# Atualizadores anteriores podem continuar abertos pelo Windows. Nunca tente
+# forcar a exclusao de um EXE em uso nem interrompa a nova instalacao por isso.
+if (Test-Path $PreferredWork) {
+    try {
+        Remove-Item -LiteralPath $PreferredWork -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Host "O build anterior esta em uso; criando uma area de trabalho independente."
+        $Work = Join-Path ([System.IO.Path]::GetTempPath()) (
+            "CC_BUILD_$($Version.Replace('.','_'))_$([guid]::NewGuid().ToString('N').Substring(0, 10))"
+        )
+    }
 }
-New-Item -ItemType Directory -Force -Path $Work | Out-Null
+New-Item -ItemType Directory -Force -Path $Work -ErrorAction Stop | Out-Null
+Write-Host "Area de trabalho: $Work"
 
 $SourceZip = Join-Path $Root "releases\CONTROLE_CONTAS_1.4.4_SOURCE.zip"
 $OverlayB64 = Join-Path $Root "releases\CONTROLE_CONTAS_1.4.5_OVERLAY.b64"
@@ -150,10 +161,25 @@ if (!(Test-Path $Updater)) {
 }
 
 Write-Host "Atualizador pronto: $Updater"
+
+# Nunca abra o atualizador diretamente de dentro da pasta de build: enquanto
+# o instalador estiver aberto, o Windows bloquearia a limpeza do proximo build.
+# Copia para uma pasta exclusiva fora do workspace e confirma os bytes.
+$LaunchFolder = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "CC_INSTALL_$($Version.Replace('.','_'))_$([guid]::NewGuid().ToString('N').Substring(0, 10))"
+)
+New-Item -ItemType Directory -Force -Path $LaunchFolder -ErrorAction Stop | Out-Null
+$LaunchExe = Join-Path $LaunchFolder (Split-Path -Leaf $Updater)
+Copy-Item -LiteralPath $Updater -Destination $LaunchExe -ErrorAction Stop
+if ((Get-FileHash -LiteralPath $Updater -Algorithm SHA256).Hash -ne
+    (Get-FileHash -LiteralPath $LaunchExe -Algorithm SHA256).Hash) {
+    throw "A copia do atualizador nao passou pela verificacao de integridade."
+}
+
 Write-Host "Fechando o app atual..."
 taskkill /IM "Controle de Contas.exe" /T /F 2>$null | Out-Null
 Start-Sleep -Milliseconds 800
 
 Write-Host "Abrindo instalador $Version..."
-Start-Process -FilePath $Updater -WorkingDirectory (Split-Path $Updater -Parent)
-Write-Host "Instalador iniciado."
+Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -ErrorAction Stop
+Write-Host "Instalador iniciado a partir da area independente: $LaunchFolder"
