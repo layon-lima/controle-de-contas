@@ -4,6 +4,25 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+
+# Sempre construa a partir da versão atual da develop.
+# Sem esta etapa, uma cópia local antiga executava testes já corrigidos no GitHub.
+Write-Host "=== Conferindo fonte local antes do build ==="
+$Branch = (& git -C $Root branch --show-current).Trim()
+if ($LASTEXITCODE -ne 0 -or $Branch -ne "develop") {
+    throw "A pasta local precisa estar na branch develop (atual: '$Branch'). Nenhum arquivo foi alterado."
+}
+& git -C $Root pull --ff-only origin develop
+if ($LASTEXITCODE -ne 0) {
+    throw "Não foi possível sincronizar com origin/develop. Resolva eventuais alterações locais e tente novamente. Nenhum aplicativo foi instalado."
+}
+$LocalCommit = (& git -C $Root rev-parse HEAD).Trim()
+$RemoteCommit = (& git -C $Root rev-parse refs/remotes/origin/develop).Trim()
+if ($LASTEXITCODE -ne 0 -or $LocalCommit -ne $RemoteCommit) {
+    throw "A versão local não corresponde à develop remota; build interrompido para evitar usar testes antigos."
+}
+Write-Host "Origem confirmada: develop @ $($LocalCommit.Substring(0, 10))"
+
 if (-not $Version) {
     $Version = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
 }
