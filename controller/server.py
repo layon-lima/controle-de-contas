@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.4.0"
+CONTROLLER_VERSION = "0.5.0"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -603,7 +603,7 @@ def _run_logged_command(kind: str, cmd: list[str], cwd: Path) -> None:
 
 
 def _run_full_update() -> None:
-    """Único fluxo visível: sincronizar -> testar/instalar PC -> publicar mobile."""
+    """Único botão: sincronizar -> testar/abrir portátil -> publicar mobile."""
     APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
     _set_job_state(
         running=True, kind="full_update", ok=None,
@@ -615,14 +615,14 @@ def _run_full_update() -> None:
     stage = "Sincronização"
     try:
         with JOB_LOG_PATH.open("w", encoding="utf-8", errors="replace") as log:
-            log.write("ATUALIZACAO COMPLETA: GITHUB > TESTES > PC > MOBILE\n")
+            log.write("ATUALIZACAO COMPLETA: GITHUB > TESTES > PORTATIL > MOBILE\n")
             log.flush()
             _sync_develop_before_desktop_build(log)
             _set_job_state(progress=15, stage="Código sincronizado")
-            desktop_script = ROOT / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1"
+            portable_script = ROOT / "tools" / "UPDATE_AND_OPEN_PORTABLE.ps1"
             mobile_script = ROOT / "tools" / "DEPLOY_MOBILE_PERMANENT_ACCESS.ps1"
-            if not desktop_script.is_file():
-                raise FileNotFoundError("Instalador desktop não encontrado.")
+            if not portable_script.is_file():
+                raise FileNotFoundError("Atualizador portátil não encontrado.")
             if not mobile_script.is_file():
                 raise FileNotFoundError("Script de publicação mobile não encontrado.")
             def run_script(script: Path, label: str):
@@ -637,24 +637,25 @@ def _run_full_update() -> None:
                 )
                 return process.wait()
 
-            stage = "Instalação do aplicativo Windows"
-            if run_script(desktop_script, "ETAPA: ATUALIZANDO O DESKTOP") != 0:
+            stage = "Atualização do aplicativo portátil"
+            if run_script(portable_script, "ETAPA: VALIDANDO E ABRINDO O PORTÁTIL") != 0:
                 raise RuntimeError(
-                    "O teste, a compilação ou a instalação do PC falhou. "
+                    "A validação ou abertura do portátil falhou. "
+                    "O aplicativo instalado permanece inalterado. "
                     "A publicação mobile não foi iniciada."
                 )
             _set_job_state(progress=89, stage="Preparando publicação mobile")
             stage = "Publicação mobile"
             if run_script(mobile_script, "ETAPA: PUBLICANDO MOBILE") != 0:
                 raise RuntimeError(
-                    "O PC foi instalado, mas a publicação mobile falhou. "
+                    "O portátil foi aberto, mas a publicação mobile falhou. "
                     "Use Copiar log para enviar o erro."
                 )
-            log.write("\nATUALIZACAO COMPLETA: PC e mobile finalizados.\n")
+            log.write("\nATUALIZACAO COMPLETA: portatil e mobile finalizados.\n")
             log.flush()
         _set_job_state(
             running=False, ok=True, progress=100,
-            stage="Concluído", message="PC e mobile atualizados com sucesso.",
+            stage="Concluído", message="Portátil e mobile atualizados com sucesso.",
             finished_at=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
     except Exception as exc:
@@ -688,7 +689,7 @@ def _start_full_update() -> tuple[bool, str]:
             running=False, ok=False, stage="Falha ao iniciar", message=str(exc)
         )
         return False, "Não foi possível iniciar a atualização: " + str(exc)
-    return True, "Sincronização, instalação do PC e publicação mobile iniciadas."
+    return True, "Sincronização, abertura do portátil e publicação mobile iniciadas."
 
 
 def _start_mobile_deploy() -> tuple[bool, str]:
