@@ -210,23 +210,35 @@ if ((Get-FileHash -LiteralPath $Updater -Algorithm SHA256).Hash -ne
 # taskkill aqui: no PowerShell 5, "processo nao encontrado" pode virar erro
 # terminante mesmo com 2>$null e interromper um build ja concluido.
 Write-Host "Aplicativo aberto ou fechado: o instalador cuidara disso automaticamente."
-Write-Host "CC_PROGRESS|85|Aguardando conclusao do instalador Windows"
-Write-Host "Abrindo instalador $Version..."
+Write-Host "CC_PROGRESS|85|Instalando aplicativo Windows automaticamente"
+Write-Host "Iniciando instalacao automatica e silenciosa $Version..."
 if (-not (Test-Path -LiteralPath $LaunchExe -PathType Leaf)) {
     throw "O atualizador preparado nao foi encontrado: $LaunchExe"
 }
-# Uma instalacao so esta concluida quando o assistente Inno Setup terminou.
-# -Wait impede o painel de dar falso positivo de instalacao bem sucedida.
-$Installation = Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -PassThru -ErrorAction Stop
+# Sem assistente oculto aguardando cliques: o painel e o unico controle.
+# Inno Setup usa privilégio por usuario e nao deve exigir elevacao/UAC.
+# Nenhum reinicio automatico do Windows pode acontecer nesta rotina.
+$InstallerLog = Join-Path $LaunchFolder "instalacao_inno.log"
+$InstallArgs = @(
+    "/VERYSILENT",
+    "/SUPPRESSMSGBOXES",
+    "/SP-",
+    "/NORESTART",
+    "/CLOSEAPPLICATIONS",
+    ('/LOG="' + $InstallerLog + '"')
+)
+$Installation = Start-Process -FilePath $LaunchExe -ArgumentList $InstallArgs -WorkingDirectory $LaunchFolder -PassThru -ErrorAction Stop
 if ($null -eq $Installation) {
     throw "O atualizador nao iniciou corretamente."
 }
-# Espera apenas o assistente Inno Setup; Start-Process -Wait aguardaria
-# tambem o app que o instalador reabre automaticamente no final.
+# Espera apenas o processo de instalação, não o app reaberto.
 $Installation.WaitForExit()
 if ($Installation.ExitCode -ne 0) {
-    $code = if ($null -eq $Installation) { "desconhecido" } else { $Installation.ExitCode }
-    throw "O instalador nao concluiu com sucesso (codigo $code)."
+    if (Test-Path -LiteralPath $InstallerLog) {
+        Write-Host "ULTIMOS DETALHES DO INSTALADOR WINDOWS:"
+        Get-Content -LiteralPath $InstallerLog -Tail 70 -ErrorAction SilentlyContinue | Out-Host
+    }
+    throw "A instalacao automatica falhou (codigo $($Installation.ExitCode))."
 }
 Write-Host "CC_PROGRESS|88|Instalacao Windows concluida"
-Write-Host "Instalacao Windows finalizada. Atualizador: $LaunchExe"
+Write-Host "Instalacao silenciosa concluida com sucesso."
