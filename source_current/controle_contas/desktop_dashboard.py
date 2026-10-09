@@ -776,11 +776,14 @@ undefined
             cell = QWidget(table)
             actions = QHBoxLayout(cell)
             actions.setContentsMargins(2, 2, 2, 2)
-            actions.setSpacing(5)
+            actions.setSpacing(3)
             for icon_name, action, tooltip in (
-                ("document", "Abrir conta", "Abrir o PDF da conta"),
-                ("send", "Enviar para pagamento", "Enviar esta conta para pagamento"),
-                ("more", "menu", "Mais ações"),
+                ("document", "Abrir conta", "Abrir PDF da conta"),
+                ("suggest", "Sugerir para pagamento", "Sugerir no mobile"),
+                ("sent", "Enviar para pagamento", "Marcar como enviado"),
+                ("paid", "Registrar pagamento", "Registrar pagamento desta conta"),
+                ("tag", "TAGs", "Gerenciar TAGs desta conta"),
+                ("more", "menu", "Outras ações"),
             ):
                 button = QToolButton(cell)
                 button.setIcon(_asset_icon(icon_name))
