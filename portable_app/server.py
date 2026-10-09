@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -36,6 +37,13 @@ TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
 PENDING: dict[str, tuple[int, float]] = {}
 BACKUP_DONE = False
+try:
+    SOURCE_REVISION = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        encoding="utf-8", stderr=subprocess.DEVNULL, timeout=5
+    ).strip()
+except (OSError, subprocess.SubprocessError):
+    SOURCE_REVISION = "indisponivel"
 
 FIELDS = ("fornecedor", "documento", "pagador", "referencia", "valor",
           "vencimento", "codigo_pagamento", "tipo_pagamento", "observacoes")
@@ -468,6 +476,10 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self):
         try:
             route = urlsplit(self.path).path
+            if self.command == "GET" and route == "/health":
+                # Apenas metadado de versao: nunca expor contas nem tokens.
+                self._json({"online": True, "revision": SOURCE_REVISION})
+                return
             if self.command == "GET" and route == "/":
                 # HTML tem acesso exclusivo ao token; nenhuma API aceita chamadas
                 # de outro site, formulários sem token ou fetch de outra origem.
