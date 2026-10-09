@@ -307,8 +307,28 @@ for size in (1380, 900, 590):
 window.resize(1380, 840)
 app.processEvents()
 dashboard._layout_kpis()
-assert window._desktop_dashboard._buttons["import"].text() == "Importar PDF"
+# Em offscreen, o QWidget central nem sempre acompanha os pixels solicitados
+# a um QMainWindow que não foi exibido. Validar a LARGURA REAL, não o resize.
+real_width = max(0, window.centralWidget().width() - 32)
+expected_import = "" if real_width < 890 else "Importar PDF"
+expected_tag_width = 120 if real_width < 760 else 170
+assert dashboard._buttons["import"].text() == expected_import, (
+    f"Importar PDF incompatível com largura real de {real_width}px"
+)
+assert features.tag_filter.width() == expected_tag_width, (
+    f"Filtro TAG incompatível com largura real de {real_width}px"
+)
+# Exercitar as duas transições independentemente da geometria do Qt offscreen:
+dashboard._adapt_header_to_width(1380)
+assert dashboard._buttons["import"].text() == "Importar PDF", (
+    "O texto completo não voltou após expandir a área disponível"
+)
 assert features.tag_filter.width() == 170
+dashboard._adapt_header_to_width(540)
+assert dashboard._buttons["import"].text() == ""
+assert features.tag_filter.width() == 120
+# Devolver a aparência ao tamanho real ao final da simulação.
+dashboard._adapt_header_to_width(real_width)
 
 window.banco.registrar_pagamento(qa_id, {
     "valor_pago": 123.45,
@@ -378,6 +398,17 @@ assert obs is not None and "#HOLERITES QA" in obs.text(), (
 )
 print("PAYMENT WITHOUT RECEIPT AND TAGS PASS")
 
+# O observador deve ser destruído com a interface, sem tentar acessar
+# C++ QWidget já liberado nos callbacks finais de encerramento do Qt.
+from PySide6.QtCore import QCoreApplication, QEvent
+from shiboken6 import isValid
+watcher = dashboard._kpi_watcher
+assert watcher.parent() is window.centralWidget()
 window.close()
+window.deleteLater()
+QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+app.processEvents()
+assert not isValid(window), "Qt não liberou a janela no encerramento do teste"
+assert not isValid(watcher), "Observador responsivo ficou vivo após a janela"
 app.quit()
 print("DASHBOARD UI SMOKE PASS")
