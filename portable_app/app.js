@@ -3,6 +3,7 @@
 const $=id=>document.getElementById(id);
 const token=window.__CONTAS_TOKEN__;
 let accounts=[], availableTags=[], selected=null, activeTab='open', dialogSave=null;
+const checked=new Set();
 const money=n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const localToday=()=>{
   const d=new Date();
@@ -50,6 +51,8 @@ async function reload(){
   const data=await api('/api/accounts');
   accounts=data.accounts||[];availableTags=data.tags||[];
   if(selected&&!accounts.some(a=>a.id===selected))selected=null;
+  const valid=new Set(accounts.map(a=>a.id));
+  for(const id of checked)if(!valid.has(id))checked.delete(id);
   const choose=$('tagFilter'),previous=choose.value;
   choose.replaceChildren(new Option('Todas as TAGs',''));
   for(const tag of availableTags)choose.add(new Option(tag.name,String(tag.id)));
@@ -85,6 +88,7 @@ function render(){
     return true;
   });
   $('count').textContent=visible.length+' registros';
+  updateBulkBar();
   const body=$('rows');body.replaceChildren();
   if(!visible.length){
     const tr=document.createElement('tr'),td=document.createElement('td');
@@ -100,7 +104,7 @@ function render(){
     const tagHtml=(a.tags||[]).map(t=>'<span class="tag">'+esc(t.name)+'</span>').join(' ')||'<span class="empty">—</span>';
     const dueDescription=dayLabel(a.vencimento);
     tr.innerHTML=
-       '<td><div class="vendor"><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
+       '<td><div class="vendor"><input class="bulk-check" type="checkbox" aria-label="Selecionar conta '+esc(a.fornecedor)+'" '+(checked.has(a.id)?'checked':'')+'><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
       +'<td class="obs" title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'—')+'</td>'
       +'<td>'+tagHtml+'</td>'
       +'<td><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(dueDescription.includes('atrás')?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
@@ -109,11 +113,64 @@ function render(){
       +'<td class="date-time">'+esc(timeBR(a.suggested_at))+'</td>'
       +'<td class="date-time">'+esc(timeBR(a.enviado_pagamento_em))+'</td>';
     tr.addEventListener('click',()=>select(a.id));
+    const checkbox=tr.querySelector('.bulk-check');
+    checkbox.addEventListener('click',e=>e.stopPropagation());
+    checkbox.addEventListener('dblclick',e=>e.stopPropagation());
+    checkbox.addEventListener('change',()=>{
+      if(checkbox.checked)checked.add(a.id);else checked.delete(a.id);
+      updateBulkBar();
+    });
     tr.addEventListener('dblclick',e=>openMenu(a.id,e));
     tr.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openMenu(a.id,e);}});
     body.appendChild(tr);
   }
 }
+function updateBulkBar(){
+  const count=checked.size;
+  $('bulkBar').hidden=count===0;
+  $('bulkCount').textContent=count+' conta'+(count===1?'':'s')+' selecionada'+(count===1?'':'s');
+}
+function checkedIds(){
+  return [...checked].filter(id=>accounts.some(a=>a.id===id)).sort((a,b)=>a-b);
+}
+function clearChecked(){checked.clear();render();}
+async function suggestBulk(){
+  const ids=checkedIds();if(!ids.length)return;
+  if(!confirm('Sugerir '+ids.length+' conta(s) no mobile?'))return;
+  try{
+    const result=await api('/api/batch/suggest','POST',{ids});
+    notice(result.count+' contas sugeridas para pagamento.');
+    clearChecked();await reload();
+  }catch(e){notice(e.message||String(e),true)}
+}
+async function sendBulk(){
+  const ids=checkedIds();if(!ids.length)return;
+  try{
+    const prepared=await api('/api/batch/prepare-send','POST',{ids});
+    await copyText(prepared.text); // gravação somente APÓS cópia confirmada
+    const result=await api('/api/batch/confirm-send','POST',{nonce:prepared.nonce});
+    notice(result.count+' contas copiadas e registradas como enviadas.');
+    clearChecked();await reload();
+  }catch(e){notice(e.message||String(e),true)}
+}
+function payBulk(){
+  const ids=checkedIds();if(!ids.length)return;
+  const today=localToday();
+  showModal('Pagamento em lote',
+    'Confirme o pagamento das '+ids.length+' contas selecionadas. Operação manual sem comprovante.',
+    '<label class="field">Data do pagamento<input id="bulkPaidDate" type="date" value="'+today+'"></label>'+
+    '<p class="hint">Contas já pagas serão ignoradas. Comprovantes são anexados individualmente pelo menu de cada conta.</p>',
+    'Registrar '+ids.length+' pagamentos',async()=>{
+      const result=await api('/api/batch/pay','POST',{
+        ids,data_pagamento:$('bulkPaidDate').value
+      });
+      const failures=Object.keys(result.errors||{}).length;
+      notice(result.count+' pagamentos registrados.'+(failures?' '+failures+' pendentes/recusados.':''),
+             failures>0);
+      clearChecked();await reload();return true;
+    });
+}
+
 function select(id){
   selected=id;
   for(const tr of $('rows').children)tr.classList.toggle('selected',Number(tr.dataset.id)===id);
@@ -298,6 +355,10 @@ async function uploadAccountPDF(file){
     ? 'PDF salvo em BOLETOS por ano e mês: '+data.folder
     : 'PDF anexado na pasta provisória. Configure a pasta-base no desktop clássico.');await reload();
 }
+$('bulkSuggest').addEventListener('click',suggestBulk);
+$('bulkSend').addEventListener('click',sendBulk);
+$('bulkPay').addEventListener('click',payBulk);
+$('bulkClear').addEventListener('click',clearChecked);
 $('status').addEventListener('change',()=>{
   const value=$('status').value;
   activeTab=value==='Paga'?'paid':'open';
