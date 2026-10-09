@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Controle de Contas</title>
+<style>
+:root{color-scheme:light;--ink:#152b48;--muted:#71839a;--line:#e3eaf2;--bg:#f5f8fb;--blue:#1877e1;--green:#07875e}
+*{box-sizing:border-box}body{margin:0;color:var(--ink);font:13px/1.45 "Segoe UI",Inter,Arial,sans-serif;background:var(--bg)}
+button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.5}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #7bb7ff;outline-offset:2px}
+.app{min-height:100vh;display:flex;flex-direction:column;gap:13px;padding:16px}
+.topbar,.surface{border-radius:15px;background:#fff;border:1px solid #e8edf4;box-shadow:0 4px 20px rgba(40,70,110,.025)}
+.topbar{padding:12px;display:flex;align-items:center;gap:14px;min-height:86px}
+.brand{display:flex;align-items:center;gap:11px;min-width:235px}.brand>img{width:47px;height:47px}.brand b{font-size:18px;display:block;letter-spacing:-.5px}.brand small{color:#8294ae;font-size:10px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:8px;flex:1}
+.kpi{position:relative;border-radius:11px;border:1px solid #edf1f7;padding:8px 12px 8px 43px;min-height:59px;overflow:hidden;background:#fff}
+.kpi>img{position:absolute;left:11px;top:13px;width:23px;height:23px}.kpi b{font-size:19px;font-weight:800;display:block;line-height:24px}.kpi small{display:block;font-size:9px;font-weight:800;letter-spacing:.025em;white-space:nowrap}
+.kpi .subvalue{position:absolute;right:10px;bottom:11px;font-size:10px;font-weight:700;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi.red{background:#fff7f8;color:#c72e43}.kpi.yellow{background:#fffaf0;color:#b77c12}.kpi.green{background:#f3fcf7;color:#16845a}.kpi.blue{background:#f4f8ff;color:#226fe2}
+.top-actions{display:flex;align-items:center;gap:8px}.top-actions button,.outline{border:1px solid #dde7f4;background:#fff;color:#294d7e;border-radius:9px;min-height:36px;padding:0 12px;font-weight:650;white-space:nowrap}
+.top-actions button:hover,.outline:hover{background:#f1f7ff;border-color:#aacbeb}
+.top-actions .primary,.primary{background:var(--green);border:1px solid var(--green);color:white;border-radius:9px;font-weight:700}
+.top-actions .primary:hover,.primary:hover{background:#06744f}
+main.surface{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.section-header{padding:15px 19px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #f1f4f8}
+.section-header h2{font-size:17px;margin:0;letter-spacing:-.2px}.count{font-size:11px;color:#60728d}.count strong{background:#f2f5fa;border-radius:14px;padding:5px 8px;margin-left:8px}
+.filters{padding:11px 15px;display:flex;align-items:center;gap:12px}
+.filters label{display:flex;align-items:center;gap:8px;color:#667c96;font-weight:650;font-size:12px}
+.filters select,.filters input{min-height:39px;background:#fff;border:1px solid #dde7f2;border-radius:9px;padding:0 12px;color:#27415f}
+.filters select{min-width:125px;max-width:190px}.filters .search{flex:1;min-width:0;position:relative}
+.filters .search img{width:17px;height:17px;position:absolute;left:12px;top:11px;opacity:.7}
+.filters .search input{width:100%;padding-left:37px}.filters input::placeholder{color:#91a1b5}
+.table-scroll{flex:1;min-height:340px;overflow:auto;margin:0 9px 8px;border:1px solid #e7edf5;border-radius:10px}
+table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;min-width:1000px}
+thead th{height:43px;background:#f8fbfe;color:#516982;text-align:left;padding:0 12px;font-size:11px;border-bottom:1px solid #e0e9f4;position:sticky;top:0;z-index:3;white-space:nowrap}
+thead th+th,tbody td+td{border-left:1px solid #ecf1f6}
+tbody tr{height:48px;cursor:pointer;transition:background .1s}tbody tr:nth-child(even){background:#fbfdff}
+tbody tr:hover{background:#f1f7ff}tbody tr.selected{background:#e2f0ff!important;box-shadow:inset 3px 0 0 #3a92ed}
+tbody td{padding:6px 12px;border-bottom:1px solid #edf2f7;color:#344d6e;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;vertical-align:middle;font-size:12px}
+tbody tr:last-child td{border-bottom:0}
+.vendor{display:flex;align-items:center;gap:10px;min-width:0;font-weight:700;color:#1c365c}
+.vendor-avatar{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:50%;background:#357cef;color:white;font-size:11px;font-weight:750}
+.vendor-name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.obs,.date-time{color:#617794}.value{font-weight:750;color:#264367;font-variant-numeric:tabular-nums}
+.due{font-weight:650;color:#28476c}.due small{display:block;font-weight:500;font-size:11px;color:#7f91aa}.due small.late{color:#c94550}
+.pill{border-radius:30px;padding:5px 12px;display:inline-flex;align-items:center;gap:6px;font-weight:750;font-size:11px}
+.pill:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.Vencida{color:#bd3944;background:#ffebee}.pill.Próxima{color:#bc8217;background:#fff3dc}.pill.Emdia,.pill.Paga{color:#198357;background:#e6f7ed}
+.tag{padding:4px 11px;display:inline-block;border-radius:20px;background:#e9f2ff;color:#2466aa;font-size:11px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.empty{color:#8595a6}.footer{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#8192a6;font-size:11px;padding:0 4px;min-height:43px}
+.tabs{display:flex;background:#fff;border:1px solid #e8edf4;border-radius:12px;padding:5px;gap:3px}
+.tab{display:flex;align-items:center;gap:8px;border:0;border-radius:9px;background:transparent;padding:9px 16px;color:#617b9a;font-weight:700}
+.tab img{width:17px;height:17px}.tab.active{background:#e6f2ff;color:#126cd2}
+.menu{position:fixed;z-index:20;background:#fff;border:1px solid #e0e9f4;box-shadow:0 14px 40px rgba(15,43,77,.18);border-radius:14px;width:258px;padding:7px;display:none}
+.menu.visible{display:block;animation:pop .13s ease-out}@keyframes pop{from{opacity:.6;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+.menu-title{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;font-weight:800;border-bottom:1px solid #edf1f7;margin-bottom:4px}
+.menu-title button{border:0;background:transparent;color:#738ba5;font-size:18px;line-height:18px}
+.menu-item{display:flex;width:100%;align-items:center;gap:12px;text-align:left;padding:10px 12px;border-radius:8px;border:0;background:#fff;color:#2d4768;font-weight:600}
+.menu-item:hover{background:#eef6ff}.menu-item img{width:18px;height:18px}
+.menu-item.danger{color:#b54752}.menu-sep{height:1px;background:#ecf0f5;margin:5px 6px}
+.toast{position:fixed;bottom:22px;right:22px;max-width:440px;background:#20364f;color:#fff;box-shadow:0 12px 35px #213c5640;border-radius:10px;padding:12px 16px;z-index:80;font-weight:600;display:none}
+.toast.error{background:#a53847}.toast.ok{background:#176f52}
+.backdrop{position:fixed;inset:0;background:#17325066;display:none;align-items:center;justify-content:center;padding:15px;z-index:60}
+.backdrop.show{display:flex}.dialog{width:min(580px,100%);max-height:95vh;overflow:auto;background:white;box-shadow:0 20px 65px #15294344;border-radius:16px;padding:23px}
+.dialog h3{margin:0 0 4px;font-size:19px}.dialog p{color:#7789a0;font-size:12px;margin:0 0 18px}
+.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{display:flex;flex-direction:column;gap:5px;color:#47627e;font-weight:700;font-size:11px;min-width:0}
+.field.wide{grid-column:1/-1}.field input,.field select,.field textarea{border:1px solid #dbe5f0;border-radius:8px;padding:10px 11px;min-width:0;color:#243e5a;background:#fff}
+.field textarea{min-height:68px;resize:vertical}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.dialog-actions button{padding:10px 17px;border-radius:8px}
+.tag-options{display:flex;flex-wrap:wrap;gap:8px}.tag-option{border:1px solid #dae5f2;border-radius:9px;padding:9px;cursor:pointer}.tag-option input{accent-color:#147ce7}
+.hint{color:#8598ad;font-size:11px;margin-top:9px}
+@media(max-width:1350px){.topbar{flex-wrap:wrap}.kpis{order:3;min-width:100%;grid-template-columns:repeat(4,1fr)}.top-actions{margin-left:auto}}
+@media(max-width:760px){.app{padding:8px;gap:8px}.topbar{gap:8px}.brand{min-width:0}.kpis{grid-template-columns:repeat(2,1fr)}.top-actions{width:100%;justify-content:space-between}.top-actions button{padding:0 8px}.filters{flex-wrap:wrap}.filters .search{flex:1 0 100%;order:3}.formgrid{grid-template-columns:1fr}.footer>span{display:none}.footer{justify-content:center}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><img src="/icons/brand.svg" alt=""><div><b>Controle de Contas</b><small>Gestão de contas a pagar e pagamentos</small></div></div>
+    <div class="kpis" id="kpis">
+      <div class="kpi red"><img src="/icons/overdue.svg" alt=""><small>VENCIDAS</small><b id="kOver">0</b><span class="subvalue" id="vOver">R$ 0,00</span></div>
+      <div class="kpi yellow"><img src="/icons/upcoming.svg" alt=""><small>PRÓXIMAS</small><b id="kSoon">0</b><span class="subvalue" id="vSoon">R$ 0,00</span></div>
+      <div class="kpi green"><img src="/icons/ontime.svg" alt=""><small>EM DIA</small><b id="kOk">0</b><span class="subvalue" id="vOk">R$ 0,00</span></div>
+      <div class="kpi blue"><img src="/icons/paid.svg" alt=""><small>PAGAS (ESTE MÊS)</small><b id="kPaid">0</b><span class="subvalue" id="vPaid">R$ 0,00</span></div>
+    </div>
+    <div class="top-actions">
+      <button id="mobileBtn"><img src="/icons/smartphone.svg" width="15" alt=""> Acesso mobile</button>
+      <button id="pdfImport"><img src="/icons/upload.svg" width="16" alt=""> Importar PDF</button>
+      <button class="primary" id="newAccount">＋ Nova conta</button>
+      <input type="file" id="uploadFile" accept=".pdf,application/pdf" hidden>
+    </div>
+  </header>
+  <main class="surface">
+    <div class="section-header"><h2>Visão geral</h2><span class="count">Lançamentos <strong id="count">0 registros</strong></span></div>
+    <div class="filters">
+      <label>Status <select id="status"><option value="all">Todas</option><option>Vencida</option><option>Próxima</option><option>Em dia</option><option>Paga</option></select></label>
+      <label>TAGs <select id="tagFilter"><option value="">Todas as TAGs</option></select></label>
+      <div class="search"><img src="/icons/reports.svg" alt=""><input type="search" id="search" placeholder="Pesquisar fornecedor, valor, descrição ou vencimento..."></div>
+    </div>
+    <div class="table-scroll">
+      <table aria-label="Contas a pagar, clique duas vezes em uma linha para as ações">
+        <colgroup><col style="width:25%"><col style="width:23%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:7%"><col style="width:6%"></colgroup>
+        <thead><tr><th>Fornecedor</th><th>Observações</th><th>TAG</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Sugerido em</th><th>Enviado em</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="8" style="text-align:center;padding:45px">Carregando contas…</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+  <div class="footer"><span>Dados locais · Armazenamento neste computador</span><div class="tabs"><button class="tab active" data-tab="open"><img src="/icons/accounts.svg" alt=""> Em aberto</button><button class="tab" data-tab="paid"><img src="/icons/payments.svg" alt=""> Pagas</button></div><span>CONTROLE DE CONTAS · PORTÁTIL</span></div>
+</div>
+<div id="menu" class="menu" role="menu" aria-label="Ações da conta">
+  <div class="menu-title"><span>Ações da conta</span><button aria-label="Fechar" id="menuClose">×</button></div>
+  <button class="menu-item" data-action="pdf"><img src="/icons/document.svg" alt=""> Abrir PDF</button>
+  <button class="menu-item" data-action="suggest"><img src="/icons/suggest.svg" alt=""> Sugerir para pagamento</button>
+  <button class="menu-item" data-action="send"><img src="/icons/sent.svg" alt=""> Enviar para pagamento</button>
+  <button class="menu-item" data-action="pay"><img src="/icons/paid.svg" alt=""> Registrar pagamento</button>
+  <div class="menu-sep"></div>
+  <button class="menu-item" data-action="edit"><img src="/icons/edit.svg" alt=""> Editar conta</button>
+  <button class="menu-item" data-action="tags"><img src="/icons/tag.svg" alt=""> Gerenciar TAGs</button>
+  <button class="menu-item" data-action="receipt"><img src="/icons/receipt.svg" alt=""> Abrir comprovante</button>
+  <button class="menu-item danger" data-action="delete"><img src="/icons/trash.svg" alt=""> Excluir conta</button>
+</div>
+<div id="backdrop" class="backdrop"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"><h3 id="dialogTitle"></h3><p id="dialogIntro"></p><div id="dialogBody"></div><div class="dialog-actions"><button class="outline" id="cancel">Cancelar</button><button class="primary" id="save">Salvar</button></div></div></div>
+<div id="toast" class="toast" role="status"></div>
+<!--LOCAL_AUTH-->
+<script src="/app.js"></script>
+</body></html>
