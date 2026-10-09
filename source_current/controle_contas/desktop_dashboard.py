@@ -429,10 +429,18 @@ class DesktopDashboard:
                 existing_layout.setContentsMargins(62, 5, 10, 5)
                 existing_layout.setSpacing(0)
             for label in card.findChildren(QLabel):
-                label.setFont(QFont("Segoe UI", max(9, label.font().pointSize())))
+                text = str(label.text() or "").strip()
+                # Não herdar fontes enormes do layout legado: com quatro
+                # indicadores, o valor extrapolava a área disponível.
+                size = 14 if text.isdigit() else 12 if "R$" in text else 9
+                label.setFont(QFont(
+                    "Segoe UI", size,
+                    QFont.Weight.Bold if text.isdigit() else QFont.Weight.Medium
+                ))
+                label.setMinimumWidth(0)
+                label.setWordWrap(False)
                 label.setStyleSheet(
                     f"background:transparent;border:0;color:{accent};"
-                    + ("font-weight:800;" if label.text().strip().isdigit() else "")
                 )
             icon = QLabel(card)
             icon.setObjectName("dashboardKpiIcon")
