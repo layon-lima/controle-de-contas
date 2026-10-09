@@ -290,14 +290,21 @@ def integrate_cloud_mobile_button() -> None:
 
                     supplier = table.item(row, 0)
                     if supplier is not None:
-                        supplier.setFlags(
-                            supplier.flags() | Qt.ItemFlag.ItemIsUserCheckable
-                        )
-                        supplier.setCheckState(
-                            Qt.CheckState.Checked
-                            if account_id in checked
-                            else Qt.CheckState.Unchecked
-                        )
+                        # A versão desktop usa ações individuais por conta;
+                        # não exibe mais caixas de seleção sem função.
+                        if getattr(self, "_desktop_dashboard", None) is not None:
+                            supplier.setFlags(
+                                supplier.flags() & ~Qt.ItemFlag.ItemIsUserCheckable
+                            )
+                        else:
+                            supplier.setFlags(
+                                supplier.flags() | Qt.ItemFlag.ItemIsUserCheckable
+                            )
+                            supplier.setCheckState(
+                                Qt.CheckState.Checked
+                                if account_id in checked
+                                else Qt.CheckState.Unchecked
+                            )
                         supplier.setFont(QFont("Arial", 10, QFont.Weight.DemiBold))
 
                     info = activity.get(account_id) or {}
