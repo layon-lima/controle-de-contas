@@ -85,20 +85,33 @@ QPushButton#bottomNavButton[active="true"] {
 QTableWidget {
     background: #ffffff; alternate-background-color: #ffffff;
     border: 1px solid #e4ecf4; border-radius: 12px;
-    gridline-color: #f0f3f8;
+    gridline-color: #d6e1ee;
     selection-background-color: #e8f2fe;
     selection-color: #172b44;
     font-family: 'Segoe UI'; font-size: 12px;
 }
 QTableWidget::item {
-    border-bottom: 1px solid #eff3f8; padding: 5px 7px;
+    border-right: 1px solid #dbe5f0;
+    border-bottom: 1px solid #e9eff6;
+    padding: 5px 7px;
     color: #203654;
 }
 QTableWidget::item:selected { background: #e8f2fe; color: #172b44; }
 QHeaderView::section {
-    background: #f2f7fb; color: #58708f; border: 0;
-    border-bottom: 1px solid #e5edf5; padding: 8px;
+    background: #f2f7fb; color: #58708f;
+    border: 0;
+    border-right: 2px solid #b9cadf;
+    border-bottom: 1px solid #cad8e9;
+    padding: 8px 9px;
     font-weight: 700; font-size: 11px;
+}
+QHeaderView::section:hover {
+    background: #e8f3ff;
+    border-right: 2px solid #5a94db;
+}
+QHeaderView::section:pressed {
+    background: #dbeafe;
+    border-right: 2px solid #347cd1;
 }
 QTableWidget QToolButton {
     border: 1px solid #dce7f1; border-radius: 7px;
@@ -572,19 +585,33 @@ class DesktopDashboard:
         # A coluna tem UMA fonte de renderizacao; sem QWidget transparente
         # por cima do texto original do QTableWidgetItem.
         table.setItemDelegateForColumn(1, DueDateDelegate(table))
-        table.setShowGrid(False)
+        table.setShowGrid(True)
         table.setAlternatingRowColors(False)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setTextElideMode(Qt.TextElideMode.ElideRight)
         table.setWordWrap(False)
         header = table.horizontalHeader()
+        header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        for logical in (0, 8, 1, 2, 3, 5, 4, 9):
+            title = table.horizontalHeaderItem(logical)
+            if title is not None:
+                title.setTextAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
         for position, logical in enumerate((0, 8, 1, 2, 3, 5, 4, 9)):
             current = header.visualIndex(logical)
             if current >= 0 and current != position:
                 header.moveSection(current, position)
-        # Cabeçalho redimensionável como Excel, com persistência local.
+        # Redimensionamento interativo com mínimo próprio por coluna.
+        # Ações precisa mostrar os 6 ícones de 33px e seus intervalos.
+        self._minimum_column_widths = {
+            0: 150, 8: 125, 1: 135, 2: 105,
+            3: 100, 5: 110, 4: 110, 9: 228,
+        }
         widths = {0: 230, 8: 205, 1: 160, 2: 115,
-                  3: 100, 5: 105, 4: 120, 9: 252}
+                  3: 100, 5: 110, 4: 120, 9: 252}
         self._columns_file = (
             Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
             / "ControleContas" / "desktop_columns.json"
@@ -594,29 +621,52 @@ class DesktopDashboard:
             if isinstance(stored, dict):
                 for key, value in stored.items():
                     column = int(key)
-                    if column in widths and isinstance(value, int) and 80 <= value <= 1600:
-                        widths[column] = value
+                    if (column in widths and isinstance(value, int)
+                            and not isinstance(value, bool) and 0 < value <= 1600):
+                        widths[column] = max(
+                            self._minimum_column_widths[column], value
+                        )
         except (OSError, ValueError, TypeError):
             pass
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
-        header.setMinimumSectionSize(80)
+        header.setMinimumSectionSize(min(self._minimum_column_widths.values()))
+        self._adjusting_column_width = True
         for column, width in widths.items():
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-            table.setColumnWidth(column, width)
+            table.setColumnWidth(
+                column, max(self._minimum_column_widths[column], width)
+            )
+        self._adjusting_column_width = False
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._save_widths_timer = QTimer(self.window)
         self._save_widths_timer.setSingleShot(True)
         self._save_widths_timer.setInterval(350)
         self._save_widths_timer.timeout.connect(self._save_column_widths)
-        header.sectionResized.connect(lambda *_: self._save_widths_timer.start())
+        header.sectionResized.connect(self._on_column_resized)
         table.setStyleSheet(DASHBOARD_STYLE[DASHBOARD_STYLE.index("QTableWidget {"):])
         self.decorate_rows()
+
+    def _on_column_resized(self, logical, _old_size, new_size):
+        """Impede colunas invisíveis, mesmo com tamanho salvo antigo."""
+        if self._adjusting_column_width:
+            return
+        minimum = self._minimum_column_widths.get(logical)
+        if minimum is not None and new_size < minimum:
+            self._adjusting_column_width = True
+            try:
+                self.window.tabela.setColumnWidth(logical, minimum)
+            finally:
+                self._adjusting_column_width = False
+        self._save_widths_timer.start()
 
     def _save_column_widths(self):
         try:
             widths = {
-                str(column): self.window.tabela.columnWidth(column)
+                str(column): max(
+                    self._minimum_column_widths[column],
+                    self.window.tabela.columnWidth(column),
+                )
                 for column in (0, 8, 1, 2, 3, 5, 4, 9)
             }
             path = self._columns_file
@@ -897,6 +947,11 @@ class DesktopDashboard:
                 # O item original mantém classificação/ordenação; o label
                 # é apenas a apresentação arredondada vista no mockup.
                 pill_wrap = QWidget(table)
+                pill_wrap.setObjectName("dashboardStatusCell")
+                pill_wrap.setStyleSheet(
+                    "QWidget#dashboardStatusCell{"
+                    "border-right:1px solid #dbe5f0;background:transparent;}"
+                )
                 pill_wrap.setAttribute(
                     Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
                 )
@@ -924,6 +979,11 @@ class DesktopDashboard:
 
             # Ações existentes no contexto da linha; evita botões duplicados.
             cell = QWidget(table)
+            cell.setObjectName("dashboardRowActions")
+            cell.setStyleSheet(
+                "QWidget#dashboardRowActions{"
+                "border-right:1px solid #dbe5f0;background:transparent;}"
+            )
             actions = QHBoxLayout(cell)
             actions.setContentsMargins(2, 2, 2, 2)
             actions.setSpacing(3)
