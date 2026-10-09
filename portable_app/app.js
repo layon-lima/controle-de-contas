@@ -381,7 +381,7 @@ $('importFile').addEventListener('change',async e=>{
   if(file.size>30*1024*1024){notice('PDF maior que 30 MB.',true);return}
   const button=$('pdfImport');
   button.disabled=true;
-  const previous=button.textContent;
+  const previous=button.innerHTML;
   button.textContent='Lendo PDF e preenchendo…';
   try{
     const response=await fetch('/api/import/preview',{
@@ -394,7 +394,7 @@ $('importFile').addEventListener('change',async e=>{
     if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível ler o PDF.');
     accountModal(null,result);
   }catch(err){notice(err.message||String(err),true)}
-  finally{button.disabled=false;button.textContent=previous;}
+  finally{button.disabled=false;button.innerHTML=previous;}
 });
 $('uploadFile').addEventListener('change',async e=>{
   const file=e.target.files[0];if(file){try{await uploadAccountPDF(file)}catch(err){notice(err.message,true)}}
