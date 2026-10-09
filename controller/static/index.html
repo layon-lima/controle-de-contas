@@ -114,6 +114,7 @@ const byId=(id)=>document.getElementById(id);
 const btn=byId('runBtn');
 let initiating=false;
 let cachedJob=null;
+let cachedLogTail=[];
 let lastPercent=0;
 let lastStage='Pronto para começar';
 let legacyPhase=sessionStorage.getItem('cc_legacy_update')||null;
@@ -171,6 +172,9 @@ function parseOldProgress(job){
 }
 function applyJob(job){
   cachedJob=job;
+  if(Array.isArray(job.log_tail)&&job.log_tail.length){
+    cachedLogTail=job.log_tail.slice(-80);
+  }
   const live=Number.isFinite(Number(job.progress)) ? Number(job.progress) : null;
   const parsed=live===null ? parseOldProgress(job) : {progress:live,stage:job.stage||'Em andamento'};
   const percent=parsed.progress;
@@ -276,19 +280,20 @@ async function copyLog(){
       const log=await request('/api/diagnostics');
       content=log.text||'';
     }catch{
-      const [job,status]=await Promise.all([
-        request('/api/job'),request('/api/status').catch(()=>null)
-      ]);
+      // Mesmo se o servidor desconectar, preserva os últimos registros
+      // recebidos para o usuário poder pedir ajuda sem usar o terminal.
+      const job=await request('/api/job').catch(()=>cachedJob);
+      const status=await request('/api/status').catch(()=>null);
       content=[
         'CONTROLE DE CONTAS - LOG DO PAINEL',
-        'Status: '+(job.running?'EM ANDAMENTO':job.ok===true?'CONCLUÍDO':job.ok===false?'FALHOU':'AGUARDANDO'),
-        'Mensagem: '+(job.message||''),
-        'Etapa: '+(job.stage||lastStage),
+        'Status: '+(job?.running?'EM ANDAMENTO':job?.ok===true?'CONCLUÍDO':job?.ok===false?'FALHOU':'AGUARDANDO'),
+        'Mensagem: '+(job?.message||''),
+        'Etapa: '+(job?.stage||lastStage),
         'Progresso: '+lastPercent+'%',
         'Servidor: '+(status?'ONLINE':'SEM CONEXÃO'),
         '',
         'LOG DO TERMINAL:',
-        ...(job.log_tail||[]),
+        ...(job?.log_tail||cachedLogTail),
         '',
         'LOG DA SINCRONIZAÇÃO:',
         ...(status?.cloud_log_tail||[])
