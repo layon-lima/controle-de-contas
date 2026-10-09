@@ -178,23 +178,34 @@ const accountFields=[
   ['tipo_pagamento','Tipo de pagamento','text'],
   ['observacoes','Observações','textarea']
 ];
-function accountModal(a){
+function accountModal(a,preview=null){
+  const suggested=preview?.fields||{};
+  const unsafe=(preview?.insecure_fields||[]).map(v=>String(v));
   const form=accountFields.map(([key,title,type])=>{
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
-    const value=a?a[key]||'':key==='vencimento'?localToday():'';
+    const value=preview?(suggested[key]??''):(a?a[key]||'':key==='vencimento'?localToday():'');
     const controls=type==='textarea'
       ?'<textarea name="'+key+'">'+esc(value)+'</textarea>'
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';
     return '<label class="field '+(wide?'wide':'')+'">'+title+controls+'</label>';
   }).join('');
-  showModal(a?'Editar conta':'Nova conta','Os dados são salvos no banco local existente. O PDF é opcional.',
-    '<form id="accountForm" class="formgrid">'+form+'</form>',
-    a?'Salvar alterações':'Criar conta',async()=>{
+  const fieldNames={recebedor:'Fornecedor',fornecedor:'Fornecedor',pagador:'Pagador',referencia:'Referência',valor:'Valor',vencimento:'Vencimento',codigo_pagamento:'Código de pagamento'};
+  const warning=unsafe.length
+    ? '<div class="ocr-note warning"><b>Conferir antes de salvar:</b> o leitor não confirmou com segurança '+esc([...new Set(unsafe.map(x=>fieldNames[x]||x))].join(', '))+'. Corrija os campos diretamente abaixo.</div>'
+    : '<div class="ocr-note"><b>PDF analisado pelo leitor original.</b> Confira os dados preenchidos e confirme o cadastro.</div>';
+  const intro=preview?'Leitura concluída. Nada será cadastrado antes da sua confirmação.':'Os dados são salvos no banco local existente. O PDF é opcional.';
+  showModal(preview?'Conferir leitura do PDF':a?'Editar conta':'Nova conta',intro,
+    (preview?warning:'')+'<form id="accountForm" class="formgrid">'+form+'</form>',
+    preview?'Confirmar e salvar PDF':a?'Salvar alterações':'Criar conta',async()=>{
       const form=$('accountForm');
       if(!form.reportValidity())return false;
       const values=Object.fromEntries(new FormData(form));
-      await api(a?'/api/accounts/'+a.id+'/edit':'/api/accounts', 'POST',values);
-      notice(a?'Conta atualizada.':'Conta cadastrada.');
+      const route=preview?'/api/import/commit':a?'/api/accounts/'+a.id+'/edit':'/api/accounts';
+      const saved=await api(route,'POST',preview?{...values,ticket:preview.ticket}:values);
+      if(preview){
+        notice(saved.organized?'Conta criada e PDF organizado na pasta de boletos.':'Conta criada. Configure a pasta-base para organizar os boletos.');
+        setAccountView('open');
+      }else notice(a?'Conta atualizada.':'Conta cadastrada.');
       await reload();return true;
     });
 }
@@ -203,11 +214,26 @@ function payModal(a){
   const now=localToday();
   showModal('Registrar pagamento',a.fornecedor+' · '+money(a.valor),
     '<label class="field">Data do pagamento<input type="date" id="paidDate" value="'+now+'"></label>'
-    +'<p class="hint">Registro sem comprovante. Você poderá consultar a conta normalmente; a versão clássica permanece disponível para conciliação avançada de PDFs.</p>',
+    +'<label class="field" style="margin-top:15px">Comprovante PDF (opcional)<input type="file" id="receiptFile" accept=".pdf,application/pdf"></label>'
+    +'<p class="hint">Com comprovante: o PDF será mesclado ao boleto, conferido pelo número de páginas e salvo na pasta da conta. Sem comprovante: registro manual.</p>',
     'Confirmar pagamento',async()=>{
-      if(!$('paidDate').value)throw new Error('Escolha a data.');
-      await api('/api/accounts/'+a.id+'/pay','POST',{data_pagamento:$('paidDate').value});
-      notice('Pagamento registrado.');setAccountView('paid');await reload();return true;
+      const paidOn=$('paidDate').value;
+      if(!paidOn)throw new Error('Escolha a data.');
+      const proof=$('receiptFile').files[0];
+      if(proof){
+        if(proof.size>30*1024*1024)throw new Error('Comprovante acima de 30 MB.');
+        const response=await fetch('/api/accounts/'+a.id+'/pay-with-receipt',{
+          method:'POST',headers:{'X-Local-Token':token,
+            'Content-Type':'application/pdf','X-Paid-Date':paidOn},body:proof
+        });
+        const result=await response.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
+        if(!response.ok||!result.ok)throw new Error(result.error||'Pagamento não registrado.');
+        notice('Pagamento registrado. Comprovante mesclado ao PDF ('+result.pages+' páginas).');
+      }else{
+        await api('/api/accounts/'+a.id+'/pay','POST',{data_pagamento:paidOn});
+        notice('Pagamento manual registrado sem comprovante.');
+      }
+      setAccountView('paid');await reload();return true;
     });
 }
 function tagModal(a){
@@ -233,6 +259,7 @@ async function action(kind){
   const a=current();closeMenu();if(!a)return;
   try{
     if(kind==='pdf')await showPDF();
+    else if(kind==='attach')$('uploadFile').click();
     else if(kind==='receipt')await showPDF(true);
     else if(kind==='send')await sendPayment();
     else if(kind==='pay')payModal(a);
@@ -284,9 +311,29 @@ $('backToOpen').addEventListener('click',()=>setAccountView('open'));
 $('tagFilter').addEventListener('change',render);
 $('search').addEventListener('input',render);
 $('newAccount').addEventListener('click',()=>accountModal(null));
-$('pdfImport').addEventListener('click',()=>{
-  if(!selected){notice('Selecione uma conta primeiro. Depois clique em Importar PDF.',true);return}
-  $('uploadFile').click();
+$('pdfImport').addEventListener('click',()=>$('importFile').click());
+$('importFile').addEventListener('change',async e=>{
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file)return;
+  if(!file.name.toLowerCase().endsWith('.pdf')){notice('Selecione um PDF.',true);return}
+  if(file.size>30*1024*1024){notice('PDF maior que 30 MB.',true);return}
+  const button=$('pdfImport');
+  button.disabled=true;
+  const previous=button.textContent;
+  button.textContent='Lendo PDF e preenchendo…';
+  try{
+    const response=await fetch('/api/import/preview',{
+      method:'POST',
+      headers:{'X-Local-Token':token,'Content-Type':'application/pdf',
+               'X-Pdf-Name':encodeURIComponent(file.name)},
+      body:file,
+    });
+    const result=await response.json().catch(()=>({error:'Resposta inválida do leitor OCR.'}));
+    if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível ler o PDF.');
+    accountModal(null,result);
+  }catch(err){notice(err.message||String(err),true)}
+  finally{button.disabled=false;button.textContent=previous;}
 });
 $('uploadFile').addEventListener('change',async e=>{
   const file=e.target.files[0];if(file){try{await uploadAccountPDF(file)}catch(err){notice(err.message,true)}}
