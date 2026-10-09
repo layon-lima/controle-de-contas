@@ -915,6 +915,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "POST" and route == "/api/import/commit":
                     self._json({"ok": True, **create_account_from_preview(self._body())})
                     return
+                if self.command == "POST" and route == "/api/import/cancel":
+                    ticket = str(self._body().get("ticket") or "")
+                    pdf_workflows.consume_preview(ticket)
+                    self._json({"ok": True, "cancelled": True})
+                    return
                 if self.command == "GET" and route == "/api/accounts":
                     self._json({"ok": True, **list_accounts()})
                     return
@@ -1029,6 +1034,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    pdf_workflows.cleanup_staging(APP_DIR)
     if not DB_PATH.is_file():
         print("Banco original não encontrado:", DB_PATH)
         print("O modo portátil não cria nem substitui um banco vazio.")
