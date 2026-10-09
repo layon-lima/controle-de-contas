@@ -196,7 +196,9 @@ def integrate_cloud_mobile_button() -> None:
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setAlternatingRowColors(False)
-        table.setShowGrid(False)
+        # A grade visível é gerida pelo dashboard e deve sobreviver
+        # aos refreshes periódicos de atividade/sincronização.
+        table.setShowGrid(bool(getattr(self, "_desktop_dashboard", None)))
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(50)
 
@@ -315,7 +317,11 @@ def integrate_cloud_mobile_button() -> None:
 
                     suggested_at = _format_activity_time(info.get("suggested_at"))
                     suggested_item.setText(suggested_at or "—")
-                    suggested_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    suggested_item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                        if getattr(self, "_desktop_dashboard", None)
+                        else Qt.AlignmentFlag.AlignCenter
+                    )
                     suggested_item.setToolTip(
                         f"Sugerido para pagamento em {suggested_at}"
                         if suggested_at
