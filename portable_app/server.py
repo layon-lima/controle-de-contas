@@ -223,6 +223,44 @@ def create_account(data):
         return int(record.lastrowid)
 
 
+def get_document_folder():
+    base = _pasta_documentos_configurada()
+    return {"configured": bool(base), "folder": str(base) if base else ""}
+
+
+def set_document_folder(data):
+    raw = str(data.get("folder") or "").strip()
+    if not raw or len(raw) > 700:
+        raise ValueError("Informe um caminho de pasta válido.")
+    folder = Path(raw).expanduser()
+    if not folder.is_absolute():
+        raise ValueError("A pasta precisa ser um caminho completo do Windows.")
+    if re.fullmatch(r"BOLETOS\\s+\\d{4}", folder.name, flags=re.IGNORECASE):
+        folder = folder.parent
+    # Não criar arquivos de conta nesta operação, somente guardar o destino.
+    if not folder.is_dir():
+        raise FileNotFoundError("A pasta informada não existe no computador.")
+    try:
+        test = folder / ("._teste_escrita_" + secrets.token_hex(4))
+        with test.open("x", encoding="utf-8") as stream:
+            stream.write("ok")
+        test.unlink()
+    except OSError as exc:
+        raise ValueError("Sem permissão para gravar na pasta escolhida.") from exc
+    config = APP_DIR / "config_documentos.json"
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = config.with_suffix(".tmp")
+    try:
+        tmp.write_text(
+            json.dumps({"pasta_base": str(folder)}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp, config)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return {"folder": str(folder), "configured": True}
+
+
 def create_account_from_preview(data):
     """Confirma campos corrigidos pelo usuário, grava PDF e cadastro atomicamente."""
     ticket = str(data.get("ticket") or "")
@@ -782,6 +820,12 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if self.command == "GET" and route == "/api/health":
                     self._json({"ok": True, "db": DB_PATH.is_file()})
+                    return
+                if self.command == "GET" and route == "/api/settings/folder":
+                    self._json({"ok": True, **get_document_folder()})
+                    return
+                if self.command == "POST" and route == "/api/settings/folder":
+                    self._json({"ok": True, **set_document_folder(self._body())})
                     return
                 if self.command == "GET" and route == "/api/mobile-link":
                     self._json({"ok": True, "url": get_mobile_link()})
