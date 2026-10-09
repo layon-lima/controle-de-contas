@@ -1,5 +1,6 @@
 param(
-    [string]$Version = ""
+    [string]$Version = "",
+    [switch]$LegacyDesktop
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,10 +38,28 @@ if ($LoadedScriptHash -ne $DiskScriptHash) {
     Write-Host "Instalador corrigido encontrado no GitHub. Reiniciando com a versao nova..."
     $RestartArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $BuildScriptPath)
     if ($Version) { $RestartArgs += @("-Version", $Version) }
+    if ($LegacyDesktop) { $RestartArgs += "-LegacyDesktop" }
     & powershell.exe @RestartArgs
     $RestartExitCode = $LASTEXITCODE
     if ($RestartExitCode -ne 0) {
         throw "A execucao da versao atualizada falhou com codigo $RestartExitCode."
+    }
+    exit 0
+}
+
+# O painel (inclusive a versao Python antiga ja em execucao) chama
+# este script depois do pull. Agora a operacao padrao abre o NOVO portatil
+# em vez de reconstruir/reinstalar o aplicativo Windows antigo.
+# O instalador classico continua disponivel explicitamente via -LegacyDesktop.
+if (-not $LegacyDesktop) {
+    $PortableUpdate = Join-Path $Root "tools\UPDATE_AND_OPEN_PORTABLE.ps1"
+    if (-not (Test-Path -LiteralPath $PortableUpdate -PathType Leaf)) {
+        throw "Atualizador portatil nao encontrado. Instalador antigo preservado."
+    }
+    Write-Host "CC_PROGRESS|18|Atualizando versao portatil sem instalacao"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PortableUpdate
+    if ($LASTEXITCODE -ne 0) {
+        throw "A atualizacao portatil falhou. Nenhum EXE instalado foi substituido."
     }
     exit 0
 }
