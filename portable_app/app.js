@@ -267,7 +267,9 @@ async function uploadAccountPDF(file){
   });
   const data=await response.json().catch(()=>({error:'Falha ao enviar PDF.'}));
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
-  notice('PDF anexado à conta selecionada.');await reload();
+  notice(data.organized
+    ? 'PDF salvo em BOLETOS por ano e mês: '+data.folder
+    : 'PDF anexado na pasta provisória. Configure a pasta-base no desktop clássico.');await reload();
 }
 $('status').addEventListener('change',()=>{
   const value=$('status').value;
