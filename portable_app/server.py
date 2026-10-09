@@ -36,6 +36,7 @@ PORT = int(os.environ.get("CONTAS_PORTABLE_PORT", "8767"))
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
 PENDING: dict[str, tuple[int, float]] = {}
+PENDING_BATCH: dict[str, tuple[list[int], float]] = {}
 BACKUP_DONE = False
 try:
     SOURCE_REVISION = subprocess.check_output(
@@ -387,6 +388,85 @@ def confirm_send(account_id, nonce):
         if not str(row.get("enviado_pagamento_em") or "").strip():
             raise RuntimeError("Registro de envio não confirmado.")
     return row["enviado_pagamento_em"]
+
+
+def _batch_ids(data):
+    raw = data.get("ids") or []
+    if not isinstance(raw, list) or len(raw) > 200 or not raw:
+        raise ValueError("Selecione de 1 a 200 contas.")
+    try:
+        ids = sorted({int(value) for value in raw})
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Identificadores de contas inválidos.") from exc
+    if not ids or ids[0] <= 0:
+        raise ValueError("Conta inválida.")
+    return ids
+
+
+def prepare_batch_send(data):
+    ids = _batch_ids(data)
+    with connection() as conn:
+        details = []
+        for account_id in ids:
+            info = account(conn, account_id)
+            details.append(payment_text(info))
+    nonce = secrets.token_urlsafe(24)
+    with LOCK:
+        for key, (_ids, expiration) in list(PENDING_BATCH.items()):
+            if expiration < time.monotonic():
+                PENDING_BATCH.pop(key, None)
+        PENDING_BATCH[nonce] = (ids, time.monotonic() + 120)
+    return {"nonce": nonce, "count": len(ids),
+            "text": "\n\n" + ("-" * 40) + "\n\n".join(
+                ["CONTA " + str(ids[i]) + "\n" + message for i, message in enumerate(details)]
+            )}
+
+
+def confirm_batch_send(data):
+    nonce = str(data.get("nonce") or "")
+    with LOCK:
+        record = PENDING_BATCH.pop(nonce, None)
+        if not record or record[1] < time.monotonic():
+            raise ValueError("Cópia em lote não foi confirmada. Repita.")
+        ids = record[0]
+        with connection(write=True) as conn:
+            now = stamp()
+            for account_id in ids:
+                account(conn, account_id)
+                conn.execute(
+                    "UPDATE contas SET enviado_pagamento_em="
+                    "COALESCE(NULLIF(TRIM(enviado_pagamento_em),''),?),"
+                    "atualizado_em=? WHERE id=?",
+                    (now, now, account_id),
+                )
+        return {"count": len(ids), "sent": True}
+
+
+def batch_pay(data):
+    ids = _batch_ids(data)
+    date_paid = str(data.get("data_pagamento") or "")
+    try:
+        date.fromisoformat(date_paid)
+    except ValueError as exc:
+        raise ValueError("Data de pagamento inválida.") from exc
+    paid, errors = [], {}
+    for account_id in ids:
+        try:
+            register_payment(account_id, {"data_pagamento": date_paid})
+            paid.append(account_id)
+        except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
+            errors[str(account_id)] = str(exc)
+    return {"paid": paid, "errors": errors, "count": len(paid)}
+
+
+def batch_suggest(data):
+    ids = _batch_ids(data)
+    sys.path.insert(0, str(ROOT / "source_current"))
+    from controle_contas.cloud_sync import suggest_payments
+    result = suggest_payments(ids)
+    if result.get("ok") is False or int(result.get("quantidade", -1)) != len(ids):
+        raise RuntimeError("A nuvem não confirmou todas as contas selecionadas.")
+    return {"count": len(ids), "suggested": True}
 
 
 def assign_tags(account_id, ids, new_name=""):
@@ -797,6 +877,18 @@ class Handler(BaseHTTPRequestHandler):
             if route.startswith("/api/"):
                 self._check(writing=self.command == "POST")
                 parts = route.strip("/").split("/")
+                if self.command == "POST" and route == "/api/batch/prepare-send":
+                    self._json({"ok": True, **prepare_batch_send(self._body())})
+                    return
+                if self.command == "POST" and route == "/api/batch/confirm-send":
+                    self._json({"ok": True, **confirm_batch_send(self._body())})
+                    return
+                if self.command == "POST" and route == "/api/batch/pay":
+                    self._json({"ok": True, **batch_pay(self._body())})
+                    return
+                if self.command == "POST" and route == "/api/batch/suggest":
+                    self._json({"ok": True, **batch_suggest(self._body())})
+                    return
                 if self.command == "POST" and route == "/api/import/preview":
                     try:
                         size = int(self.headers.get("Content-Length") or 0)
