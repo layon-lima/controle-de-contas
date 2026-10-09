@@ -704,6 +704,10 @@ class DesktopDashboard:
                      "Abrir comprovante", "Excluir"):
             button = self._find_action(text)
             if button:
+                if text == "Enviar para pagamento":
+                    # Manter referencia ao botão ORIGINAL. Seu clicked carrega
+                    # o fluxo de preparação/copia dos dados de pagamento.
+                    self._buttons["original_send"] = button
                 parent = button.parentWidget()
                 if parent and parent.layout():
                     parent.layout().removeWidget(button)
