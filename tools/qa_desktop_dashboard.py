@@ -35,6 +35,8 @@ assert getattr(window, "_desktop_dashboard", None) is not None, "Chrome novo nã
 assert window.findChild(QDockWidget, "modernNavigation") is None, "Menu lateral antigo permanece"
 assert window.findChild(QDockWidget, "paymentDetailDock") is None, "Painel de detalhes ainda instalado"
 assert window.findChild(QComboBox, "desktopTagFilter") is not None, "Filtro por TAG ausente"
+assert window._desktop_dashboard._desktop_features is not None, "Fluxos desktop ausentes"
+assert window.tabela.columnCount() >= 10, "Tabela perdeu colunas"
 assert window.findChild(QPushButton, "desktopPayBatchButton") is not None, "Pagamento em lote ausente"
 assert window.tabela.columnCount() >= 10, "Faltou coluna de ações"
 assert window.tabela.horizontalHeaderItem(9).text() == "Ações", "Coluna de ações errada"

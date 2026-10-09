@@ -303,30 +303,6 @@ class DesktopFeatures:
                 self.window.excluir_conta()
         self.dashboard._activate_row = MethodType(action, self.dashboard)
 
-        # Ações do menu contextual já existente; QMenu é recriado após refresh.
-        # O método é chamado em init e também pelo decorador durante o refresh.
-        original_decorate = self.dashboard.decorate_rows
-        def decorate(dashboard):
-            original_decorate()
-            for row in range(self.window.tabela.rowCount()):
-                widget = self.window.tabela.cellWidget(row, 9)
-                if widget is None:
-                    continue
-                for button in widget.findChildren(QPushButton):
-                    pass
-                from PySide6.QtWidgets import QToolButton
-                for button in widget.findChildren(QToolButton):
-                    menu = button.menu()
-                    if menu is None:
-                        continue
-                    for act in list(menu.actions()):
-                        if act.text() == "Excluir":
-                            menu.insertAction(act, menu.addAction("TAGs"))
-                            break
-                    break
-        # Menu completo será montado via implementação do dashboard, sem
-        # instalar um segundo handler no mesmo item.
-
     def open_pdf(self, account_id, receipt=False):
         account = self._account(account_id)
         if not account:

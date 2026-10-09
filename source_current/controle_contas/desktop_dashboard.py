@@ -428,10 +428,16 @@ class DesktopDashboard:
             month = datetime.now().strftime("%Y-%m")
             with self.window.banco.conexao() as conn:
                 row = conn.execute(
+                    "WITH latest AS "
+                    "(SELECT conta_id, MAX(id) AS payment_id "
+                    " FROM pagamentos GROUP BY conta_id) "
                     "SELECT COUNT(*) AS quantidade, "
-                    "COALESCE(SUM(COALESCE(valor_pago, valor, 0)),0) AS total "
-                    "FROM contas WHERE data_pagamento LIKE ?",
-                    (month + "%",),
+                    "COALESCE(SUM(COALESCE(p.valor_pago, c.valor, 0)), 0) AS total "
+                    "FROM latest l "
+                    "JOIN pagamentos p ON p.id=l.payment_id "
+                    "JOIN contas c ON c.id=l.conta_id "
+                    "WHERE SUBSTR(p.data_pagamento, 1, 7) = ?",
+                    (month,),
                 ).fetchone()
             count = int(row["quantidade"])
             amount = float(row["total"])
@@ -780,6 +786,8 @@ class DesktopDashboard:
                     for label, asset in (
                         ("Editar", "edit"),
                         ("Abrir comprovante", "receipt"),
+                        ("TAGs", "accounts"),
+                        ("Marcar como enviado", "send"),
                         ("Excluir", "trash"),
                     ):
                         menu_action = menu.addAction(_asset_icon(asset), label)
