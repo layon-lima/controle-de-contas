@@ -410,6 +410,15 @@ class DesktopFeatures:
             for name, value in fields if str(value or "").strip()
         )
 
+    @staticmethod
+    def _copy_payment_payload(details):
+        """Confirmar exatamente o conteúdo copiado antes de alterar o banco."""
+        clipboard = QApplication.clipboard()
+        if clipboard is None:
+            return False
+        clipboard.setText(details)
+        return clipboard.text() == details
+
     def send_for_payment(self, account_id):
         """Copiar primeiro, confirmar o clipboard, registrar no banco por último.
 
@@ -423,11 +432,7 @@ class DesktopFeatures:
             return False
         try:
             details = self._payment_message(account)
-            clipboard = QApplication.clipboard()
-            if clipboard is None:
-                raise RuntimeError("Área de transferência indisponível.")
-            clipboard.setText(details)
-            if clipboard.text() != details:
+            if not self._copy_payment_payload(details):
                 raise RuntimeError("Não foi possível copiar os dados de pagamento.")
             # Não existe exigência de PDF ou de comprovante nesta operação.
             self._record_sent(account_id)
