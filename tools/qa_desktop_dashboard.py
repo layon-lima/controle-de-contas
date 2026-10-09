@@ -4,6 +4,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Consoles Windows may default to cp1252; keep the test functional and
+# escape only characters the console cannot encode (e.g. status bullet).
+# This changes only QA log output, not UI data or assertions.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="backslashreplace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="backslashreplace")
+
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 temp = tempfile.mkdtemp(prefix="cc_ui_qa_")
 os.environ["LOCALAPPDATA"] = temp
