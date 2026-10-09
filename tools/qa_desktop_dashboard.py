@@ -153,7 +153,16 @@ copy_action.clicked.connect(
 )
 window._desktop_dashboard._buttons["original_send"] = copy_action
 QApplication.clipboard().setText("texto anterior")
-assert features.send_for_payment(qa_id) is True, "O envio não acionou a cópia"
+window.abas.setCurrentIndex(0)
+window.atualizar_tabela()
+qa_row = next(
+    i for i in range(window.tabela.rowCount())
+    if window.tabela.item(i, 7)
+    and int(window.tabela.item(i, 7).text()) == qa_id
+)
+assert window._desktop_dashboard._activate_row(
+    qa_row, "Enviar para pagamento"
+) is True, "O ícone da linha não acionou o botão original"
 assert QApplication.clipboard().text().startswith("PAGAMENTO QA:"), (
     "Dados não foram copiados para a área de transferência"
 )
