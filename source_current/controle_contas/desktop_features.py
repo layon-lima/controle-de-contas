@@ -72,6 +72,10 @@ class DesktopFeatures:
         )
         lay.setContentsMargins(10, 4, 10, 4)
         lay.setSpacing(7)
+        for i in range(lay.count() - 1, -1, -1):
+            item = lay.itemAt(i)
+            if item.spacerItem() is not None:
+                lay.takeAt(i)
         # As operações agora são exclusivamente por linha.
         for name in (
             "_bulk_select_all_button", "_bulk_sent_button", "_bulk_clear_button",
