@@ -74,6 +74,20 @@ if ($LASTEXITCODE -ne 0) { throw "Falha no cloud_sync.py." }
 py -3.13 -m py_compile .\controle_contas\cloud_mobile_ui.py
 if ($LASTEXITCODE -ne 0) { throw "Falha no cloud_mobile_ui.py." }
 
+# Antes de instalar, valida o layout REAL do PySide6 com um banco temporario.
+# Erro no teste interrompe o build, preservando a instalacao anterior.
+$QaScript = Join-Path $Root "tools\qa_desktop_dashboard.py"
+if (!(Test-Path $QaScript)) { throw "Smoke test da interface nao encontrado." }
+Copy-Item $QaScript (Join-Path $Work "qa_desktop_dashboard.py") -Force
+$BeforeQt = $env:QT_QPA_PLATFORM
+try {
+    $env:QT_QPA_PLATFORM = "offscreen"
+    py -3.13 ".\qa_desktop_dashboard.py"
+    if ($LASTEXITCODE -ne 0) { throw "A nova interface nao passou no teste funcional. Instalacao interrompida." }
+} finally {
+    $env:QT_QPA_PLATFORM = $BeforeQt
+}
+
 py -3.13 -m PyInstaller --clean --noconfirm ".\Controle de Contas.spec"
 if ($LASTEXITCODE -ne 0) { throw "Falha ao gerar o aplicativo." }
 
