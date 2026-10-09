@@ -249,7 +249,9 @@ function accountModal(a,preview=null,rerun=null){
   const unsafe=(analysis?.insecure_fields||[]).map(v=>String(v));
   const form=accountFields.map(([key,title,type])=>{
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
-    const value=analysis?(suggested[key]??(a?a[key]||'':'')):(a?a[key]||'':key==='vencimento'?localToday():'');
+    const predictedValue=suggested[key];
+    const readable=predictedValue!==null&&predictedValue!==undefined&&String(predictedValue).trim()!=='';
+    const value=analysis?(readable?predictedValue:(a?a[key]||'')):(a?a[key]||'':key==='vencimento'?localToday():'');
     const controls=type==='textarea'
       ?'<textarea name="'+key+'">'+esc(value)+'</textarea>'
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';
