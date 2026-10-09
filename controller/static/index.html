@@ -115,26 +115,42 @@ async function installUpdate(){
   if(!confirm('Baixar do GitHub e iniciar o atualizador aprovado mais recente?')) return;
   await post('/api/update/install');
 }
+let localInstallStarting=false;
 async function installLocalDesktop(){
   const btn=$('localInstallBtn');
-  if(btn.disabled) return;
+  if(localInstallStarting || btn.disabled) return;
+  localInstallStarting=true;
   btn.disabled=true;
   btn.textContent='⟳ Preparando atualização...';
   $('jobState').textContent='INICIANDO ATUALIZAÇÃO';
-  $('jobLog').textContent='Sincronização automática do GitHub → testes → instalação. Aguarde.';
+  $('jobLog').textContent='Conferindo a versão do painel antes de instalar...';
   try{
+    // Painéis ainda em execução com backend antigo NÃO sincronizam antes
+    // do build. Atualizar o checkout ANTES de mandar iniciar o PowerShell
+    // evita que ele carregue o instalador anterior na memória.
+    const health=await fetch('/api/health',{cache:'no-store'});
+    if(!health.ok) throw new Error('Não foi possível verificar a versão do painel.');
+    const controller=(await health.json()).controller_version||'';
+    const parts=controller.split('.').map(Number);
+    const backendAutoSync=parts.length===3 && parts.every(Number.isFinite)
+      && (parts[0]>0 || parts[1]>3 || (parts[1]===3 && parts[2]>=3));
+    if(!backendAutoSync){
+      $('jobLog').textContent='Atualizando o instalador no GitHub antes de iniciar o build...';
+      const refreshed=await post('/api/panel/pull');
+      if(!refreshed || !refreshed.ok) return;
+    }
+    $('jobLog').textContent='Fonte sincronizada. Iniciando testes e instalação...';
     const j=await post('/api/update/local-desktop');
     if(j&&j.ok){
       toast('Atualização iniciada. Acompanhe o andamento aqui no painel.');
       await loadJob();
-    }else{
-      btn.disabled=false;
-      btn.textContent='⚙ Atualizar e instalar no PC';
     }
   }catch(e){
-    btn.disabled=false;
-    btn.textContent='⚙ Atualizar e instalar no PC';
     toast('Falha ao iniciar atualização: '+String(e),false);
+  }finally{
+    localInstallStarting=false;
+    // O polling /api/job manterá o botão desabilitado durante o build.
+    await loadJob();
   }
 }
 async function syncPanel(){
@@ -159,7 +175,7 @@ async function loadJob(){
     log.scrollTop=log.scrollHeight;
     const install=$('localInstallBtn');
     if(install){
-      install.disabled=!!j.running;
+      install.disabled=!!j.running || localInstallStarting;
       install.textContent=j.running&&j.kind==='local_desktop_update'
         ? '⟳ Sincronizando / instalando...'
         : '⚙ Atualizar e instalar no PC';
