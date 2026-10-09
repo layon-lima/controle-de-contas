@@ -13,6 +13,7 @@ import os
 
 from PySide6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QObject, QEvent
 from PySide6 import QtSvg  # inclui plugin de SVG no build PyInstaller
+from shiboken6 import isValid
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout,
@@ -311,18 +312,34 @@ class DueDateDelegate(QStyledItemDelegate):
 
 
 class _ResponsiveKpiWatcher(QObject):
-    """Mantém a grade de indicadores responsiva sem tocar nos dados do app."""
+    """Reposiciona cards enquanto a janela existe, sem callbacks após destruí-la."""
 
-    def __init__(self, dashboard):
-        super().__init__(dashboard.window)
+    def __init__(self, dashboard, central):
+        # O observador e o timer são destruídos junto do próprio widget.
+        # Nunca consultar window.centralWidget() a partir de eventFilter:
+        # o Qt ainda emite eventos quando a janela Python já foi invalidada.
+        super().__init__(central)
         self.dashboard = dashboard
+        self._central = central
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._apply_resize)
 
     def eventFilter(self, watched, event):
-        if (watched is self.dashboard.window.centralWidget()
-                and event.type() == QEvent.Type.Resize):
-            # Adiado para não modificar layout dentro da pilha de resize do Qt.
-            QTimer.singleShot(0, self.dashboard._layout_kpis)
+        if watched is self._central and event.type() == QEvent.Type.Resize:
+            if isValid(self._resize_timer):
+                # Agrega redimensionamentos rápidos sem reentrar no layout.
+                self._resize_timer.start(0)
         return False
+
+    def _apply_resize(self):
+        if not isValid(self._central) or not isValid(self.dashboard.window):
+            return
+        try:
+            self.dashboard._layout_kpis()
+        except RuntimeError:
+            # A janela pode ser fechada durante o último evento enfileirado.
+            return
 
 
 class DesktopDashboard:
@@ -599,7 +616,7 @@ class DesktopDashboard:
         index = outer.indexOf(header) if header is not None else -1
         outer.insertWidget(index + 1 if index >= 0 else 0, strip)
         self._buttons["kpis"] = strip
-        self._kpi_watcher = _ResponsiveKpiWatcher(self)
+        self._kpi_watcher = _ResponsiveKpiWatcher(self, central)
         central.installEventFilter(self._kpi_watcher)
         self._layout_kpis()
 
