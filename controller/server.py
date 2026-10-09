@@ -428,7 +428,7 @@ def _job_snapshot() -> dict:
         data = dict(_JOB_STATE)
     log = _recent_log_text(JOB_LOG_PATH, 96_000)
     # A porcentagem corresponde a marcos confirmados, não a tempo estimado.
-    milestones = list(re.finditer(r"CC_PROGRESS\\|(\\d{1,3})\\|([^\\r\\n]+)", log))
+    milestones = list(re.finditer(r"CC_PROGRESS\|(\d{1,3})\|([^\r\n]+)", log))
     if milestones and data.get("running"):
         latest = milestones[-1]
         pct = min(99, max(0, int(latest.group(1))))
@@ -444,7 +444,7 @@ def _job_snapshot() -> dict:
             "5": (99, "Verificando servidor mobile"),
         }
         if int(data.get("progress") or 0) >= 89:
-            for match in re.finditer(r"\\[([1-5])/5\\]", log):
+            for match in re.finditer(r"\[([1-5])/5\]", log):
                 p, stage = mobile_stages[match.group(1)]
                 if p >= int(data["progress"]):
                     data["progress"], data["stage"] = p, stage
@@ -478,11 +478,11 @@ def _diagnostic_log() -> str:
         with JOB_LOG_PATH.open("rb") as file:
             beginning = file.read(12_000).decode("utf-8", errors="replace")
         lines.append(beginning)
-        lines.append("\\n[... conteúdo intermediário omitido ...]\\n")
+        lines.append("\n[... conteúdo intermediário omitido ...]\n")
         lines.append(_recent_log_text(JOB_LOG_PATH, 180_000))
     else:
         lines.append(_recent_log_text(JOB_LOG_PATH, 200_000))
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def _sync_develop_before_desktop_build(log) -> str:
@@ -607,7 +607,7 @@ def _run_full_update() -> None:
     stage = "Sincronização"
     try:
         with JOB_LOG_PATH.open("w", encoding="utf-8", errors="replace") as log:
-            log.write("ATUALIZACAO COMPLETA: GITHUB > TESTES > PC > MOBILE\\n")
+            log.write("ATUALIZACAO COMPLETA: GITHUB > TESTES > PC > MOBILE\n")
             log.flush()
             _sync_develop_before_desktop_build(log)
             _set_job_state(progress=15, stage="Código sincronizado")
@@ -618,7 +618,7 @@ def _run_full_update() -> None:
             if not mobile_script.is_file():
                 raise FileNotFoundError("Script de publicação mobile não encontrado.")
             def run_script(script: Path, label: str):
-                log.write("\\n" + label + "\\n")
+                log.write("\n" + label + "\n")
                 log.flush()
                 process = subprocess.Popen(
                     ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -642,7 +642,7 @@ def _run_full_update() -> None:
                     "O PC foi instalado, mas a publicação mobile falhou. "
                     "Use Copiar log para enviar o erro."
                 )
-            log.write("\\nATUALIZACAO COMPLETA: PC e mobile finalizados.\\n")
+            log.write("\nATUALIZACAO COMPLETA: PC e mobile finalizados.\n")
             log.flush()
         _set_job_state(
             running=False, ok=True, progress=100,
@@ -653,7 +653,7 @@ def _run_full_update() -> None:
         description = f"{stage}: {exc}"
         try:
             with JOB_LOG_PATH.open("a", encoding="utf-8") as log:
-                log.write("\\nFALHA: " + description + "\\n")
+                log.write("\nFALHA: " + description + "\n")
         except OSError:
             pass
         # Nunca marca 100% ou sucesso depois de uma falha intermediária.
