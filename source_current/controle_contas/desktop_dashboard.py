@@ -60,6 +60,10 @@ QFrame#bulkPaymentBar QPushButton {
 QFrame#bulkPaymentBar QPushButton#bulkPrimary {
     background: #e7f7ee; color: #0d8255; border-color: #b9e7cd;
 }
+QFrame#bulkPaymentBar QPushButton#primaryButton {
+    background: #078b59; border-color: #078b59;
+    color: #ffffff; font-weight: 800;
+}
 QFrame#bottomNavigation {
     background: #ffffff; border: 1px solid #dfeaf4;
     border-radius: 15px;
