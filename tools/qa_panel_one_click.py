@@ -107,6 +107,44 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
             "o instalador cuidara disso automaticamente", script
         )
 
+    def test_self_update_restarts_powershell_before_build(self):
+        """Se git pull mudar o próprio PS1, o processo antigo não pode compilar."""
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("$LoadedScriptHash", script)
+        self.assertIn("$DiskScriptHash", script)
+        self.assertIn("if ($LoadedScriptHash -ne $DiskScriptHash)", script)
+        self.assertIn("& powershell.exe @RestartArgs", script)
+        self.assertLess(
+            script.index("git -C $Root pull --ff-only origin develop"),
+            script.index("if ($LoadedScriptHash -ne $DiskScriptHash)"),
+        )
+        self.assertLess(
+            script.index("& powershell.exe @RestartArgs"),
+            script.index("=== Controle de Contas $Version - build local ==="),
+        )
+        self.assertNotIn('taskkill /IM "Controle de Contas.exe"', script)
+
+    def test_old_panel_backend_syncs_before_starting_install(self):
+        """Permite o fluxo de um clique mesmo com Python do painel ainda antigo."""
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "controller" / "static" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        start = html.index("async function installLocalDesktop(){")
+        end = html.index("async function syncPanel(){", start)
+        install = html[start:end]
+        self.assertIn("fetch('/api/health'", install)
+        self.assertIn("if(!backendAutoSync)", install)
+        self.assertLess(
+            install.index("post('/api/panel/pull')"),
+            install.index("post('/api/update/local-desktop')"),
+        )
+        self.assertIn("finally{", install)
+        self.assertIn("localInstallStarting", install)
+
     def test_job_never_starts_installer_when_sync_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
