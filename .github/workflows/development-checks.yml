@@ -91,3 +91,20 @@ jobs:
             $errors | Format-List | Out-Host
             throw 'PowerShell do build local 1.4.9 possui erro de sintaxe.'
           }
+
+      - name: Validate redesigned desktop chrome
+        shell: pwsh
+        run: |
+          python -m py_compile .\source_current\controle_contas\desktop_dashboard.py
+          python -m py_compile .\tools\qa_desktop_dashboard.py
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\tools\BUILD_AND_INSTALL_DESKTOP.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-Host
+            throw 'Script único de build desktop possui erro de sintaxe.'
+          }
