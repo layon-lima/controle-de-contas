@@ -365,10 +365,9 @@ class DesktopDashboard:
             raise RuntimeError("Layout principal indisponível para navegação inferior.")
 
         # Não exibir abas duplicadas — o QTabWidget existente continua operante.
-        try:
-            w.abas.tabBar().hide()
-        except Exception:
-            pass
+        # A versão legada usa QTabBar diretamente (não QTabWidget).
+        # Escondemos apenas as abas visuais: o índice ainda dirige a lista.
+        w.abas.hide()
 
         nav = QFrame(central)
         nav.setObjectName("bottomNavigation")
