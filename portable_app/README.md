@@ -27,16 +27,43 @@ e o app informa essa condição. Por ser um upload do navegador, o original que
 estava na pasta de origem do usuário não é apagado. A edição manual dos dados
 de uma conta não reorganiza automaticamente os arquivos já existentes.
 
-**Interface:** tabela renovada sem coluna de ações nem barra inferior, card **Pagas** clicável com histórico de todos os períodos e duplo clique na conta abre
-menu flutuante com ícones originais, filtros por situação/TAG/pesquisa, cadastro,
-edição, TAGs, sugestão Cloudflare, cópia/registro de envio sem PDF, pagamento
-manual, exclusão com confirmação e abertura/anexo de PDFs.
+**Interface:** tabela sem coluna de ações, card **Pagas** com histórico de
+todos os períodos, menu por duplo clique, filtros por situação/TAG/pesquisa,
+cadastro/edição, TAGs, sugestão Cloudflare, cópia com confirmação de envio,
+pagamento manual, exclusão e leitura/anexo/visualização de PDFs.
 
-**Cuidados:** o modo portátil não substitui o aplicativo instalado nesta fase.
-OCR automático, conciliação avançada e mesclagem de PDF de comprovante continuam
-no desktop clássico até terem uma migração e testes de paridade. O registro de
-pagamento manual neste modo é SEM comprovante. Não apague a versão antiga.
-Se já tiver um pagamento salvo, o portátil impede registrar outro.
+**Importação com autopreenchimento:** o botão **Importar PDF** abre o motor OCR
+original recuperado do desktop (incluindo perfis de aprendizado V1/V2,
+regras DARF/FGTS e análise de PDF escaneado/híbrido), em processo Python isolado.
+O motor é carregado de `.local_build_*` ou extraído localmente dos arquivos
+`releases/CONTROLE_CONTAS_1.4.4_SOURCE.zip` e
+`releases/CONTROLE_CONTAS_1.4.5_OVERLAY.b64`; não precisa reinstalar EXE.
+A prévia não grava contas. O usuário pode corrigir todos os campos antes de
+confirmar. Após salvar, o aprendizado V2 recebe o PDF e os valores confirmados.
+Se o motor original falhar, o sistema mostra o erro em vez de substituir por
+um OCR inferior silenciosamente.
+
+**Comprovante:** ao registrar um pagamento, o comprovante PDF é opcional.
+Se fornecido, a função mescla suas páginas às do boleto existente, valida a
+quantidade de páginas, usa cópia de recuperação e registra o pagamento somente
+depois da mesclagem. Se não houver boleto, o comprovante vira o PDF da conta.
+Se a gravação do banco falhar, o arquivo original é restaurado. A conferência
+automática do comprovante permanece desativada, assim como na última versão
+instalada. O comprovante físico selecionado não é apagado do computador.
+
+**Organização:** o botão **Pasta boletos** permite definir a mesma pasta-base
+utilizada pelo desktop instalado. Novos PDFs são salvos em
+`BOLETOS [ANO]/[MM] - [MÊS]`. PDFs antigos continuam preservados e links do
+banco permanecem válidos. Um arquivo importado pelo navegador não é removido
+de sua pasta de origem. Duplicatas comprovadas por bytes ou linha digitável
+são bloqueadas, mas uma chave PIX estática ou dados semelhantes não bloqueiam
+contas legítimas.
+
+**Compatibilidade:** o modo portátil usa o mesmo banco de produção, mantendo
+um backup antes da primeira alteração em cada sessão. A versão instalada
+permanece disponível como alternativa durante a migração. Nem todas as telas
+especializadas e ações em lote do aplicativo instalado foram migradas ou
+validadas ainda; não desinstale a versão antiga até concluir o teste de paridade.
 
 O servidor só escuta em `127.0.0.1`, protege a API com token de sessão e valida
 a origem das alterações. Nenhum endpoint de pagamento é publicado na nuvem.
