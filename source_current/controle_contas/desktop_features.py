@@ -369,6 +369,15 @@ class DesktopFeatures:
             )
             if result.rowcount != 1:
                 raise RuntimeError("A conta não foi encontrada ao gravar o envio.")
+        # Não sinalizar sucesso apenas porque o UPDATE foi executado.
+        # A instalação anterior mostrava sucesso, mas a coluna permanecia vazia.
+        with self.window.banco.conexao() as conn:
+            saved = conn.execute(
+                "SELECT enviado_pagamento_em FROM contas WHERE id=?",
+                (int(account_id),),
+            ).fetchone()
+        if not saved or not str(saved["enviado_pagamento_em"] or "").strip():
+            raise RuntimeError("A data de envio não foi persistida no banco.")
 
     def mark_sent(self, account_id):
         return self.send_for_payment(account_id)
