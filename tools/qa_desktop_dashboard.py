@@ -18,6 +18,7 @@ os.environ["LOCALAPPDATA"] = temp
 os.environ["APPDATA"] = temp
 
 from PySide6.QtWidgets import QApplication, QDockWidget, QFrame, QHBoxLayout
+from controle_contas.desktop_dashboard import _asset_icon
 app = QApplication.instance() or QApplication(sys.argv)
 
 from controle_contas.patches import aplicar_patches
@@ -34,6 +35,17 @@ assert getattr(window, "_desktop_dashboard", None) is not None, "Chrome novo nã
 assert window.findChild(QDockWidget, "modernNavigation") is None, "Menu lateral antigo permanece"
 assert window.tabela.columnCount() >= 10, "Faltou coluna de ações"
 assert window.tabela.horizontalHeaderItem(9).text() == "Ações", "Coluna de ações errada"
+assert window.tabela.horizontalHeaderItem(8).text() == "Observações", "Observacoes ausentes"
+assert not window.tabela.isColumnHidden(8), "Observacoes continuam ocultas"
+assert window.tabela.isColumnHidden(7), "ID interno exposto"
+assert window.tabela.horizontalHeader().visualIndex(8) == 1, "Observacoes fora de ordem"
+assert window.tabela.columnWidth(1) >= 155, "Vencimento estreito"
+assert window.tabela.columnWidth(9) >= 120, "Acoes cortadas"
+for name in ("brand","smartphone","upload","plus","overdue","upcoming","ontime",
+             "paid","home","accounts","payments","reports","settings",
+             "document","send","more","edit","receipt","trash"):
+    assert not _asset_icon(name).isNull(), "Icone ausente: " + name
+assert window._bulk_bar.maximumHeight() <= 45, "Barra de acoes nao compactada"
 assert window.abas.isHidden(), "Barra antiga de abas ainda visível"
 assert getattr(window, "busca", None) is not None, "Busca antiga perdida"
 
@@ -54,6 +66,9 @@ print("KPI4 labels",
       )] if window._desktop_dashboard._paid_month_card else [])
 print("KPI4 count bound", window._desktop_dashboard._paid_month_count is not None)
 print("KPI4 amount bound", window._desktop_dashboard._paid_month_value is not None)
+print("OBS visible", not window.tabela.isColumnHidden(8))
+print("date width", window.tabela.columnWidth(1))
+print("bulk height", window._bulk_bar.height())
 assert window._desktop_dashboard._paid_month_card is not None, "Card de pagas não reaproveitado"
 assert window._desktop_dashboard._paid_month_count is not None, "Quantidade do card não reconhecida"
 assert window._desktop_dashboard._paid_month_value is not None, "Valor do card não reconhecido"

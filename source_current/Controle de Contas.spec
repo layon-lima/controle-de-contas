@@ -9,6 +9,7 @@ a = Analysis(
         ('tesseract/por.traineddata', 'tesseract/tessdata'),
         ('assets/icone_controle_contas.ico', 'assets'),
         ('assets/icone_controle_contas.png', 'assets'),
+        ('assets/ui_icons', 'assets/ui_icons'),
     ],
     hiddenimports=[
         'pypdf',
@@ -17,6 +18,7 @@ a = Analysis(
         'pytesseract',
         'cv2',
         'numpy',
+        'PySide6.QtSvg',
     ],
     hookspath=[],
     hooksconfig={},

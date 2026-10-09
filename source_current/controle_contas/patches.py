@@ -2952,7 +2952,7 @@ def _configurar_coluna_observacao(self) -> None:
         tabela = self.tabela
         if tabela.columnCount() < 9:
             tabela.setColumnCount(9)
-            cab = ui.QTableWidgetItem("OBS")
+            cab = ui.QTableWidgetItem("Observações")
             cab.setTextAlignment(
                 ui.Qt.AlignmentFlag.AlignLeft | ui.Qt.AlignmentFlag.AlignVCenter
             )

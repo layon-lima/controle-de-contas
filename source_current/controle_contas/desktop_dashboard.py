@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
+from PySide6 import QtSvg  # inclui plugin de SVG no build PyInstaller
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QFrame, QGridLayout,
@@ -107,6 +109,24 @@ QScrollBar::handle:vertical { background: #c6d4e4; min-height: 35px; border-radi
 """
 
 
+# Icones SVG autorais versionados em disco; nunca glyphs improvisados no runtime.
+_ICON_DIR = Path('assets') / 'ui_icons'
+
+
+def _asset_icon(name):
+    roots = [Path(__file__).resolve().parents[1]]
+    if getattr(sys, '_MEIPASS', None):
+        roots.insert(0, Path(sys._MEIPASS))
+    roots.append(Path(sys.executable).resolve().parent)
+    for root in roots:
+        path = root / _ICON_DIR / (name + '.svg')
+        if path.is_file():
+            icon = QIcon(str(path))
+            if not icon.isNull():
+                return icon
+    return QIcon()
+
+
 class DesktopDashboard:
     """Somente composição visual; nunca substitui fluxo de pagamento ou PDF."""
 
@@ -188,13 +208,11 @@ class DesktopDashboard:
         brand_lay.setContentsMargins(0, 0, 0, 0)
         brand_lay.setSpacing(10)
 
-        square = QLabel("▣", brand)
-        square.setFixedSize(46, 46)
+        square = QLabel(brand)
+        square.setObjectName("dashboardBrandIcon")
+        square.setFixedSize(44, 44)
         square.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        square.setStyleSheet(
-            "background:#237cf0;color:white;border-radius:12px;"
-            "font-size:24px;font-weight:900;"
-        )
+        square.setPixmap(_asset_icon("brand").pixmap(QSize(44, 44)))
         brand_lay.addWidget(square)
 
         brand_text = QWidget(brand)
@@ -215,7 +233,9 @@ class DesktopDashboard:
                 "Pesquisar fornecedor, valor, descrição ou vencimento..."
             )
 
-        importer = QPushButton("⇧  Importar PDF", header)
+        importer = QPushButton("Importar PDF", header)
+        importer.setIcon(_asset_icon("upload"))
+        importer.setIconSize(QSize(18, 18))
         importer.setToolTip("Importar boleto, conta ou comprovante PDF.")
         importer.setObjectName("dashboardImport")
         importer.setProperty("dashboardAction", True)
@@ -228,11 +248,16 @@ class DesktopDashboard:
         # Reestilizar botões reais, sem criar um segundo Nova conta.
         if new_button:
             new_button.setObjectName("primaryButton")
+            new_button.setText("Nova conta")
+            new_button.setIcon(_asset_icon("plus"))
+            new_button.setIconSize(QSize(17, 17))
             new_button.setMinimumWidth(130)
             new_button.setMinimumHeight(39)
         mobile = self._find_action("Acesso mobile")
         if mobile:
-            mobile.setText("▯  Acesso mobile")
+            mobile.setText("Acesso mobile")
+            mobile.setIcon(_asset_icon("smartphone"))
+            mobile.setIconSize(QSize(18, 18))
 
         # A pasta já possui seu comando real em Configurações; não ocupa
         # também espaço duplicado no cabeçalho compacto.
@@ -242,11 +267,11 @@ class DesktopDashboard:
 
         drag = getattr(w, "area_drop", None)
         if drag:
-            drag.setMaximumHeight(27)
-            drag.setMinimumHeight(23)
+            drag.setMaximumHeight(32)
+            drag.setMinimumHeight(30)
             drag.setStyleSheet(
                 "background:#fbfdff;border:1px dashed #dee7f2;"
-                "border-radius:8px;color:#8190a5;font-size:10px;"
+                "border-radius:8px;color:#7185a0;font-size:11px;"
             )
 
     def _import_pdf(self):
@@ -261,15 +286,15 @@ class DesktopDashboard:
         # duplicados. A altura compacta mantém mais linhas visíveis.
         cards = list(getattr(self.window, "cards", {}).items())
         colors = [
-            ("#fff5f5", "#fee6e8", "#db2938", "◷"),
-            ("#fffbf3", "#fff0d6", "#c9880b", "▦"),
-            ("#f3fcf8", "#daf7e8", "#137b55", "✓"),
-            ("#f4f8ff", "#e1edff", "#2470d8", "▥"),
+            ("#fff5f5", "#fee6e8", "#db2938", "overdue"),
+            ("#fffbf3", "#fff0d6", "#c9880b", "upcoming"),
+            ("#f3fcf8", "#daf7e8", "#137b55", "ontime"),
+            ("#f4f8ff", "#e1edff", "#2470d8", "paid"),
         ]
         for index, (_key, card) in enumerate(cards[:4]):
             if card is None:
                 continue
-            bg, icon_bg, accent, symbol = colors[index]
+            bg, icon_bg, accent, icon_name = colors[index]
             card.setMinimumHeight(72)
             card.setMaximumHeight(78)
             card.setObjectName(f"dashboardKpi{index}")
@@ -289,14 +314,12 @@ class DesktopDashboard:
                     f"background:transparent;border:0;color:{accent};"
                     + ("font-weight:800;" if label.text().strip().isdigit() else "")
                 )
-            icon = QLabel(symbol, card)
+            icon = QLabel(card)
             icon.setObjectName("dashboardKpiIcon")
             icon.setGeometry(10, 12, 45, 45)
             icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon.setStyleSheet(
-                f"background:{icon_bg};color:{accent};font-size:23px;"
-                "font-weight:850;border-radius:12px;"
-            )
+            icon.setPixmap(_asset_icon(icon_name).pixmap(QSize(24, 24)))
+            icon.setStyleSheet(f"background:{icon_bg};border:0;border-radius:12px;")
             icon.raise_()
 
             if index == 3:
@@ -353,14 +376,16 @@ class DesktopDashboard:
         row.setSpacing(6)
 
         items = (
-            ("overview", "⌂   Visão geral", lambda: self._navigate("overview")),
-            ("accounts", "▤   Contas", lambda: self._navigate("accounts")),
-            ("payments", "▣   Pagamentos", lambda: self._navigate("payments")),
-            ("reports", "▥   Relatórios", self._reports),
-            ("settings", "⚙   Configurações", self._settings),
+            ("overview", "Visão geral", "home", lambda: self._navigate("overview")),
+            ("accounts", "Contas", "accounts", lambda: self._navigate("accounts")),
+            ("payments", "Pagamentos", "payments", lambda: self._navigate("payments")),
+            ("reports", "Relatórios", "reports", self._reports),
+            ("settings", "Configurações", "settings", self._settings),
         )
-        for key, caption, callback in items:
+        for key, caption, icon_name, callback in items:
             button = QPushButton(caption, nav)
+            button.setIcon(_asset_icon(icon_name))
+            button.setIconSize(QSize(19, 19))
             button.setObjectName("bottomNavButton")
             button.setProperty("dashboardAction", True)
             button.clicked.connect(callback)
@@ -417,38 +442,69 @@ class DesktopDashboard:
             )
 
     def _configure_account_table(self):
+        """Mantem indices logicos das rotinas de pagamento, muda so a visualizacao."""
         table = self.window.tabela
         if table.columnCount() < 10:
             table.setColumnCount(10)
+        table.setHorizontalHeaderItem(8, QTableWidgetItem("Observações"))
         table.setHorizontalHeaderItem(9, QTableWidgetItem("Ações"))
-        table.setColumnHidden(6, True)
-        table.setColumnHidden(7, True)
-        table.setColumnHidden(8, True)
-        table.setIconSize(QPixmap(28, 28).size())
+        table.setColumnHidden(6, True)  # PDF interno
+        table.setColumnHidden(7, True)  # ID interno
+        table.setColumnHidden(8, False) # Observacoes obrigatorias
+        table.setIconSize(QSize(28, 28))
         table.verticalHeader().hide()
-        table.verticalHeader().setDefaultSectionSize(40)
+        table.verticalHeader().setDefaultSectionSize(44)
         table.setShowGrid(False)
         table.setAlternatingRowColors(False)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-
+        table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        table.setWordWrap(False)
         header = table.horizontalHeader()
-        order = (0, 1, 2, 3, 5, 4, 9)
-        for pos, logical in enumerate(order):
-            visual = header.visualIndex(logical)
-            if visual >= 0 and visual != pos:
-                header.moveSection(visual, pos)
-
+        for position, logical in enumerate((0, 8, 1, 2, 3, 5, 4, 9)):
+            current = header.visualIndex(logical)
+            if current >= 0 and current != position:
+                header.moveSection(current, position)
+        # Vencimento precisa de largura propria: o item guarda so a data,
+        # enquanto o widget visual inclui um texto auxiliar na segunda linha.
+        sizes = {1: 165, 2: 125, 3: 104, 4: 125, 5: 125, 8: 235, 9: 126}
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3, 4, 5):
-            header.setSectionResizeMode(
-                column, QHeaderView.ResizeMode.ResizeToContents
-            )
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(1, 185)
-        header.setSectionResizeMode(9, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(9, 124)
+        for column, width in sizes.items():
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            table.setColumnWidth(column, width)
         table.setStyleSheet(DASHBOARD_STYLE[DASHBOARD_STYLE.index("QTableWidget {"):])
         self.decorate_rows()
+
+    def _compact_filter_region(self, bulk):
+        """Nao deixar a regiao de filtros consumir a altura da listagem."""
+        parent = self.window.tabela.parentWidget()
+        listing = parent.layout() if parent else None
+        if listing is None:
+            return
+        listing.setContentsMargins(10, 6, 10, 8)
+        listing.setSpacing(4)
+        bar_index = listing.indexOf(bulk)
+        if bar_index >= 0:
+            for index in range(bar_index):
+                item = listing.itemAt(index)
+                if item is None:
+                    continue
+                widget = item.widget()
+                nested = item.layout()
+                if widget is not None and widget is not self.window.tabela:
+                    widget.setMinimumHeight(0)
+                    widget.setMaximumHeight(45)
+                    widget.setSizePolicy(widget.sizePolicy().horizontalPolicy(),
+                                         QSizePolicy.Policy.Fixed)
+                    nested = widget.layout()
+                if nested is not None:
+                    nested.setContentsMargins(4, 2, 4, 2)
+                    nested.setSpacing(4)
+        if hasattr(listing, "setStretch"):
+            for index in range(listing.count()):
+                listing.setStretch(index, 0)
+            table_index = listing.indexOf(self.window.tabela)
+            if table_index >= 0:
+                listing.setStretch(table_index, 1)
 
     def _rearrange_actions(self):
         w = self.window
@@ -460,9 +516,10 @@ class DesktopDashboard:
         # Descarta a paleta legada aplicada diretamente à barra:
         # senão ela tem prioridade sobre o tema moderno do QMainWindow.
         bulk.setStyleSheet("")
-        layout.setContentsMargins(6, 5, 6, 5)
-        layout.setSpacing(7)
-        bulk.setFixedHeight(51)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(5)
+        bulk.setFixedHeight(42)
+        self._compact_filter_region(bulk)
 
         # Move o botão REAL do rodapé para a barra superior, mantendo
         # seu handler, regras de validação e permissões originais.
@@ -574,9 +631,9 @@ class DesktopDashboard:
                     date_wrap.setAttribute(
                         Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
                     )
-                    date_layout = QHBoxLayout(date_wrap)
-                    date_layout.setContentsMargins(4, 2, 4, 2)
-                    date_layout.setSpacing(7)
+                    date_layout = QVBoxLayout(date_wrap)
+                    date_layout.setContentsMargins(5, 1, 2, 1)
+                    date_layout.setSpacing(0)
                     main_date = QLabel(raw_date, date_wrap)
                     main_date.setStyleSheet(
                         "color:#263e60;font-size:11px;font-weight:650;"
@@ -585,9 +642,10 @@ class DesktopDashboard:
                     rel.setStyleSheet(
                         f"color:{color};font-size:10px;font-weight:700;"
                     )
-                    date_layout.addWidget(main_date)
-                    date_layout.addWidget(rel)
-                    date_layout.addStretch(1)
+                    date_layout.addWidget(main_date, 0, Qt.AlignmentFlag.AlignVCenter)
+                    date_layout.addWidget(rel, 0, Qt.AlignmentFlag.AlignVCenter)
+                    main_date.setToolTip(raw_date)
+                    rel.setToolTip(time_label)
                     table.setCellWidget(row, 1, date_wrap)
 
             status = table.item(row, 3)
@@ -624,24 +682,36 @@ class DesktopDashboard:
                 pill_layout.addStretch(1)
                 table.setCellWidget(row, 3, pill_wrap)
 
+            # Texto completo da observacao permanece no item e no tooltip.
+            observation = table.item(row, 8)
+            if observation is not None:
+                observation.setForeground(QColor("#4e6680"))
+                observation.setFont(QFont("Segoe UI", 9))
+                observation.setToolTip(observation.text())
+
             # Ações existentes no contexto da linha; evita botões duplicados.
             cell = QWidget(table)
             actions = QHBoxLayout(cell)
             actions.setContentsMargins(2, 2, 2, 2)
             actions.setSpacing(5)
-            for glyph, action, tooltip in (
-                ("▤", "Abrir conta", "Abrir o PDF da conta"),
-                ("➤", "Enviar para pagamento", "Enviar esta conta para pagamento"),
-                ("⋯", "menu", "Mais ações"),
+            for icon_name, action, tooltip in (
+                ("document", "Abrir conta", "Abrir o PDF da conta"),
+                ("send", "Enviar para pagamento", "Enviar esta conta para pagamento"),
+                ("more", "menu", "Mais ações"),
             ):
                 button = QToolButton(cell)
-                button.setText(glyph)
+                button.setIcon(_asset_icon(icon_name))
+                button.setIconSize(QSize(17, 17))
                 button.setToolTip(tooltip)
                 button.setFixedSize(33, 29)
                 if action == "menu":
                     menu = QMenu(button)
-                    for label in ("Editar", "Abrir comprovante", "Excluir"):
-                        menu_action = menu.addAction(label)
+                    for label, asset in (
+                        ("Editar", "edit"),
+                        ("Abrir comprovante", "receipt"),
+                        ("Excluir", "trash"),
+                    ):
+                        menu_action = menu.addAction(_asset_icon(asset), label)
                         menu_action.triggered.connect(
                             lambda _=False, r=row, a=label: self._activate_row(r, a)
                         )

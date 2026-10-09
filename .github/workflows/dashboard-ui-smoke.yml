@@ -6,6 +6,8 @@ on:
     paths:
       - 'source_current/controle_contas/desktop_dashboard.py'
       - 'source_current/controle_contas/cloud_mobile_ui.py'
+      - 'source_current/assets/ui_icons/**'
+      - 'source_current/Controle de Contas.spec'
       - 'tools/qa_desktop_dashboard.py'
       - '.github/workflows/dashboard-ui-smoke.yml'
   workflow_dispatch:
@@ -37,6 +39,7 @@ jobs:
             Copy-Item $_.FullName (Join-Path '.\release_src\controle_contas' $_.Name) -Force
           }
           Copy-Item '.\tools\qa_desktop_dashboard.py' '.\release_src\qa_desktop_dashboard.py' -Force
+          Copy-Item '.\source_current\assets\ui_icons' '.\release_src\assets\ui_icons' -Recurse -Force
       - name: Install test requirements
         shell: pwsh
         run: |

@@ -207,6 +207,7 @@ def integrate_cloud_mobile_button() -> None:
             3: "Status",
             4: "Enviado em",
             5: "Sugerido em",
+            8: "Observações",
         }
         for logical, title in headers.items():
             item = table.horizontalHeaderItem(logical)
@@ -218,9 +219,9 @@ def integrate_cloud_mobile_button() -> None:
 
         header = table.horizontalHeader()
         order = (
-            [0, 1, 2, 3, 5, 4, 9]
+            [0, 8, 1, 2, 3, 5, 4, 9]
             if getattr(self, "_desktop_dashboard", None)
-            else [0, 1, 2, 5, 4, 3]
+            else [0, 8, 1, 2, 5, 4, 3]
         )
         for target, logical in enumerate(order):
             current = header.visualIndex(logical)
@@ -229,11 +230,14 @@ def integrate_cloud_mobile_button() -> None:
 
         table.setColumnHidden(6, True)
         table.setColumnHidden(7, True)
-        table.setColumnHidden(8, True)
+        table.setColumnHidden(8, False)
 
-        header.setSectionResizeMode(0, ui.QHeaderView.ResizeMode.Stretch)
-        for logical in (1, 2, 3, 4, 5):
-            header.setSectionResizeMode(logical, ui.QHeaderView.ResizeMode.ResizeToContents)
+        # Dashboard dimensiona o Vencimento incluindo a segunda linha.
+        if getattr(self, "_desktop_dashboard", None) is None:
+            header.setSectionResizeMode(0, ui.QHeaderView.ResizeMode.Stretch)
+            for logical in (1, 2, 3, 4, 5):
+                header.setSectionResizeMode(logical, ui.QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(8, ui.QHeaderView.ResizeMode.Stretch)
 
         if getattr(self, "_desktop_dashboard", None) is None:
             table.setStyleSheet(

@@ -34,6 +34,12 @@ Copy-Item (Join-Path $Root "source_current\requirements.txt") (Join-Path $Work "
 Get-ChildItem (Join-Path $Root "source_current\controle_contas") -File -Filter "*.py" | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $Work "controle_contas\$($_.Name)") -Force
 }
+$IconsSource = Join-Path $Root "source_current\assets\ui_icons"
+if (!(Test-Path (Join-Path $IconsSource "brand.svg"))) {
+    throw "Icones SVG nao encontrados. Sincronize o painel."
+}
+Copy-Item -Path $IconsSource -Destination (Join-Path $Work "assets") -Recurse -Force
+Copy-Item (Join-Path $Root "source_current\Controle de Contas.spec") (Join-Path $Work "Controle de Contas.spec") -Force
 
 $VersionInfoOld = Join-Path $Work "version_info_1.4.5.txt"
 $VersionInfoNew = Join-Path $Work "version_info_$Version.txt"
