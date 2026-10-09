@@ -104,7 +104,6 @@ def check_duplicate(conn, pdf: Path, fields: dict, exclude_id: int | None = None
     incoming_amount = round(float(fields.get("valor") or 0), 2)
     incoming_due = str(fields.get("vencimento") or "")
     incoming_code = "".join(c for c in str(fields.get("codigo_pagamento") or "") if c.isalnum())
-    incoming_vendor = " ".join(str(fields.get("fornecedor") or "").casefold().split())
     for row in conn.execute(
         "SELECT id,pdf_conta,valor,vencimento,codigo_pagamento,fornecedor FROM contas"
     ):
@@ -117,18 +116,21 @@ def check_duplicate(conn, pdf: Path, fields: dict, exclude_id: int | None = None
                     raise ValueError("Este PDF já está cadastrado na conta " + str(row["id"]) + ".")
             except OSError:
                 pass
-        if (
-            incoming_vendor
-            and incoming_vendor == " ".join(str(row["fornecedor"] or "").casefold().split())
-            and round(float(row["valor"] or 0), 2) == incoming_amount
-            and str(row["vencimento"] or "") == incoming_due
-        ):
-            old_code = "".join(c for c in str(row["codigo_pagamento"] or "") if c.isalnum())
-            if incoming_code and old_code == incoming_code:
-                raise ValueError(
-                    "Possível duplicidade: fornecedor, valor, vencimento e código "
-                    "já pertencem à conta " + str(row["id"]) + "."
-                )
+        original_code = "".join(
+            c for c in str(row["codigo_pagamento"] or "") if c.isalnum()
+        )
+        if not incoming_code or incoming_code != original_code:
+            continue
+        # Mesmas regras de duplicata do aplicativo instalado:
+        # linha bancária igual é prova forte independentemente do fornecedor.
+        if incoming_code.isdigit() and len(incoming_code) in {44, 46, 47, 48}:
+            raise ValueError("Linha digitável já cadastrada na conta " + str(row["id"]) + ".")
+        if incoming_code.startswith("000201") and len(incoming_code) >= 50:
+            if (round(float(row["valor"] or 0), 2) == incoming_amount
+                    and str(row["vencimento"] or "") == incoming_due):
+                raise ValueError("PIX EMV já cadastrado na conta " + str(row["id"]) + ".")
+        # Chave PIX estática, referência e fornecedor parecidos não bloqueiam
+        # contas legítimas, ainda que seus valores e vencimentos coincidam.
 
 
 def merge_receipt(original_pdf: Path | None, receipt_bytes: bytes,
