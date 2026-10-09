@@ -226,7 +226,8 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
         self.assertIn('CC_PROGRESS|30|', script)
         self.assertIn('CC_PROGRESS|70|', script)
         self.assertIn('CC_PROGRESS|88|', script)
-        self.assertIn('-PassThru -Wait', script)
+        self.assertIn('-PassThru -ErrorAction Stop', script)
+        self.assertIn('$Installation.WaitForExit()', script)
         self.assertIn('$Installation.ExitCode -ne 0', script)
         self.assertIn('/api/update/full', (
             root / "controller" / "server.py"
