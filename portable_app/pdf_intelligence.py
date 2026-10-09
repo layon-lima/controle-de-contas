@@ -6,17 +6,22 @@ Uma extração sem o motor original disponível nunca é apresentada como equiva
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import zipfile
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE_TIMEOUT = 120
 ENGINE_NAMES = ("_local_build_1_5_0",)
+PREPARE_LOCK = threading.RLock()
 
 
 class ReaderUnavailable(RuntimeError):
@@ -42,12 +47,60 @@ def find_legacy_engine(root: Path = ROOT) -> Path:
             (package / "ui.py").is_file() or (package / "ui.pyc").is_file()
         ):
             return candidate
-    raise ReaderUnavailable(
-        "Motor de leitura do desktop não localizado. "
-        "A importação automática fica bloqueada para evitar resultados inferiores. "
-        "O aplicativo instalado permanece disponível; anexe um log para localizar "
-        "os módulos recuperados."
-    )
+    # Mesmo em PCs sem pasta .local_build, o projeto distribui o motor
+    # original recuperado no source.zip + overlay versionado. Extrair para a
+    # pasta de dados, sem instalar EXE nem encostar no banco do usuário.
+    return _materialize_engine(root)
+
+
+def _materialize_engine(root: Path) -> Path:
+    appdir = Path(os.environ.get("LOCALAPPDATA") or
+                  str(Path.home() / "AppData" / "Local")) / "ControleContas"
+    destination = appdir / "portable_reader_engine"
+    source = root / "releases" / "CONTROLE_CONTAS_1.4.4_SOURCE.zip"
+    overlay = root / "releases" / "CONTROLE_CONTAS_1.4.5_OVERLAY.b64"
+    patched = root / "source_current" / "controle_contas"
+    if not source.is_file() or not overlay.is_file():
+        raise ReaderUnavailable(
+            "Motor OCR recuperado não está disponível no projeto local. "
+            "O aplicativo instalado permanece inalterado."
+        )
+    with PREPARE_LOCK:
+        package = destination / "controle_contas"
+        if not (
+            (package / "pdf_reader.pyc").is_file()
+            and (package / "ui.pyc").is_file()
+        ):
+            destination.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(source) as archive:
+                archive.extractall(destination)
+            with tempfile.NamedTemporaryFile(
+                suffix=".zip", dir=destination, delete=False
+            ) as tmp:
+                tmp.write(base64.b64decode(overlay.read_text(encoding="utf-8")))
+                overlay_zip = Path(tmp.name)
+            try:
+                with zipfile.ZipFile(overlay_zip) as archive:
+                    archive.extractall(destination)
+            finally:
+                overlay_zip.unlink(missing_ok=True)
+        if not (package / "pdf_reader.pyc").is_file() or not (package / "ui.pyc").is_file():
+            raise ReaderUnavailable(
+                "Os arquivos compilados originais do leitor não foram localizados."
+            )
+        for filename in ("patches.py", "layout_learning_v2.py"):
+            original = patched / filename
+            if not original.is_file():
+                raise ReaderUnavailable("Código do OCR original não encontrado: " + filename)
+            target = package / filename
+            if not target.is_file() or original.read_bytes() != target.read_bytes():
+                temp = target.with_name(target.name + "." + os.urandom(4).hex() + ".tmp")
+                try:
+                    shutil.copy2(original, temp)
+                    os.replace(temp, target)
+                finally:
+                    temp.unlink(missing_ok=True)
+        return destination
 
 
 def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT) -> dict[str, Any]:
