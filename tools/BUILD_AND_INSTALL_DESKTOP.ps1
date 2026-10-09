@@ -176,10 +176,14 @@ if ((Get-FileHash -LiteralPath $Updater -Algorithm SHA256).Hash -ne
     throw "A copia do atualizador nao passou pela verificacao de integridade."
 }
 
-Write-Host "Fechando o app atual..."
-taskkill /IM "Controle de Contas.exe" /T /F 2>$null | Out-Null
-Start-Sleep -Milliseconds 800
-
+# O Inno Setup ja trata o fechamento do aplicativo (CloseApplications=yes)
+# e a rotina PrepareToInstall encerra processos remanescentes. Nunca executar
+# taskkill aqui: no PowerShell 5, "processo nao encontrado" pode virar erro
+# terminante mesmo com 2>$null e interromper um build ja concluido.
+Write-Host "Aplicativo aberto ou fechado: o instalador cuidara disso automaticamente."
 Write-Host "Abrindo instalador $Version..."
+if (-not (Test-Path -LiteralPath $LaunchExe -PathType Leaf)) {
+    throw "O atualizador preparado nao foi encontrado: $LaunchExe"
+}
 Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -ErrorAction Stop
 Write-Host "Instalador iniciado a partir da area independente: $LaunchFolder"
