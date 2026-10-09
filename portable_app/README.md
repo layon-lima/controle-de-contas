@@ -17,10 +17,17 @@ A interface abre no navegador em `http://127.0.0.1:8767`.
 esse arquivo. Antes da primeira alteração em cada sessão cria uma cópia online
 SQLite em `%LOCALAPPDATA%\ControleContas\backups\antes_portatil_*.db`.
 Arquivos PDF previamente cadastrados são abertos do endereço original.
-PDFs importados neste modo são guardados na pasta
-`%LOCALAPPDATA%\ControleContas\documents\portatil`.
+**Novos PDFs anexados pelo portátil** seguem a mesma `pasta_base` definida no
+desktop clássico em `config_documentos.json`, sob
+`BOLETOS [ANO]/[MM] - [MÊS]`, conforme o vencimento. O nome do arquivo deriva
+de Observações (ou Fornecedor), como na versão instalada; nomes duplicados não
+sobrescrevem PDFs anteriores. Se não houver pasta-base configurada, o arquivo
+é salvo provisoriamente em `%LOCALAPPDATA%\ControleContas\documents\portatil`
+e o app informa essa condição. Por ser um upload do navegador, o original que
+estava na pasta de origem do usuário não é apagado. A edição manual dos dados
+de uma conta não reorganiza automaticamente os arquivos já existentes.
 
-**Interface:** tabela renovada sem coluna de ações, duplo clique na conta abre
+**Interface:** tabela renovada sem coluna de ações nem barra inferior, card **Pagas** clicável com histórico de todos os períodos e duplo clique na conta abre
 menu flutuante com ícones originais, filtros por situação/TAG/pesquisa, cadastro,
 edição, TAGs, sugestão Cloudflare, cópia/registro de envio sem PDF, pagamento
 manual, exclusão com confirmação e abertura/anexo de PDFs.
