@@ -54,7 +54,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#08150f;border:1px sol
       <button onclick="post('/api/app/restart')">↻ Reiniciar</button>
       <button class="danger" onclick="post('/api/app/stop')">■ Fechar</button>
       <button id="updateBtn" onclick="installUpdate()">⬆ Atualizar programa</button>
-      <button onclick="installLocalDesktop()">⚙ Instalar 1.5.0 local</button>
+      <button id="localInstallBtn" onclick="installLocalDesktop()">⚙ Atualizar e instalar no PC</button>
       <button onclick="syncPanel()">⟳ Sincronizar painel</button>
       <button onclick="deployMobile()">☁ Publicar mobile</button>
     </div>
@@ -116,9 +116,26 @@ async function installUpdate(){
   await post('/api/update/install');
 }
 async function installLocalDesktop(){
-  if(!confirm('Gerar e instalar a versão 1.5.0 diretamente neste PC? O processo pode levar alguns minutos.')) return;
-  const j=await post('/api/update/local-desktop');
-  if(j&&j.ok) setTimeout(loadJob,700);
+  const btn=$('localInstallBtn');
+  if(btn.disabled) return;
+  btn.disabled=true;
+  btn.textContent='⟳ Preparando atualização...';
+  $('jobState').textContent='INICIANDO ATUALIZAÇÃO';
+  $('jobLog').textContent='Sincronização automática do GitHub → testes → instalação. Aguarde.';
+  try{
+    const j=await post('/api/update/local-desktop');
+    if(j&&j.ok){
+      toast('Atualização iniciada. Acompanhe o andamento aqui no painel.');
+      await loadJob();
+    }else{
+      btn.disabled=false;
+      btn.textContent='⚙ Atualizar e instalar no PC';
+    }
+  }catch(e){
+    btn.disabled=false;
+    btn.textContent='⚙ Atualizar e instalar no PC';
+    toast('Falha ao iniciar atualização: '+String(e),false);
+  }
 }
 async function syncPanel(){
   const j=await post('/api/panel/pull');
@@ -138,6 +155,13 @@ async function loadJob(){
     $('jobState').textContent=j.running?'EM ANDAMENTO':(j.ok===true?'CONCLUÍDO':(j.ok===false?'FALHOU':'Nenhuma operação em andamento'));
     $('jobState').className='muted '+(j.running?'warn':(j.ok===true?'ok':(j.ok===false?'bad':'')));
     $('jobLog').textContent=(j.log_tail||[]).join('\n')||j.message||'Sem operações recentes.';
+    const install=$('localInstallBtn');
+    if(install){
+      install.disabled=!!j.running;
+      install.textContent=j.running&&j.kind==='local_desktop_update'
+        ? '⟳ Sincronizando / instalando...'
+        : '⚙ Atualizar e instalar no PC';
+    }
   }catch(e){}
 }
 let panelOffline=false;
