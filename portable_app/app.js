@@ -183,6 +183,8 @@ function openMenu(id,event){
   const menu=$('menu');
   menu.classList.add('visible');
   menu.querySelector('[data-action="pdf"]').disabled=!a.has_pdf;
+  menu.querySelector('[data-action="reanalyze"]').disabled=!a.has_pdf;
+  menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||'').trim();
   menu.querySelector('[data-action="receipt"]').disabled=!a.has_receipt;
   menu.querySelector('[data-action="pay"]').disabled=a.status==='Paga';
   menu.querySelector('[data-action="delete"]').disabled=a.status==='Paga';
@@ -235,12 +237,13 @@ const accountFields=[
   ['tipo_pagamento','Tipo de pagamento','text'],
   ['observacoes','Observações','textarea']
 ];
-function accountModal(a,preview=null){
-  const suggested=preview?.fields||{};
-  const unsafe=(preview?.insecure_fields||[]).map(v=>String(v));
+function accountModal(a,preview=null,rerun=null){
+  const analysis=preview||rerun;
+  const suggested=analysis?.fields||{};
+  const unsafe=(analysis?.insecure_fields||[]).map(v=>String(v));
   const form=accountFields.map(([key,title,type])=>{
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
-    const value=preview?(suggested[key]??''):(a?a[key]||'':key==='vencimento'?localToday():'');
+    const value=analysis?(suggested[key]??(a?a[key]||'':'')):(a?a[key]||'':key==='vencimento'?localToday():'');
     const controls=type==='textarea'
       ?'<textarea name="'+key+'">'+esc(value)+'</textarea>'
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';
@@ -250,9 +253,11 @@ function accountModal(a,preview=null){
   const warning=unsafe.length
     ? '<div class="ocr-note warning"><b>Conferir antes de salvar:</b> o leitor não confirmou com segurança '+esc([...new Set(unsafe.map(x=>fieldNames[x]||x))].join(', '))+'. Corrija os campos diretamente abaixo.</div>'
     : '<div class="ocr-note"><b>PDF analisado pelo leitor original.</b> Confira os dados preenchidos e confirme o cadastro.</div>';
-  const intro=preview?'Leitura concluída. Nada será cadastrado antes da sua confirmação.':'Os dados são salvos no banco local existente. O PDF é opcional.';
-  showModal(preview?'Conferir leitura do PDF':a?'Editar conta':'Nova conta',intro,
-    (preview?warning:'')+'<form id="accountForm" class="formgrid">'+form+'</form>',
+  const intro=preview?'Leitura concluída. Nada será cadastrado antes da sua confirmação.':
+    rerun?'Leitura do PDF existente refeita. Confira e corrija antes de alterar o cadastro.':
+    'Os dados são salvos no banco local existente. O PDF é opcional.';
+  showModal(preview?'Conferir leitura do PDF':rerun?'Revisar cadastro pelo PDF':a?'Editar conta':'Nova conta',intro,
+    (analysis?warning:'')+'<form id="accountForm" class="formgrid">'+form+'</form>',
     preview?'Confirmar e salvar PDF':a?'Salvar alterações':'Criar conta',async()=>{
       const form=$('accountForm');
       if(!form.reportValidity())return false;
@@ -317,6 +322,16 @@ async function action(kind){
   try{
     if(kind==='pdf')await showPDF();
     else if(kind==='attach')$('uploadFile').click();
+    else if(kind==='reanalyze'){
+      const read=await api('/api/accounts/'+a.id+'/analyze');
+      accountModal(a,null,read);
+    }
+    else if(kind==='copy-code'){
+      const code=String(a.codigo_pagamento||'').trim();
+      if(!code)throw new Error('Esta conta não tem PIX ou código digitável.');
+      await copyText(code);
+      notice('Código PIX / linha digitável copiado.');
+    }
     else if(kind==='receipt')await showPDF(true);
     else if(kind==='send')await sendPayment();
     else if(kind==='pay')payModal(a);
