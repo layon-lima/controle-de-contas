@@ -8,8 +8,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import sys
+import json
+import os
 
-from PySide6.QtCore import Qt, QSize, QRect
+from PySide6.QtCore import Qt, QSize, QRect, QTimer
 from PySide6 import QtSvg  # inclui plugin de SVG no build PyInstaller
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -538,15 +540,50 @@ undefined
             current = header.visualIndex(logical)
             if current >= 0 and current != position:
                 header.moveSection(current, position)
-        # Vencimento precisa de largura propria: o item guarda so a data,
-        # enquanto o widget visual inclui um texto auxiliar na segunda linha.
-        sizes = {1: 165, 2: 125, 3: 104, 4: 125, 5: 125, 8: 235, 9: 126}
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column, width in sizes.items():
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        # Cabeçalho redimensionável como Excel, com persistência local.
+        widths = {0: 230, 8: 205, 1: 160, 2: 115,
+                  3: 100, 5: 105, 4: 120, 9: 252}
+        self._columns_file = (
+            Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+            / "ControleContas" / "desktop_columns.json"
+        )
+        try:
+            stored = json.loads(self._columns_file.read_text(encoding="utf-8"))
+            if isinstance(stored, dict):
+                for key, value in stored.items():
+                    column = int(key)
+                    if column in widths and isinstance(value, int) and 80 <= value <= 1600:
+                        widths[column] = value
+        except (OSError, ValueError, TypeError):
+            pass
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(False)
+        header.setMinimumSectionSize(80)
+        for column, width in widths.items():
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             table.setColumnWidth(column, width)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._save_widths_timer = QTimer(self.window)
+        self._save_widths_timer.setSingleShot(True)
+        self._save_widths_timer.setInterval(350)
+        self._save_widths_timer.timeout.connect(self._save_column_widths)
+        header.sectionResized.connect(lambda *_: self._save_widths_timer.start())
         table.setStyleSheet(DASHBOARD_STYLE[DASHBOARD_STYLE.index("QTableWidget {"):])
         self.decorate_rows()
+
+    def _save_column_widths(self):
+        try:
+            widths = {
+                str(column): self.window.tabela.columnWidth(column)
+                for column in (0, 8, 1, 2, 3, 5, 4, 9)
+            }
+            path = self._columns_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_suffix(".tmp")
+            temp.write_text(json.dumps(widths), encoding="utf-8")
+            os.replace(temp, path)
+        except OSError:
+            pass
 
     def _compact_filter_region(self, bulk):
         """Nao deixar a regiao de filtros consumir a altura da listagem."""
@@ -595,19 +632,9 @@ undefined
         bulk.setFixedHeight(42)
         self._compact_filter_region(bulk)
 
-        # Move o botão REAL do rodapé para a barra superior, mantendo
-        # seu handler, regras de validação e permissões originais.
         payment = self._find_action("Registrar pagamento")
         if payment is not None:
-            parent = payment.parentWidget()
-            if parent and parent.layout():
-                parent.layout().removeWidget(payment)
-            payment.setParent(bulk)
-            payment.setObjectName("primaryButton")
-            payment.setIcon(_asset_icon("plus"))
-            payment.setIconSize(QSize(17, 17))
-            payment.setMinimumWidth(165)
-            layout.insertWidget(max(1, layout.count() - 1), payment)
+            payment.hide()
 
         clear = getattr(w, "_bulk_clear_button", None)
         if clear:
