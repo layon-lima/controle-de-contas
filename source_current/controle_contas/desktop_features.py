@@ -317,7 +317,7 @@ class DesktopFeatures:
         account = self._account(account_id)
         if not account:
             QMessageBox.warning(self.window, "PDF", "Conta não encontrada.")
-            return
+            return False
         raw = str(account.get("pdf_conta") or "")
         if receipt:
             with self.window.banco.conexao() as conn:
@@ -334,14 +334,16 @@ class DesktopFeatures:
                  else "PDF da conta não encontrado.")
                 + ("\nCaminho cadastrado: " + raw if raw else "")
             )
-            return
+            return False
         try:
             if os.name == "nt":
                 os.startfile(str(path.resolve()))
             elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
                 raise OSError("Nenhum leitor de PDF disponível.")
+            return True
         except OSError as exc:
             QMessageBox.warning(self.window, "Falha ao abrir o PDF", str(exc))
+            return False
 
     def _record_sent(self, account_id):
         """A data só é gravada depois que os dados foram copiados."""
@@ -376,7 +378,8 @@ class DesktopFeatures:
         if original is None or not original.isEnabled():
             QMessageBox.warning(
                 self.window, "Enviar para pagamento",
-                "A rotina original de copiar dados para pagamento está indisponível."
+                "O botão original de cópia não está disponível nesta instalação. "
+                "Nenhum envio foi registrado."
             )
             return False
 
@@ -440,7 +443,7 @@ class DesktopFeatures:
         )
         if not cloud_enabled():
             QMessageBox.warning(self.window, "Nuvem", "Acesso mobile não configurado.")
-            return
+            return False
         try:
             # Rotas existentes no código: /api/desktop/suggest-batch e /suggest/:id.
             # Se a versão publicada estiver antiga, mostra a causa em vez
@@ -460,12 +463,14 @@ class DesktopFeatures:
                         raise RuntimeError(str(result.get("erro") or "Falha remota."))
             self._flash(f"{len(ids)} conta(s) sugerida(s) para pagamento.")
             self.window.atualizar_tabela()
+            return True
         except Exception as exc:
             msg = str(exc)
             if "Rota não encontrada" in msg:
                 msg += ("\n\nO Worker Cloudflare publicado não contém essas rotas; "
                         "publique a versão atual do backend mobile.")
             QMessageBox.warning(self.window, "Sugestões não enviadas", msg)
+            return False
 
     def pay_selected(self):
         ids = self._ids()
