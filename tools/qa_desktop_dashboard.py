@@ -180,6 +180,19 @@ qa_row = next(
     and int(window.tabela.item(i, 7).text()) == qa_id
 )
 
+# Dados obrigatórios inválidos não podem ser enviados nem gravados.
+with window.banco.conexao() as conn:
+    conn.execute("UPDATE contas SET valor=0 WHERE id=?", (qa_id,))
+assert features.send_for_payment(qa_id) is False, (
+    "Conta sem valor foi indevidamente marcada como enviada"
+)
+with window.banco.conexao() as conn:
+    row = conn.execute(
+        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+    assert not str(row["enviado_pagamento_em"] or "").strip()
+    conn.execute("UPDATE contas SET valor=123.45 WHERE id=?", (qa_id,))
+
 # Copiar mal-sucedido: jamais gravar uma data nem indicar sucesso.
 real_copy = features._copy_payment_payload
 features._copy_payment_payload = lambda _message: False
