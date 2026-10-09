@@ -374,8 +374,10 @@ class DesktopDashboard:
         mobile = self._find_action("Acesso mobile")
         if mobile:
             mobile.setText("Acesso mobile")
+            mobile.setToolTip("Acesso mobile")
             mobile.setIcon(_asset_icon("smartphone"))
             mobile.setIconSize(QSize(18, 18))
+            self._buttons["mobile"] = mobile
 
         # A pasta já possui seu comando real em Configurações; não ocupa
         # também espaço duplicado no cabeçalho compacto.
@@ -509,6 +511,7 @@ class DesktopDashboard:
             return
         width = max(0, self.window.centralWidget().width() - 32)
         count = 4 if width >= 1130 else 2 if width >= 460 else 1
+        self._adapt_header_to_width(width)
         if count == self._kpi_columns:
             return
         self._kpi_columns = count
@@ -524,6 +527,34 @@ class DesktopDashboard:
         rows = (len(self._kpi_cards) + count - 1) // count
         strip.setFixedHeight(rows * 62 + max(0, rows - 1) * 6)
         strip.updateGeometry()
+
+    def _adapt_header_to_width(self, width):
+        """Mantém operações acessíveis quando a janela fica estreita."""
+        compact = width < 890
+        for key, title in (("import", "Importar PDF"), ("mobile", "Acesso mobile")):
+            button = self._buttons.get(key)
+            if button is None:
+                continue
+            button.setText("" if compact else title)
+            button.setToolTip(title)
+            button.setMinimumWidth(38 if compact else 80)
+            button.setMaximumWidth(42 if compact else 16777215)
+        features = getattr(self, "_desktop_features", None)
+        if features is None:
+            return
+        filt = getattr(self.window, "filtro", None)
+        tags = getattr(features, "tag_filter", None)
+        search = getattr(self.window, "busca", None)
+        narrow = width < 760
+        if filt is not None:
+            filt.setFixedWidth(105 if narrow else 135)
+        if tags is not None:
+            tags.setFixedWidth(120 if narrow else 170)
+        if search is not None:
+            search.setMinimumWidth(95 if narrow else 260)
+        title = getattr(features, "_filter_title", None)
+        if title is not None:
+            title.setVisible(not narrow)
 
     def refresh_paid_month(self):
         if self._paid_month_card is None:
