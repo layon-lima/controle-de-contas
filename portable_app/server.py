@@ -732,32 +732,40 @@ def _pdf_destination(account_info, filename, account_id):
 
 
 def upload_pdf(account_id, data: bytes, filename: str):
-    if len(data) < 5 or not data.startswith(b"%PDF-"):
-        raise ValueError("O arquivo selecionado não é um PDF válido.")
-    if len(data) > 30 * 1024 * 1024:
-        raise ValueError("PDF acima de 30 MB.")
-    # A mesma pasta-base do desktop classico: BOLETOS ANO / MES.
-    # A origem do browser e um upload; salvamos diretamente no destino.
-    # O PDF anterior permanece intacto para evitar perda de documento.
+    # Anexar a conta existente também precisa da detecção reforçada de
+    # duplicidade. Sem isso um mesmo boleto poderia aparecer em duas contas.
+    pdf_workflows.check_pdf(data)
     with LOCK:
-        with connection() as conn:
-            info = account(conn, account_id)
-        target, organized = _pdf_destination(info, filename, account_id)
-        temp = target.with_name("." + target.stem + "_upload_" + secrets.token_hex(6) + ".part")
+        stage_dir = APP_DIR / "portable_staging"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        stage = stage_dir / (secrets.token_hex(12) + ".pdf")
+        stage.write_bytes(data)
+        target = None
+        temp = None
+        created = False
         try:
-            temp.write_bytes(data)
-            # Exclusivo: nunca substituir nome ja usado por outro boleto.
+            with connection() as conn:
+                info = account(conn, account_id)
+                pdf_workflows.check_duplicate(conn, stage, info, exclude_id=account_id)
+            target, organized = _pdf_destination(info, filename, account_id)
+            temp = target.with_name("." + target.stem + "_upload_" + secrets.token_hex(6) + ".part")
+            shutil.copyfile(stage, temp)
             if target.exists():
-                target, organized = _pdf_destination(info, filename, account_id)
+                raise RuntimeError("O nome do PDF já está em uso. Tente novamente.")
             os.replace(temp, target)
+            created = True
             with connection(write=True) as conn:
                 account(conn, account_id)
                 conn.execute("UPDATE contas SET pdf_conta=?,atualizado_em=? WHERE id=?",
                              (str(target), stamp(), account_id))
         except Exception:
-            temp.unlink(missing_ok=True)
-            target.unlink(missing_ok=True)
+            if temp is not None:
+                temp.unlink(missing_ok=True)
+            if created and target is not None:
+                target.unlink(missing_ok=True)
             raise
+        finally:
+            stage.unlink(missing_ok=True)
     return {"name": target.name, "folder": str(target.parent),
             "organized": organized}
 
