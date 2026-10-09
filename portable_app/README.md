@@ -1,6 +1,11 @@
 # Controle de Contas — versão portátil (experimental)
 
-Abra com **dois cliques** em `ABRIR_CONTROLE_DE_CONTAS.vbs`, na raiz do projeto.
+Depois que os arquivos da branch `develop` estiverem sincronizados na pasta
+`CONTROLE_CONTAS_GITHUB`, abra com **dois cliques** em
+`ABRIR_CONTROLE_DE_CONTAS.vbs`, na raiz do projeto. Esse iniciador não
+instala nada, não mostra um prompt de comando e tenta atualizar o código
+automaticamente a cada abertura. Se já houver um servidor portátil aberto,
+ele reinicia somente esse servidor para carregar a versão nova.
 
 A opção `START_CONTROLE_DE_CONTAS_PORTATIL.bat` fica como iniciador de diagnóstico.
 Não é necessário executar PyInstaller, Inno Setup, npm ou instalar outro banco.
