@@ -11,7 +11,7 @@ import sys
 import json
 import os
 
-from PySide6.QtCore import Qt, QSize, QRect, QPoint, QTimer
+from PySide6.QtCore import Qt, QSize, QRect, QPoint, QTimer, QObject, QEvent
 from PySide6 import QtSvg  # inclui plugin de SVG no build PyInstaller
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -228,6 +228,21 @@ class DueDateDelegate(QStyledItemDelegate):
         return size
 
 
+class _ResponsiveKpiWatcher(QObject):
+    """Mantém a grade de indicadores responsiva sem tocar nos dados do app."""
+
+    def __init__(self, dashboard):
+        super().__init__(dashboard.window)
+        self.dashboard = dashboard
+
+    def eventFilter(self, watched, event):
+        if (watched is self.dashboard.window.centralWidget()
+                and event.type() == QEvent.Type.Resize):
+            # Adiado para não modificar layout dentro da pilha de resize do Qt.
+            QTimer.singleShot(0, self.dashboard._layout_kpis)
+        return False
+
+
 class DesktopDashboard:
     """Somente composição visual; nunca substitui fluxo de pagamento ou PDF."""
 
@@ -301,7 +316,7 @@ class DesktopDashboard:
             if previous and previous.layout():
                 previous.layout().removeWidget(search)
             search.setParent(header)
-            search.setMinimumWidth(220)
+            search.setMinimumWidth(140)
             search.setMaximumWidth(650)
             search.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -439,37 +454,76 @@ class DesktopDashboard:
         self.refresh_paid_month()
 
     def _relocate_kpis_to_header(self):
-        """Reorganiza os quatro cards reais no espaço da pesquisa antiga."""
-        header = self.window.findChild(QFrame, "headerPanel")
-        if header is None or header.layout() is None:
-            return
-        strip = QWidget(header)
+        """Indicadores abaixo do cabeçalho, em grade fluida 4/2/1 colunas.
+
+        O cabeçalho horizontal anterior obrigava quatro cards, marca e ações
+        a ocupar uma única linha, impossível em janelas pequenas.
+        """
+        central = self.window.centralWidget()
+        outer = central.layout() if central is not None else None
+        if outer is None:
+            raise RuntimeError("Layout central não encontrado.")
+        strip = QWidget(central)
         strip.setObjectName("dashboardKpiStrip")
-        row = QHBoxLayout(strip)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(5)
+        strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        grid = QGridLayout(strip)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(7)
+        grid.setVerticalSpacing(6)
+        self._kpi_cards = []
         for card in list(getattr(self.window, "cards", {}).values())[:4]:
             if card is None:
                 continue
             previous = card.parentWidget()
-            if previous and previous.layout():
+            if previous is not None and previous.layout() is not None:
                 previous.layout().removeWidget(card)
             card.setParent(strip)
-            card.setMinimumSize(114, 60)
-            card.setMaximumHeight(63)
-            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            card.setMinimumSize(0, 57)
+            card.setMaximumHeight(62)
+            card.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
             body = card.layout()
-            if body:
-                body.setContentsMargins(49, 3, 3, 3)
-                body.setSpacing(0)
+            if body is not None:
+                body.setContentsMargins(48, 3, 7, 3)
+                body.setSpacing(1)
             icon = card.findChild(QLabel, "dashboardKpiIcon")
-            if icon:
-                icon.setGeometry(5, 9, 40, 40)
-            row.addWidget(card, 1)
+            if icon is not None:
+                icon.setGeometry(5, 8, 40, 40)
+            self._kpi_cards.append(card)
             card.show()
-        header.setFixedHeight(86)
-        header.layout().insertWidget(1, strip, 1)
+        self._kpi_strip = strip
+        self._kpi_grid = grid
+        self._kpi_columns = None
+        header = self.window.findChild(QFrame, "headerPanel")
+        index = outer.indexOf(header) if header is not None else -1
+        outer.insertWidget(index + 1 if index >= 0 else 0, strip)
         self._buttons["kpis"] = strip
+        self._kpi_watcher = _ResponsiveKpiWatcher(self)
+        central.installEventFilter(self._kpi_watcher)
+        self._layout_kpis()
+
+    def _layout_kpis(self):
+        strip = getattr(self, "_kpi_strip", None)
+        if strip is None:
+            return
+        width = max(0, self.window.centralWidget().width() - 32)
+        count = 4 if width >= 1130 else 2 if width >= 460 else 1
+        if count == self._kpi_columns:
+            return
+        self._kpi_columns = count
+        grid = self._kpi_grid
+        for card in self._kpi_cards:
+            grid.removeWidget(card)
+        for index, card in enumerate(self._kpi_cards):
+            grid.addWidget(card, index // count, index % count)
+        # Uma coluna deve sempre ocupar o espaço livre, sem distorcer os labels.
+        for column in range(4):
+            grid.setColumnStretch(column, 1 if column < count else 0)
+            grid.setColumnMinimumWidth(column, 0)
+        rows = (len(self._kpi_cards) + count - 1) // count
+        strip.setFixedHeight(rows * 62 + max(0, rows - 1) * 6)
+        strip.updateGeometry()
 
     def refresh_paid_month(self):
         if self._paid_month_card is None:
