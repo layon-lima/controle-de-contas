@@ -19,7 +19,7 @@ from typing import Callable
 MAX_PDF = 30 * 1024 * 1024
 PREVIEW_SECONDS = 30 * 60
 PREVIEW_LOCK = RLock()
-PREVIEWS: dict[str, tuple[Path, float, str]] = {}
+PREVIEWS: dict[str, tuple[Path, float, str, dict]] = {}
 
 
 def check_pdf(data: bytes):
@@ -39,7 +39,7 @@ def check_pdf(data: bytes):
 
 def _purge_expired():
     now = time.monotonic()
-    for ticket, (path, deadline, _filename) in list(PREVIEWS.items()):
+    for ticket, (path, deadline, _filename, _fields) in list(PREVIEWS.items()):
         if deadline < now:
             PREVIEWS.pop(ticket, None)
             path.unlink(missing_ok=True)
@@ -63,11 +63,11 @@ def preview(data: bytes, filename: str, appdir: Path,
         raise RuntimeError("Análise do PDF não retornou campos válidos.")
     with PREVIEW_LOCK:
         _purge_expired()
-        PREVIEWS[ticket] = (pdf, time.monotonic() + PREVIEW_SECONDS, filename)
+        PREVIEWS[ticket] = (pdf, time.monotonic() + PREVIEW_SECONDS, filename, read["fields"])
     return {"ticket": ticket, **read}
 
 
-def take_preview(ticket: str) -> tuple[Path, str]:
+def take_preview(ticket: str) -> tuple[Path, str, dict]:
     # Ticket é consumido uma única vez, mas se o salvamento falhar
     # mantemos a prévia para permitir corrigir campos e tentar novamente.
     if not isinstance(ticket, str) or len(ticket) > 128:
@@ -77,11 +77,11 @@ def take_preview(ticket: str) -> tuple[Path, str]:
         record = PREVIEWS.get(ticket)
         if record is None:
             raise ValueError("Prévia expirada. Envie o PDF novamente.")
-        path, deadline, filename = record
+        path, deadline, filename, fields = record
         if deadline < time.monotonic() or not path.is_file():
             PREVIEWS.pop(ticket, None)
             raise ValueError("Prévia expirada. Envie o PDF novamente.")
-        return path, filename
+        return path, filename, fields
 
 
 def consume_preview(ticket: str) -> None:
