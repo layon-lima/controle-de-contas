@@ -1,0 +1,48 @@
+name: Dashboard UI smoke
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'source_current/controle_contas/desktop_dashboard.py'
+      - 'source_current/controle_contas/cloud_mobile_ui.py'
+      - 'tools/qa_desktop_dashboard.py'
+      - '.github/workflows/dashboard-ui-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  qt-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Rebuild legacy base
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release_src | Out-Null
+          Expand-Archive -Path '.\releases\CONTROLE_CONTAS_1.4.4_SOURCE.zip' -DestinationPath '.\release_src' -Force
+          $b64 = Get-Content '.\releases\CONTROLE_CONTAS_1.4.5_OVERLAY.b64' -Raw
+          [IO.File]::WriteAllBytes('.\overlay_145.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path '.\overlay_145.zip' -DestinationPath '.\release_src' -Force
+          python '.\releases\apply_search_fix_1.4.7.py'
+          Copy-Item '.\source_current\app.py' '.\release_src\app.py' -Force
+          Get-ChildItem '.\source_current\controle_contas' -File -Filter '*.py' | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path '.\release_src\controle_contas' $_.Name) -Force
+          }
+          Copy-Item '.\tools\qa_desktop_dashboard.py' '.\release_src\qa_desktop_dashboard.py' -Force
+      - name: Install test requirements
+        shell: pwsh
+        run: |
+          python -m pip install -r '.\release_src\requirements.txt'
+      - name: Compile and exercise actual UI
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          Set-Location '.\release_src'
+          python -m py_compile '.\controle_contas\desktop_dashboard.py'
+          python -m py_compile '.\controle_contas\cloud_mobile_ui.py'
+          python '.\qa_desktop_dashboard.py'
