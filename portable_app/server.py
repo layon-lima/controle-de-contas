@@ -235,7 +235,7 @@ def set_document_folder(data):
     folder = Path(raw).expanduser()
     if not folder.is_absolute():
         raise ValueError("A pasta precisa ser um caminho completo do Windows.")
-    if re.fullmatch(r"BOLETOS\\s+\\d{4}", folder.name, flags=re.IGNORECASE):
+    if re.fullmatch(r"BOLETOS\s+\d{4}", folder.name, flags=re.IGNORECASE):
         folder = folder.parent
     # Não criar arquivos de conta nesta operação, somente guardar o destino.
     if not folder.is_dir():
