@@ -127,23 +127,126 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
         )
         self.assertNotIn('taskkill /IM "Controle de Contas.exe"', script)
 
-    def test_old_panel_backend_syncs_before_starting_install(self):
-        """Permite o fluxo de um clique mesmo com Python do painel ainda antigo."""
+    def test_single_button_panel_and_legacy_compatibility(self):
         root = Path(__file__).resolve().parents[1]
         html = (root / "controller" / "static" / "index.html").read_text(
             encoding="utf-8"
         )
-        start = html.index("async function installLocalDesktop(){")
-        end = html.index("async function syncPanel(){", start)
-        install = html[start:end]
-        self.assertIn("fetch('/api/health'", install)
-        self.assertIn("if(!backendAutoSync)", install)
+        self.assertEqual(html.count("<button "), 2)
+        self.assertIn('id="runBtn"', html)
+        self.assertIn('id="copyBtn"', html)
+        self.assertIn('role="progressbar"', html)
+        self.assertIn('id="serverStatus"', html)
+        self.assertNotIn('<pre', html)
+        self.assertNotIn('id="jobLog"', html)
+        self.assertNotIn('id="logs"', html)
+        self.assertIn("async function startLegacy()", html)
+        self.assertIn("async function runAll()", html)
+        self.assertIn("async function copyLog()", html)
+        self.assertIn("post('/api/update/full'", html.replace(
+            "request('/api/update/full'", "post('/api/update/full'"
+        ))
+        start = html.index("async function startLegacy(){")
+        end = html.index("async function runAll(){", start)
+        legacy = html[start:end]
         self.assertLess(
-            install.index("post('/api/panel/pull')"),
-            install.index("post('/api/update/local-desktop')"),
+            legacy.index("request('/api/panel/pull'"),
+            legacy.index("request('/api/update/local-desktop'"),
         )
-        self.assertIn("finally{", install)
-        self.assertIn("localInstallStarting", install)
+        self.assertIn("request('/api/diagnostics')", html)
+        self.assertIn("request('/api/mobile/deploy'", html)
+
+    def test_full_pipeline_waits_for_desktop_and_mobile(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tempdir:
+            dest = Path(tempdir)
+            called = []
+            class FakeProcess:
+                def wait(self):
+                    return 0
+            def popen(args, **kwargs):
+                called.append(str(args[-1]))
+                return FakeProcess()
+            fake_state = {
+                "running": False, "kind": "", "message": "",
+                "stage": "Aguardando", "progress": 0, "ok": None,
+                "started_at": "", "finished_at": "",
+            }
+            with patch.object(server, "ROOT", root), \
+                 patch.object(server, "APP_DATA_DIR", dest), \
+                 patch.object(server, "JOB_LOG_PATH", dest / "job.log"), \
+                 patch.object(server, "_JOB_STATE", fake_state), \
+                 patch.object(server, "_sync_develop_before_desktop_build",
+                              return_value="a" * 40), \
+                 patch.object(server.subprocess, "Popen", side_effect=popen):
+                server._run_full_update()
+                snap = server._job_snapshot()
+                self.assertTrue(snap["ok"])
+                self.assertEqual(snap["progress"], 100)
+                self.assertEqual(len(called), 2)
+                self.assertIn("BUILD_AND_INSTALL_DESKTOP.ps1", called[0])
+                self.assertIn("DEPLOY_MOBILE_PERMANENT_ACCESS.ps1", called[1])
+                self.assertIn("PC e mobile", server._diagnostic_log())
+
+    def test_desktop_failure_skips_mobile_and_never_reaches_100(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tempdir:
+            dest = Path(tempdir)
+            calls = []
+            class FailedProcess:
+                def wait(self):
+                    return 1
+            def popen(args, **kwargs):
+                calls.append(str(args[-1]))
+                return FailedProcess()
+            fake_state = {
+                "running": False, "kind": "", "message": "",
+                "stage": "Aguardando", "progress": 0, "ok": None,
+                "started_at": "", "finished_at": "",
+            }
+            with patch.object(server, "ROOT", root), \
+                 patch.object(server, "APP_DATA_DIR", dest), \
+                 patch.object(server, "JOB_LOG_PATH", dest / "job.log"), \
+                 patch.object(server, "_JOB_STATE", fake_state), \
+                 patch.object(server, "_sync_develop_before_desktop_build",
+                              return_value="a" * 40), \
+                 patch.object(server.subprocess, "Popen", side_effect=popen):
+                server._run_full_update()
+                state = server._job_snapshot()
+                self.assertFalse(state["ok"])
+                self.assertLess(state["progress"], 100)
+                self.assertEqual(len(calls), 1)
+                self.assertIn("A publicação mobile não foi iniciada.", state["message"])
+
+    def test_real_progress_markers_and_installer_wait(self):
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('CC_PROGRESS|30|', script)
+        self.assertIn('CC_PROGRESS|70|', script)
+        self.assertIn('CC_PROGRESS|88|', script)
+        self.assertIn('-PassThru -Wait', script)
+        self.assertIn('$Installation.ExitCode -ne 0', script)
+        self.assertIn('/api/update/full', (
+            root / "controller" / "server.py"
+        ).read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tempdir:
+            log = Path(tempdir) / "job.log"
+            log.write_text("CC_PROGRESS|70|Montando instalador\\n", encoding="utf-8")
+            state = {
+                "running": True, "kind": "full_update", "message": "Executando",
+                "stage": "Inicio", "progress": 15, "ok": None,
+            }
+            with patch.object(server, "JOB_LOG_PATH", log), \
+                 patch.object(server, "_JOB_STATE", state):
+                snap = server._job_snapshot()
+                self.assertEqual(snap["progress"], 70)
+                self.assertIn("Montando", snap["stage"])
+                with log.open("a", encoding="utf-8") as file:
+                    file.write("x" * 120_000)
+                persisted = server._job_snapshot()
+                self.assertEqual(persisted["progress"], 70)
 
     def test_job_never_starts_installer_when_sync_fails(self):
         with tempfile.TemporaryDirectory() as folder:
