@@ -139,6 +139,26 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("/icons/sent.svg", html)
         self.assertIn("window.__CONTAS_TOKEN__", js)
 
+    def test_shutdown_only_local_portable_service_with_token(self):
+        httpd = s.ThreadingHTTPServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        base = "http://127.0.0.1:" + str(httpd.server_port)
+        url = base + "/api/control/stop"
+        with self.assertRaises(HTTPError) as response:
+            urlopen(Request(url, data=b"{}", method="POST",
+                            headers={"Content-Type": "application/json"}),timeout=4)
+        self.assertEqual(response.exception.code, 403)
+        request = Request(
+            url, data=b"{}", method="POST",
+            headers={"Content-Type": "application/json", "X-Local-Token": s.TOKEN}
+        )
+        with urlopen(request, timeout=4) as reply:
+            self.assertTrue(json.load(reply)["ok"])
+        thread.join(timeout=3)
+        self.assertFalse(thread.is_alive(), "Servidor portátil não fechou")
+
     def test_http_api_rejects_request_without_token_or_from_other_origin(self):
         httpd = s.ThreadingHTTPServer(("127.0.0.1", 0), s.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
