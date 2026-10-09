@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import mimetypes
 import os
 import re
 import secrets
@@ -215,7 +216,9 @@ def remove_account(account_id):
         if paid:
             raise ValueError("Conta com pagamento registrado não pode ser excluída aqui.")
         # Não apagar PDF físico nem comprovantes ou arquivos sincronizados.
-        conn.execute("DELETE FROM cc_account_tags WHERE account_id=?", (account_id,))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='cc_account_tags'").fetchone():
+            conn.execute("DELETE FROM cc_account_tags WHERE account_id=?", (account_id,))
         conn.execute("DELETE FROM contas WHERE id=?", (account_id,))
 
 
@@ -373,6 +376,42 @@ def pdf_path(account_id, receipt=False):
     return path
 
 
+def upload_pdf(account_id, data: bytes, filename: str):
+    if len(data) < 5 or not data.startswith(b"%PDF-"):
+        raise ValueError("O arquivo selecionado não é um PDF válido.")
+    if len(data) > 30 * 1024 * 1024:
+        raise ValueError("PDF acima de 30 MB.")
+    folder = APP_DIR / "documents" / "portatil"
+    folder.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(filename).name)[:75]
+    if not safe.lower().endswith(".pdf"):
+        safe += ".pdf"
+    target = folder / (str(account_id) + "_" + secrets.token_hex(6) + "_" + safe)
+    # O arquivo só será referenciado após gravação e commit.
+    temp = target.with_suffix(".part")
+    try:
+        temp.write_bytes(data)
+        os.replace(temp, target)
+        with connection(write=True) as conn:
+            account(conn, account_id)
+            conn.execute("UPDATE contas SET pdf_conta=?,atualizado_em=? WHERE id=?",
+                         (str(target), stamp(), account_id))
+    except Exception:
+        temp.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        raise
+    return target.name
+
+
+def get_mobile_link():
+    sys.path.insert(0, str(ROOT / "source_current"))
+    from controle_contas.cloud_sync import get_cloud_private_link
+    link = get_cloud_private_link()
+    if not link:
+        raise ValueError("Acesso mobile ainda não está configurado.")
+    return link
+
+
 class ApiError(Exception):
     def __init__(self, code, message):
         self.code, self.message = code, message
@@ -407,8 +446,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(403, "Origem não autorizada.")
         if self.headers.get("X-Local-Token", "") != TOKEN:
             raise ApiError(403, "Sessão inválida. Reabra pelo iniciador.")
-        if writing and self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-            raise ApiError(415, "Envie JSON.")
+        if writing and self.headers.get("Content-Type", "").split(";")[0].strip() not in ("application/json", "application/pdf"):
+            raise ApiError(415, "Formato não aceito.")
     
     def _body(self):
         try:
@@ -450,6 +489,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self.command == "GET" and route == "/app.js":
+                self._send((WEB_DIR / "app.js").read_bytes(), mime="text/javascript; charset=utf-8")
+                return
             if self.command == "GET" and route.startswith("/icons/"):
                 name = route.removeprefix("/icons/")
                 if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}\.svg", name):
@@ -468,6 +510,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "GET" and route == "/api/health":
                     self._json({"ok": True, "db": DB_PATH.is_file()})
                     return
+                if self.command == "GET" and route == "/api/mobile-link":
+                    self._json({"ok": True, "url": get_mobile_link()})
+                    return
                 if len(parts) >= 3 and parts[:2] == ["api", "accounts"]:
                     try:
                         account_id = int(parts[2])
@@ -481,6 +526,17 @@ class Handler(BaseHTTPRequestHandler):
                         path = pdf_path(account_id, receipt=receipt)
                         content = path.read_bytes()
                         self._send(content, mime="application/pdf")
+                        return
+                    if self.command == "POST" and op == "upload-pdf":
+                        try:
+                            size = int(self.headers.get("Content-Length") or 0)
+                        except ValueError as exc:
+                            raise ApiError(400, "Tamanho inválido.") from exc
+                        if size < 5 or size > 30 * 1024 * 1024:
+                            raise ApiError(413, "O PDF deve ter até 30 MB.")
+                        result = upload_pdf(account_id, self.rfile.read(size),
+                                            self.headers.get("X-Pdf-Name") or "documento.pdf")
+                        self._json({"ok": True, "name": result})
                         return
                     if self.command == "POST":
                         data = self._body()
