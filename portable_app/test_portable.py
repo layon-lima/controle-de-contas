@@ -224,6 +224,113 @@ class PortableDataTests(unittest.TestCase):
         self.db.rename(moved)
         moved.rename(self.db)
 
+    def _real_pdf(self, title="Teste de PDF"):
+        import fitz
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), title)
+        content = doc.tobytes()
+        doc.close()
+        return content
+
+    def test_ocr_preview_requires_confirmation_and_preserves_corrected_fields(self):
+        """Motor OCR não grava registros; cadastro e PDF só após confirmação."""
+        from portable_app import pdf_workflows as flow
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        data = self._real_pdf("Beneficiario ORIGINAL TESTE")
+        with patch("portable_app.pdf_intelligence.analyze_pdf", return_value={
+            "engine": "desktop-ocr-v2",
+            "fields": {"fornecedor": "ORIGINAL", "valor": 99.50,
+                       "vencimento": "2026-11-07", "observacoes": "PDF DE TESTE.pdf"},
+            "insecure_fields": ["recebedor"],
+        }):
+            preview = flow.preview(
+                data, "documento.pdf", self.root,
+                lambda _: {"fields": {"fornecedor": "ORIGINAL", "valor": 99.50,
+                                      "vencimento": "2026-11-07",
+                                      "observacoes": "PDF DE TESTE.pdf"}}
+            )
+        self.assertEqual(s.list_accounts()["count"], 1)
+        self.assertTrue((self.root / "portable_staging").exists())
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed",
+                          return_value={"learned": True}) as learn:
+            result = s.create_account_from_preview({
+                "ticket": preview["ticket"],
+                "fornecedor": "CORRIGIDO PELO USUARIO",
+                "valor": "99.50", "vencimento": "2026-11-07",
+                "observacoes": "BOLETO REVISADO.pdf",
+            })
+        self.assertEqual(s.list_accounts()["count"], 2)
+        with s.connection() as conn:
+            info = s.account(conn, result["id"])
+        self.assertEqual(info["fornecedor"], "CORRIGIDO PELO USUARIO")
+        self.assertEqual(Path(info["pdf_conta"]).read_bytes(), data)
+        self.assertTrue(result["learning"]["learned"])
+        self.assertEqual(learn.call_args.args[1]["fornecedor"], "CORRIGIDO PELO USUARIO")
+        with self.assertRaises(ValueError):
+            s.create_account_from_preview({
+                "ticket": preview["ticket"], "fornecedor": "OUTRA",
+                "valor": 99, "vencimento": "2026-11-07"
+            })
+
+    def test_preview_same_pdf_is_blocked_even_with_different_fields(self):
+        from portable_app import pdf_workflows as flow
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        data = self._real_pdf("Mesmo boleto")
+        def analyzer(_):
+            return {"fields": {"fornecedor": "EXEMPLO", "valor": 20.0,
+                               "vencimento": "2026-11-20"}}
+        first = flow.preview(data, "repetido.pdf", self.root, analyzer)
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={}):
+            s.create_account_from_preview({
+                "ticket": first["ticket"], **first["fields"]
+            })
+        second = flow.preview(data, "repetido.pdf", self.root, analyzer)
+        with self.assertRaisesRegex(ValueError, "já está cadastrado"):
+            s.create_account_from_preview({
+                "ticket": second["ticket"], "fornecedor": "NOME DIFERENTE",
+                "valor": 99.99, "vencimento": "2028-02-01"
+            })
+        self.assertEqual(s.list_accounts()["count"], 2)
+
+    def test_payment_with_receipt_merges_pdf_and_disallows_second_payment(self):
+        bill = self._real_pdf("BOLETO ORIGINAL")
+        receipt = self._real_pdf("COMPROVANTE DE PAGAMENTO")
+        s.upload_pdf(1, bill, "boleto.pdf")
+        first = s.pdf_path(1)
+        original = first.read_bytes()
+        result = s.register_payment_with_receipt(1, date.today().isoformat(), receipt)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["pages"], 2)
+        import fitz
+        with fitz.open(str(s.pdf_path(1))) as doc:
+            self.assertEqual(doc.page_count, 2)
+            self.assertIn("BOLETO ORIGINAL", doc[0].get_text())
+            self.assertIn("COMPROVANTE DE PAGAMENTO", doc[1].get_text())
+        self.assertEqual(s.pdf_path(1, receipt=True), s.pdf_path(1))
+        new_contents = first.read_bytes()
+        self.assertNotEqual(new_contents, original)
+        with self.assertRaisesRegex(ValueError, "já está paga"):
+            s.register_payment_with_receipt(1, date.today().isoformat(), receipt)
+        self.assertEqual(first.read_bytes(), new_contents)
+        self.assertEqual(s.list_accounts()["accounts"][0]["status"], "Paga")
+
+    def test_receipt_only_creates_file_when_bill_pdf_is_absent(self):
+        receipt = self._real_pdf("COMPROVANTE SEM BOLETO")
+        result = s.register_payment_with_receipt(1, date.today().isoformat(), receipt)
+        self.assertEqual(result["pages"], 1)
+        self.assertTrue(s.pdf_path(1).exists())
+        self.assertEqual(s.pdf_path(1, receipt=True), s.pdf_path(1))
+
+    def test_reader_does_not_fabricate_ocr_without_original_engine(self):
+        from portable_app import pdf_intelligence as intel
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(intel.ReaderUnavailable):
+                intel.find_legacy_engine(Path(tmp))
+        self.assertEqual(s.list_accounts()["count"], 1)
+
     def test_http_api_rejects_request_without_token_or_from_other_origin(self):
         httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
