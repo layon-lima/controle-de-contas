@@ -935,6 +935,11 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError as exc:
                         raise ApiError(400, "ID inválido.") from exc
                     op = parts[3] if len(parts) == 4 else ""
+                    if self.command == "GET" and op == "analyze":
+                        original = pdf_path(account_id)
+                        self._json({"ok": True,
+                                    **pdf_intelligence.analyze_pdf(original)})
+                        return
                     if self.command == "GET" and op == "pdf":
                         receipt = urlsplit(self.path).query == "receipt=1"
                         path = pdf_path(account_id, receipt=receipt)
