@@ -304,11 +304,11 @@ class DesktopFeatures:
             if not account_id:
                 return
             if what == "Abrir conta":
-                self.open_pdf(account_id)
+                return self.open_pdf(account_id)
             elif what == "Abrir comprovante":
-                self.open_pdf(account_id, receipt=True)
+                return self.open_pdf(account_id, receipt=True)
             elif what == "Sugerir para pagamento":
-                self.suggest([account_id])
+                return self.suggest([account_id])
             elif what == "Enviar para pagamento":
                 return self.send_for_payment(account_id)
             elif what == "Registrar pagamento":
