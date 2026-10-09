@@ -455,6 +455,9 @@ class DesktopDashboard:
             return
 
         layout = bulk.layout()
+        # Descarta a paleta legada aplicada diretamente à barra:
+        # senão ela tem prioridade sobre o tema moderno do QMainWindow.
+        bulk.setStyleSheet("")
         layout.setContentsMargins(6, 5, 6, 5)
         layout.setSpacing(7)
         bulk.setFixedHeight(51)
