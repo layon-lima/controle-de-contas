@@ -462,50 +462,36 @@ class DesktopDashboard:
 
         nav = QFrame(central)
         nav.setObjectName("bottomNavigation")
-        nav.setFixedHeight(64)
+        nav.setFixedSize(294, 57)
         row = QHBoxLayout(nav)
-        row.setContentsMargins(10, 5, 10, 5)
-        row.setSpacing(6)
-
-        items = (
-            ("overview", "Visão geral", "home", lambda: self._navigate("overview")),
-            ("accounts", "Contas", "accounts", lambda: self._navigate("accounts")),
-            ("payments", "Pagamentos", "payments", lambda: self._navigate("payments")),
-            ("reports", "Relatórios", "reports", self._reports),
-            ("settings", "Configurações", "settings", self._settings),
-        )
-        for key, caption, icon_name, callback in items:
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(5)
+        for key, caption, icon_name in (
+            ("accounts", "Em aberto", "accounts"),
+            ("payments", "Pagas", "payments"),
+        ):
             button = QPushButton(caption, nav)
             button.setIcon(_asset_icon(icon_name))
-            button.setIconSize(QSize(19, 19))
+            button.setIconSize(QSize(18, 18))
             button.setObjectName("bottomNavButton")
             button.setProperty("dashboardAction", True)
-            button.clicked.connect(callback)
-            button.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-            )
-            row.addWidget(button, 1)
+            button.setFixedSize(135, 46)
+            button.clicked.connect(lambda _=False, mode=key: self._navigate(mode))
+            row.addWidget(button)
             self._buttons[key] = button
-        layout.addWidget(nav, 0)
+        layout.addWidget(nav, 0, Qt.AlignmentFlag.AlignHCenter)
         self._buttons["bottom"] = nav
-        self._navigate("overview")
+        self._navigate("accounts")
 
     def _navigate(self, mode):
-        w = self.window
-        if mode == "payments":
-            w.abas.setCurrentIndex(1)
-        else:
-            w.abas.setCurrentIndex(0)
-        # Contas e Pagamentos priorizam a listagem e maximizam a área útil.
-        show_summary = mode == "overview"
-        for card in getattr(w, "cards", {}).values():
-            card.setVisible(show_summary)
-        if self._paid_month_card:
-            self._paid_month_card.setVisible(show_summary)
-        for key in ("overview", "accounts", "payments"):
+        target = 1 if mode == "payments" else 0
+        self.window.abas.setCurrentIndex(target)
+        for card in getattr(self.window, "cards", {}).values():
+            card.show()
+        for key in ("accounts", "payments"):
             button = self._buttons.get(key)
             if button:
-                button.setProperty("active", key == mode)
+                button.setProperty("active", key == ("payments" if target else "accounts"))
                 button.style().unpolish(button)
                 button.style().polish(button)
 
