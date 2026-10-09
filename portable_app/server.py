@@ -396,31 +396,101 @@ def pdf_path(account_id, receipt=False):
     return path
 
 
+# Repete a organizacao documental configurada no app legado.
+# A configuracao e compartilhada, mas nao precisamos carregar Qt nem patches.
+MESES = (
+    "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
+    "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO",
+)
+
+
+def _pasta_documentos_configurada():
+    path = APP_DIR / "config_documentos.json"
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+        raw = str(config.get("pasta_base") or "").strip()
+        if not raw:
+            return None
+        base = Path(raw).expanduser()
+        if base.name.upper().startswith("BOLETOS ") and re.fullmatch(
+            r"BOLETOS\\s+\\d{4}", base.name, flags=re.IGNORECASE
+        ):
+            base = base.parent
+        return base
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def _nome_pdf_organizado(observacoes, fornecedor):
+    # Mesmo criterio do legado: observacoes digitadas viram nome do boleto.
+    text = str(observacoes or fornecedor or "BOLETO")
+    text = re.sub(r'[<>:"/\\|?*\\x00-\\x1f]', " ", text)
+    text = " ".join(text.split()).strip().rstrip(".")
+    if text.casefold().endswith(".pdf"):
+        text = text[:-4].rstrip()
+    text = text[:120].strip() or "BOLETO"
+    if text.upper() in {"CON", "PRN", "AUX", "NUL", "COM1", "LPT1"}:
+        text = "BOLETO " + text
+    return text + ".pdf"
+
+
+def _pdf_destination(account_info, filename, account_id):
+    base = _pasta_documentos_configurada()
+    if base:
+        try:
+            due = date.fromisoformat(str(account_info["vencimento"])[:10])
+        except (ValueError, KeyError) as exc:
+            raise ValueError("Vencimento invalido para organizar o PDF.") from exc
+        destination = base / f"BOLETOS {due.year}" / f"{due.month:02d} - {MESES[due.month - 1]}"
+        name = _nome_pdf_organizado(
+            account_info.get("observacoes"), account_info.get("fornecedor")
+        )
+    else:
+        # Sem configuracao antiga, preservar importacao numa pasta protegida
+        # sem inventar nova pasta-base para BOLETOS.
+        destination = APP_DIR / "documents" / "portatil"
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(filename).name)[:75]
+        if not safe.lower().endswith(".pdf"):
+            safe += ".pdf"
+        name = str(account_id) + "_" + safe
+    destination.mkdir(parents=True, exist_ok=True)
+    target = destination / name
+    index = 1
+    while target.exists():
+        target = destination / (Path(name).stem + f" ({index})" + ".pdf")
+        index += 1
+    return target, base is not None
+
+
 def upload_pdf(account_id, data: bytes, filename: str):
     if len(data) < 5 or not data.startswith(b"%PDF-"):
         raise ValueError("O arquivo selecionado não é um PDF válido.")
     if len(data) > 30 * 1024 * 1024:
         raise ValueError("PDF acima de 30 MB.")
-    folder = APP_DIR / "documents" / "portatil"
-    folder.mkdir(parents=True, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(filename).name)[:75]
-    if not safe.lower().endswith(".pdf"):
-        safe += ".pdf"
-    target = folder / (str(account_id) + "_" + secrets.token_hex(6) + "_" + safe)
-    # O arquivo só será referenciado após gravação e commit.
-    temp = target.with_suffix(".part")
-    try:
-        temp.write_bytes(data)
-        os.replace(temp, target)
-        with connection(write=True) as conn:
-            account(conn, account_id)
-            conn.execute("UPDATE contas SET pdf_conta=?,atualizado_em=? WHERE id=?",
-                         (str(target), stamp(), account_id))
-    except Exception:
-        temp.unlink(missing_ok=True)
-        target.unlink(missing_ok=True)
-        raise
-    return target.name
+    # A mesma pasta-base do desktop classico: BOLETOS ANO / MES.
+    # A origem do browser e um upload; salvamos diretamente no destino.
+    # O PDF anterior permanece intacto para evitar perda de documento.
+    with LOCK:
+        with connection() as conn:
+            info = account(conn, account_id)
+        target, organized = _pdf_destination(info, filename, account_id)
+        temp = target.with_name("." + target.stem + "_upload_" + secrets.token_hex(6) + ".part")
+        try:
+            temp.write_bytes(data)
+            # Exclusivo: nunca substituir nome ja usado por outro boleto.
+            if target.exists():
+                target, organized = _pdf_destination(info, filename, account_id)
+            os.replace(temp, target)
+            with connection(write=True) as conn:
+                account(conn, account_id)
+                conn.execute("UPDATE contas SET pdf_conta=?,atualizado_em=? WHERE id=?",
+                             (str(target), stamp(), account_id))
+        except Exception:
+            temp.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
+            raise
+    return {"name": target.name, "folder": str(target.parent),
+            "organized": organized}
 
 
 def get_mobile_link():
@@ -576,7 +646,7 @@ class Handler(BaseHTTPRequestHandler):
                         from urllib.parse import unquote
                         filename = unquote(self.headers.get("X-Pdf-Name") or "documento.pdf")
                         result = upload_pdf(account_id, self.rfile.read(size), filename)
-                        self._json({"ok": True, "name": result})
+                        self._json({"ok": True, **result})
                         return
                     if self.command == "POST":
                         data = self._body()
