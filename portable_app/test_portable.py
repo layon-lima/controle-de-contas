@@ -56,6 +56,7 @@ class PortableDataTests(unittest.TestCase):
             patch.object(s, "APP_DIR", self.root),
             patch.object(s, "BACKUP_DONE", False),
             patch.object(s, "PENDING", {}),
+            patch.object(s, "PENDING_BATCH", {}),
         ]
         for p in self.patchers:
             p.start()
@@ -223,6 +224,51 @@ class PortableDataTests(unittest.TestCase):
         moved = self.db.with_suffix(".moved")
         self.db.rename(moved)
         moved.rename(self.db)
+
+    def test_batch_send_requires_clipboard_confirmation(self):
+        prepared = s.prepare_batch_send({"ids": [1]})
+        self.assertIn("VALOR: R$ 123,45", prepared["text"])
+        with s.connection() as conn:
+            self.assertFalse(s.account(conn, 1)["enviado_pagamento_em"])
+        with self.assertRaises(ValueError):
+            s.confirm_batch_send({"nonce": "invalido"})
+        confirmed = s.confirm_batch_send({"nonce": prepared["nonce"]})
+        self.assertEqual(confirmed["count"], 1)
+        with s.connection() as conn:
+            self.assertTrue(s.account(conn, 1)["enviado_pagamento_em"])
+        with self.assertRaises(ValueError):
+            s.confirm_batch_send({"nonce": prepared["nonce"]})
+
+    def test_batch_pay_keeps_real_results_and_does_not_duplicate(self):
+        new_id = s.create_account({
+            "fornecedor": "SEGUNDO", "valor": 88.0,
+            "vencimento": "2026-12-12"
+        })
+        result = s.batch_pay({
+            "ids": [1, new_id], "data_pagamento": date.today().isoformat()
+        })
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["errors"], {})
+        repeated = s.batch_pay({
+            "ids": [1, new_id], "data_pagamento": date.today().isoformat()
+        })
+        self.assertEqual(repeated["count"], 0)
+        self.assertEqual(len(repeated["errors"]), 2)
+
+    def test_folder_config_shared_with_desktop_and_keeps_existing_folder(self):
+        target = self.root / "PASTA BOLETOS"
+        target.mkdir()
+        info = s.set_document_folder({"folder": str(target)})
+        self.assertTrue(info["configured"])
+        self.assertEqual(info["folder"], str(target))
+        self.assertEqual(s.get_document_folder()["folder"], str(target))
+        self.assertEqual(
+            json.loads((self.root / "config_documentos.json").read_text(
+                encoding="utf-8"))["pasta_base"], str(target)
+        )
+        with self.assertRaises(FileNotFoundError):
+            s.set_document_folder({"folder": str(self.root / "inexistente")})
+        self.assertEqual(s.get_document_folder()["folder"], str(target))
 
     def _real_pdf(self, title="Teste de PDF"):
         import fitz
