@@ -11,7 +11,7 @@ import sys
 import json
 import os
 
-from PySide6.QtCore import Qt, QSize, QRect, QTimer
+from PySide6.QtCore import Qt, QSize, QRect, QPoint, QTimer
 from PySide6 import QtSvg  # inclui plugin de SVG no build PyInstaller
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -106,6 +106,8 @@ QTableWidget QToolButton {
     font-size: 15px; padding: 0;
 }
 QTableWidget QToolButton:hover { background: #eaf3ff; border-color: #9fc4f5; }
+QTableWidget QToolButton:pressed { background:#cde1fa; border-color:#5c9be7; }
+QTableWidget QToolButton:disabled { background:#e8f2ff; border-color:#8eb5e8; }
 QScrollBar:vertical { background: #f9fbfe; width: 10px; }
 QScrollBar::handle:vertical { background: #c6d4e4; min-height: 35px; border-radius: 5px; }
 """
@@ -726,6 +728,108 @@ class DesktopDashboard:
         else:
             self._click_original(action)
 
+    def _show_action_feedback(self, message, result="success"):
+        """Notificação dentro da listagem, sem abrir caixas de confirmação."""
+        root = self.window.centralWidget()
+        if root is None:
+            return
+        notice = getattr(self, "_action_notice", None)
+        if notice is None:
+            notice = QLabel(root)
+            notice.setObjectName("dashboardActionFeedback")
+            notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            notice.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self._action_notice = notice
+            timer = QTimer(root)
+            timer.setSingleShot(True)
+            timer.timeout.connect(notice.hide)
+            self._action_notice_timer = timer
+        bg, fg, border, symbol = {
+            "success": ("#e5f7eb", "#08653c", "#9cdbb7", "✓"),
+            "waiting": ("#eaf3ff", "#225c98", "#a8c9f5", "●"),
+            "error": ("#fff0f0", "#a22534", "#e8a4a9", "!"),
+        }.get(result, ("#eaf3ff", "#225c98", "#a8c9f5", "●"))
+        notice.setText(symbol + "  " + message)
+        notice.setStyleSheet(
+            f"QLabel#dashboardActionFeedback{{background:{bg};color:{fg};"
+            f"border:1px solid {border};border-radius:10px;"
+            "font-family:'Segoe UI';font-size:12px;font-weight:700;padding:8px 13px;}"
+        )
+        table = self.window.tabela
+        origin = table.mapTo(root, QPoint(0, 0))
+        width = min(495, max(240, table.width() - 20))
+        x = max(4, min(root.width() - width - 8, origin.x() + table.width() - width - 12))
+        notice.setGeometry(x, max(6, origin.y() + 9), width, 41)
+        notice.show()
+        notice.raise_()
+        self._action_notice_timer.start(3900)
+
+    def _dispatch_row_action(self, button, row, action):
+        """Feedback imediato no ícone e resultado após chamar a ação real."""
+        try:
+            button.setEnabled(False)
+            button.setStyleSheet(
+                "QToolButton{background:#e6f2ff;border:1px solid #79ace8;"
+                "border-radius:7px;}"
+            )
+            button.setToolTip("Executando: " + action)
+        except RuntimeError:
+            return
+        self._show_action_feedback(action + "…", "waiting")
+
+        def execute():
+            try:
+                result = self._activate_row(row, action)
+            except Exception as exc:
+                self._show_action_feedback(
+                    action + ": " + str(exc), "error"
+                )
+                result = False
+            if result is False:
+                color = "#fee4e7"
+                msg = action + " não concluído."
+                state = "error"
+            elif result is None:
+                color = "#e6f2ff"
+                msg = {
+                    "Registrar pagamento": "Registro de pagamento aberto. Confirme na janela.",
+                    "TAGs": "Gerenciador de TAGs acionado.",
+                    "Editar": "Edição da conta acionada.",
+                    "Excluir": "Exclusão: aguardando sua decisão.",
+                    "Enviar para pagamento": "Aguardando cópia dos dados para pagamento.",
+                }.get(action, action + " acionado.")
+                state = "waiting"
+            else:
+                color = "#e0f7e8"
+                msg = {
+                    "Enviar para pagamento": "Dados copiados e envio registrado.",
+                    "Sugerir para pagamento": "Conta sugerida para pagamento.",
+                    "Abrir conta": "PDF da conta aberto.",
+                    "Abrir comprovante": "Comprovante aberto.",
+                }.get(action, action + " concluído.")
+                state = "success"
+            self._show_action_feedback(msg, state)
+            try:
+                button.setEnabled(True)
+                button.setStyleSheet(
+                    f"QToolButton{{background:{color};border:1px solid "
+                    "#b6cce0;border-radius:7px;}"
+                )
+                button.setToolTip(msg)
+                QTimer.singleShot(2300, lambda: self._reset_action_icon(button))
+            except RuntimeError:
+                pass
+
+        # O Qt repinta o estado de processamento antes de executar a rotina.
+        QTimer.singleShot(0, execute)
+
+    @staticmethod
+    def _reset_action_icon(button):
+        try:
+            button.setStyleSheet("")
+        except RuntimeError:
+            pass
+
     def _initials_icon(self, name):
         words = [part for part in str(name or "").split() if part]
         letters = (
@@ -849,7 +953,8 @@ class DesktopDashboard:
                     button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
                 else:
                     button.clicked.connect(
-                        lambda _=False, r=row, a=action: self._activate_row(r, a)
+                        lambda _=False, b=button, r=row, a=action:
+                            self._dispatch_row_action(b, r, a)
                     )
                 actions.addWidget(button)
             table.setCellWidget(row, 9, cell)
