@@ -226,22 +226,23 @@ def create_account(data):
 def create_account_from_preview(data):
     """Confirma campos corrigidos pelo usuário, grava PDF e cadastro atomicamente."""
     ticket = str(data.get("ticket") or "")
-    source, source_name = pdf_workflows.take_preview(ticket)
+    source, source_name, predicted = pdf_workflows.take_preview(ticket)
     fields = normalize(data)
-    # Primeiro validar conteúdo contra todos os PDFs existentes.
+    # Arquivo original + banco são confirmados como uma unidade.
     with LOCK:
-        with connection(write=True) as conn:
-            pdf_workflows.check_duplicate(conn, source, fields)
-            target, organized = _pdf_destination(fields, source_name, None)
-            temp = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".part")
-            try:
+        temp = None
+        target = None
+        created = False
+        try:
+            with connection(write=True) as conn:
+                pdf_workflows.check_duplicate(conn, source, fields)
+                target, organized = _pdf_destination(fields, source_name, None)
+                temp = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".part")
                 shutil.copyfile(source, temp)
-                # Não alterar PDFs de outros registros em nenhuma hipótese.
                 if target.exists():
-                    target, organized = _pdf_destination(fields, source_name, None)
-                if target.exists():
-                    raise RuntimeError("O PDF de destino já existe.")
+                    raise RuntimeError("Arquivo existente no destino: a importação foi cancelada.")
                 os.replace(temp, target)
+                created = True
                 columns = ",".join(FIELDS)
                 marks = ",".join("?" for _ in FIELDS)
                 result = conn.execute(
@@ -250,15 +251,24 @@ def create_account_from_preview(data):
                     [fields[key] for key in FIELDS] + [stamp(), stamp(), str(target)],
                 )
                 account_id = int(result.lastrowid)
-            except Exception:
+        except Exception:
+            if temp is not None:
                 temp.unlink(missing_ok=True)
-                # O arquivo foi criado por nós e a operação falhou, sem excluir originais.
-                if 'target' in locals():
-                    target.unlink(missing_ok=True)
-                raise
+            if created and target is not None:
+                target.unlink(missing_ok=True)
+            raise
     pdf_workflows.consume_preview(ticket)
+    # A mesma aprendizagem V2 do desktop, após os dados serem confirmados.
+    # Um problema de aprendizado NUNCA perde ou duplica o boleto recém-gravado.
+    learning = {}
+    warning = ""
+    try:
+        learning = pdf_intelligence.learn_from_confirmed(target, fields, predicted)
+    except Exception as exc:
+        warning = "Cadastro salvo; aprendizado de layout pendente: " + str(exc)
     return {"id": account_id, "name": target.name,
-            "folder": str(target.parent), "organized": organized}
+            "folder": str(target.parent), "organized": organized,
+            "learning": learning, "warning": warning}
 
 
 def edit_account(account_id, data):
