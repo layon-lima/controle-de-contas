@@ -217,8 +217,14 @@ if (-not (Test-Path -LiteralPath $LaunchExe -PathType Leaf)) {
 }
 # Uma instalacao so esta concluida quando o assistente Inno Setup terminou.
 # -Wait impede o painel de dar falso positivo de instalacao bem sucedida.
-$Installation = Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -PassThru -Wait -ErrorAction Stop
-if ($null -eq $Installation -or $Installation.ExitCode -ne 0) {
+$Installation = Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -PassThru -ErrorAction Stop
+if ($null -eq $Installation) {
+    throw "O atualizador nao iniciou corretamente."
+}
+# Espera apenas o assistente Inno Setup; Start-Process -Wait aguardaria
+# tambem o app que o instalador reabre automaticamente no final.
+$Installation.WaitForExit()
+if ($Installation.ExitCode -ne 0) {
     $code = if ($null -eq $Installation) { "desconhecido" } else { $Installation.ExitCode }
     throw "O instalador nao concluiu com sucesso (codigo $code)."
 }
