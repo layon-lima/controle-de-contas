@@ -7,7 +7,8 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 if (-not $Version) {
     $Version = (Get-Content (Join-Path $Root "VERSION") -Raw).Trim()
 }
-if ($Version -notmatch '^\d+\.\d+\.\d+
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Versão inválida: $Version" }
+$Work = Join-Path $Root ".local_build_$($Version.Replace('.','_'))"
 
 Write-Host "=== Controle de Contas $Version - build local ==="
 Write-Host "Raiz: $Root"
