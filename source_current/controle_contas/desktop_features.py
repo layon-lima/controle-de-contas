@@ -28,9 +28,6 @@ class DesktopFeatures:
         self._patch_row_dispatch()
         self._patch_decorate()
         self.window.atualizar_tabela()
-        self.dashboard._adapt_header_to_width(
-            max(0, self.window.centralWidget().width() - 32)
-        )
 
     def _build_tag_tables(self):
         with self.window.banco.conexao() as conn:
@@ -577,4 +574,8 @@ class DesktopFeatures:
 def install_desktop_features(dashboard):
     if getattr(dashboard, "_desktop_features", None) is None:
         dashboard._desktop_features = DesktopFeatures(dashboard)
+        # Só agora a instância está publicada e todos os filtros existem.
+        dashboard._adapt_header_to_width(
+            max(0, dashboard.window.centralWidget().width() - 32)
+        )
     return dashboard._desktop_features
