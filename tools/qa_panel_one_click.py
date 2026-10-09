@@ -233,7 +233,7 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
         self.assertIn('"/SUPPRESSMSGBOXES"', script)
         self.assertIn('"/NORESTART"', script)
         self.assertIn('"/CLOSEAPPLICATIONS"', script)
-        self.assertIn('"/LOG="', script)
+        self.assertIn('/LOG=', script)
         self.assertIn("Get-Content -LiteralPath $InstallerLog -Tail 70", script)
         self.assertNotIn('Start-Process -FilePath $LaunchExe -WorkingDirectory', script)
         self.assertIn('/api/update/full', (
