@@ -113,6 +113,7 @@ class DesktopFeatures:
             search.setObjectName("desktopSearch")
             search.setPlaceholderText("Pesquisar fornecedor, valor, descrição ou vencimento...")
             lay.addWidget(search, 1)
+            search.show()
 
         parent = w.tabela.parentWidget()
         listing = parent.layout() if parent else None
@@ -292,8 +293,12 @@ class DesktopFeatures:
                 self.open_pdf(account_id)
             elif what == "Abrir comprovante":
                 self.open_pdf(account_id, receipt=True)
-            elif what == "Enviar para pagamento":
+            elif what == "Sugerir para pagamento":
                 self.suggest([account_id])
+            elif what == "Enviar para pagamento":
+                self.mark_sent(account_id)
+            elif what == "Registrar pagamento":
+                self.window.registrar_pagamento()
             elif what == "TAGs":
                 self.manage_tags([account_id])
             elif what == "Marcar como enviado":
@@ -343,6 +348,12 @@ class DesktopFeatures:
                 (stamp, stamp, int(account_id))
             )
         self.window.atualizar_tabela()
+        self._flash("Envio para pagamento registrado.")
+
+    def _flash(self, message):
+        status = self.window.statusBar() if hasattr(self.window, "statusBar") else None
+        if status:
+            status.showMessage(message, 4200)
 
     def suggest_checked(self):
         ids = self._ids()
@@ -374,10 +385,7 @@ class DesktopFeatures:
                     result = suggest_payment(account_id)
                     if result.get("ok") is False:
                         raise RuntimeError(str(result.get("erro") or "Falha remota."))
-            QMessageBox.information(
-                self.window, "Sugestões confirmadas",
-                f"{len(ids)} conta(s) sugerida(s) para pagamento."
-            )
+            self._flash(f"{len(ids)} conta(s) sugerida(s) para pagamento.")
             self.window.atualizar_tabela()
         except Exception as exc:
             msg = str(exc)
