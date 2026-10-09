@@ -123,8 +123,8 @@ async function installLocalDesktop(){
 async function syncPanel(){
   const j=await post('/api/panel/pull');
   if(j&&j.ok){
-    toast('Painel sincronizado. Reiniciando backend...',true);
-    setTimeout(()=>location.reload(),3200);
+    toast('Painel sincronizado sem derrubar o servidor.',true);
+    setTimeout(()=>location.reload(),900);
   }
 }
 async function deployMobile(){
@@ -140,9 +140,13 @@ async function loadJob(){
     $('jobLog').textContent=(j.log_tail||[]).join('\n')||j.message||'Sem operações recentes.';
   }catch(e){}
 }
+let panelOffline=false;
 async function load(){
   try{
-    const r=await fetch('/api/status',{cache:'no-store'}); const s=await r.json();
+    const r=await fetch('/api/status',{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const s=await r.json();
+    panelOffline=false;
     $('clock').textContent='Painel '+s.controller_version+' • '+s.server_time;
     $('appState').textContent=s.app_running?'ABERTO':'FECHADO';
     $('appState').className='big '+(s.app_running?'ok':'bad');
@@ -163,7 +167,13 @@ async function load(){
     $('updateBox').style.display=s.update_available?'block':'none';
     $('availableVersion').textContent=s.latest_version||'';
     $('logs').textContent=(s.cloud_log_tail||[]).join('\n')||'Sem registros.';
-  }catch(e){toast('Falha ao carregar painel: '+e,false)}
+  }catch(e){
+    if(!panelOffline){
+      toast('Servidor local desconectado. Abra controller/START_PANEL.bat para religar.',false);
+    }
+    panelOffline=true;
+    $('clock').textContent='Painel desconectado — aguardando reconexão';
+  }
 }
 load(); loadJob(); setInterval(load,5000); setInterval(loadJob,2500);
 </script>
