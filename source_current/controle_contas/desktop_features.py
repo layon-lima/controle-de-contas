@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from types import MethodType
 
-from PySide6.QtCore import Qt, QDate, QUrl
+from PySide6.QtCore import Qt, QDate, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QInputDialog, QLabel,
@@ -393,6 +393,10 @@ class DesktopFeatures:
         self._flash("Dados copiados para pagamento. Envio registrado.")
         return True
 
+    def _expire_pending_send(self, account_id):
+        if getattr(self, "_pending_send_account_id", None) == account_id:
+            self._pending_send_account_id = None
+
     def _on_send_clipboard_changed(self):
         account_id = getattr(self, "_pending_send_account_id", None)
         if account_id is None:
@@ -475,6 +479,12 @@ class DesktopFeatures:
             if not getattr(self, "_send_clipboard_watch_connected", False):
                 clipboard.dataChanged.connect(self._on_send_clipboard_changed)
                 self._send_clipboard_watch_connected = True
+            # Nunca reter uma cópia pendente indefinidamente: o clipboard
+            # pode mudar por motivos não relacionados ao app.
+            QTimer.singleShot(
+                300000,
+                lambda aid=account_id: self._expire_pending_send(aid),
+            )
             self._flash("Copie os dados na janela aberta para registrar o envio.")
             return None
 
