@@ -163,19 +163,15 @@ with window.banco.conexao() as conn:
     qa_id = int(cursor.lastrowid)
     # Reproduz o cadastro real em que a data de envio pode ser string vazia.
     conn.execute("UPDATE contas SET enviado_pagamento_em='' WHERE id=?", (qa_id,))
-# O ícone Enviar deve acionar o botão ORIGINAL de copiar dados,
-# e só então registrar o envio da conta selecionada.
+# Envio SEM PDF: o conteúdo real precisa ser copiado antes do registro.
+# O botão legado não pode ser acionado, pois pressupunha anexo PDF.
 from PySide6.QtWidgets import QToolButton, QLabel
 features = window._desktop_dashboard._desktop_features
 original_send = window._desktop_dashboard._buttons.get("original_send")
-copy_action = QPushButton("Copiar dados da conta para pagamento", window)
-copy_action.clicked.connect(
-    lambda: QApplication.clipboard().setText(
-        "PAGAMENTO QA: dados da conta copiados para envio"
-    )
-)
-window._desktop_dashboard._buttons["original_send"] = copy_action
-QApplication.clipboard().setText("texto anterior")
+legacy = QPushButton("LEGADO", window)
+legacy_activated = []
+legacy.clicked.connect(lambda: legacy_activated.append(True))
+window._desktop_dashboard._buttons["original_send"] = legacy
 window.abas.setCurrentIndex(0)
 window.atualizar_tabela()
 qa_row = next(
@@ -183,49 +179,91 @@ qa_row = next(
     if window.tabela.item(i, 7)
     and int(window.tabela.item(i, 7).text()) == qa_id
 )
+
+# Copiar mal-sucedido: jamais gravar uma data nem indicar sucesso.
+real_copy = features._copy_payment_payload
+features._copy_payment_payload = lambda _message: False
+with window.banco.conexao() as conn:
+    before = conn.execute(
+        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+assert not str(before["enviado_pagamento_em"] or "").strip()
 assert window._desktop_dashboard._activate_row(
     qa_row, "Enviar para pagamento"
-) is True, "O ícone da linha não acionou o botão original"
-assert QApplication.clipboard().text().startswith("PAGAMENTO QA:"), (
-    "Dados não foram copiados para a área de transferência"
+) is False, "Uma cópia falha não pode indicar envio concluído"
+with window.banco.conexao() as conn:
+    failed = conn.execute(
+        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+assert not str(failed["enviado_pagamento_em"] or "").strip(), (
+    "Falha na cópia gravou falsamente a data de envio"
 )
-with window.banco.conexao() as conn:
-    row = conn.execute(
-        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
-    ).fetchone()
-    assert row and str(row["enviado_pagamento_em"] or "").strip(), (
-        "Data de envio não foi registrada com campo inicialmente vazio"
-    )
-    first_sent_at = str(row["enviado_pagamento_em"])
-# O horário original deve ser preservado nas cópias subsequentes.
-features._record_sent(qa_id)
-with window.banco.conexao() as conn:
-    updated = conn.execute(
-        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
-    ).fetchone()
-    assert updated and updated["enviado_pagamento_em"] == first_sent_at, (
-        "Reenvio sobrescreveu indevidamente a data inicial"
-    )
-window._desktop_dashboard._buttons["original_send"] = original_send
-# Ausência de handler herdado não pode deixar a ação inerte.
-window._desktop_dashboard._buttons["original_send"] = None
-native_lookup = window._desktop_dashboard._find_action
-window._desktop_dashboard._find_action = lambda text: None
-QApplication.clipboard().setText("texto externo")
-assert features.send_for_payment(qa_id) is True, "Fluxo de cópia alternativo falhou"
+
+features._copy_payment_payload = real_copy
+QApplication.clipboard().setText("ANTERIOR")
+assert window._desktop_dashboard._activate_row(
+    qa_row, "Enviar para pagamento"
+) is True, "Envio com dados da conta sem PDF deveria funcionar"
 copied_text = QApplication.clipboard().text()
 assert "FORNECEDOR: QA PAGAMENTO SEM COMPROVANTE" in copied_text
 assert "VALOR: R$ 123,45" in copied_text
-window._desktop_dashboard._find_action = native_lookup
+assert not legacy_activated, "O handler antigo dependente de PDF foi executado"
+with window.banco.conexao() as conn:
+    row = conn.execute(
+        "SELECT enviado_pagamento_em,pdf_conta FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+    assert not row["pdf_conta"], "Conta do teste deveria continuar sem PDF"
+    assert row and str(row["enviado_pagamento_em"] or "").strip(), (
+        "O envio válido não persistiu no banco"
+    )
+    first_sent_at = str(row["enviado_pagamento_em"])
+
+# Repetir cópia preserva o momento original de envio.
+assert features.send_for_payment(qa_id) is True
+with window.banco.conexao() as conn:
+    repeated = conn.execute(
+        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+    assert repeated["enviado_pagamento_em"] == first_sent_at
 window._desktop_dashboard._buttons["original_send"] = original_send
 dashboard = window._desktop_dashboard
+
+# Nenhuma confirmação pode ocupar grande parte da tela.
 dashboard._show_action_feedback("Cópia concluída", "success")
 notice = window.findChild(QLabel, "dashboardActionFeedback")
-assert notice is not None and "Cópia concluída" in notice.text(), (
-    "Feedback visual de sucesso não foi exibido"
+assert notice is not None and "Cópia concluída" in notice.text()
+assert notice.height() <= 30 and notice.width() <= 290, (
+    "O aviso visual voltou a ocupar espaço demais na tela"
 )
 dashboard._show_action_feedback("Falha de teste", "error")
-assert "Falha de teste" in notice.text(), "Feedback visual de erro não funciona"
+assert "Falha de teste" in notice.text()
+
+# Quatro cards reais devem se adaptar a largura sem sobrepor o cabeçalho.
+strip = window.findChild(QWidget, "dashboardKpiStrip")
+assert strip is not None
+assert strip.parentWidget() is window.centralWidget(), (
+    "Cards foram novamente comprimidos dentro do cabeçalho"
+)
+grid = strip.layout()
+assert isinstance(grid, __import__(
+    "PySide6.QtWidgets", fromlist=["QGridLayout"]
+).QGridLayout)
+for size in (1380, 900, 590):
+    window.resize(size, 760)
+    app.processEvents()
+    dashboard._layout_kpis()
+    usable = max(0, window.centralWidget().width() - 32)
+    expected_cols = 4 if usable >= 1130 else 2 if usable >= 460 else 1
+    assert dashboard._kpi_columns == expected_cols, (
+        "A grade não acompanhou o tamanho da janela"
+    )
+    for index, card in enumerate(dashboard._kpi_cards):
+        cell = grid.itemAtPosition(index // expected_cols, index % expected_cols)
+        assert cell is not None and cell.widget() is card, (
+            "Card desapareceu ou ficou sobre outro após redimensionar"
+        )
+window.resize(1380, 840)
+app.processEvents()
 
 window.banco.registrar_pagamento(qa_id, {
     "valor_pago": 123.45,
