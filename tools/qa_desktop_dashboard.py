@@ -39,7 +39,16 @@ for key, card in getattr(window, "cards", {}).items():
     parent=card.parentWidget()
     print("KPI",key,card.maximumHeight(),"layout",
           type(parent.layout()).__name__ if parent and parent.layout() else "NONE")
-print("KPI4", bool(window.findChild(QFrame, "dashboardPaidMonth")))
+print("KPI4 reused", bool(window._desktop_dashboard._paid_month_card))
+print("KPI4 labels",
+      [label.text() for label in window._desktop_dashboard._paid_month_card.findChildren(
+          __import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel
+      )] if window._desktop_dashboard._paid_month_card else [])
+print("KPI4 count bound", window._desktop_dashboard._paid_month_count is not None)
+print("KPI4 amount bound", window._desktop_dashboard._paid_month_value is not None)
+assert window._desktop_dashboard._paid_month_card is not None, "Card de pagas não reaproveitado"
+assert window._desktop_dashboard._paid_month_count is not None, "Quantidade do card não reconhecida"
+assert window._desktop_dashboard._paid_month_value is not None, "Valor do card não reconhecido"
 
 dash = window._desktop_dashboard
 dash.decorate_rows()
