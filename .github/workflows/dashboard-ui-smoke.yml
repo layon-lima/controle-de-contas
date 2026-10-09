@@ -10,6 +10,10 @@ on:
       - '.github/workflows/dashboard-ui-smoke.yml'
   workflow_dispatch:
 
+concurrency:
+  group: dashboard-ui-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   qt-smoke:
     runs-on: windows-latest
