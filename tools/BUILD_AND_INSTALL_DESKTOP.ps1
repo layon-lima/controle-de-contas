@@ -11,6 +11,7 @@ $LoadedScriptHash = (Get-FileHash -LiteralPath $BuildScriptPath -Algorithm SHA25
 
 # Sempre construa a partir da versão atual da develop.
 # Sem esta etapa, uma cópia local antiga executava testes já corrigidos no GitHub.
+Write-Host "CC_PROGRESS|2|Verificando atualizacoes do projeto"
 Write-Host "=== Conferindo fonte local antes do build ==="
 $Branch = (& git -C $Root branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $Branch -ne "develop") {
@@ -26,6 +27,7 @@ if ($LASTEXITCODE -ne 0 -or $LocalCommit -ne $RemoteCommit) {
     throw "A versão local não corresponde à develop remota; build interrompido para evitar usar testes antigos."
 }
 Write-Host "Origem confirmada: develop @ $($LocalCommit.Substring(0, 10))"
+Write-Host "CC_PROGRESS|15|Codigo atualizado e conferido"
 
 # Se o arquivo foi atualizado enquanto o PowerShell executava o codigo
 # anterior, inicia um NOVO processo que le o arquivo atualizado do disco.
@@ -67,6 +69,7 @@ if (Test-Path $PreferredWork) {
 }
 New-Item -ItemType Directory -Force -Path $Work -ErrorAction Stop | Out-Null
 Write-Host "Area de trabalho: $Work"
+Write-Host "CC_PROGRESS|18|Preparando arquivos de compilacao"
 
 $SourceZip = Join-Path $Root "releases\CONTROLE_CONTAS_1.4.4_SOURCE.zip"
 $OverlayB64 = Join-Path $Root "releases\CONTROLE_CONTAS_1.4.5_OVERLAY.b64"
@@ -119,6 +122,7 @@ $issText = $issText -replace '1\.4\.5', $Version
 Set-Content $IssNew $issText -Encoding UTF8
 
 Set-Location $Work
+Write-Host "CC_PROGRESS|23|Verificando dependencias Python"
 py -3.13 -m pip install -r .\requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar dependências." }
 
@@ -131,6 +135,7 @@ if ($LASTEXITCODE -ne 0) { throw "Falha no cloud_sync.py." }
 py -3.13 -m py_compile .\controle_contas\cloud_mobile_ui.py
 if ($LASTEXITCODE -ne 0) { throw "Falha no cloud_mobile_ui.py." }
 
+Write-Host "CC_PROGRESS|30|Validando codigo e testes funcionais"
 # Antes de instalar, valida o layout REAL do PySide6 com um banco temporario.
 # Erro no teste interrompe o build, preservando a instalacao anterior.
 $QaScript = Join-Path $Root "tools\qa_desktop_dashboard.py"
@@ -145,12 +150,14 @@ try {
     $env:QT_QPA_PLATFORM = $BeforeQt
 }
 
+Write-Host "CC_PROGRESS|40|Gerando o aplicativo Windows"
 py -3.13 -m PyInstaller --clean --noconfirm ".\Controle de Contas.spec"
 if ($LASTEXITCODE -ne 0) { throw "Falha ao gerar o aplicativo." }
 
 $Exe = Join-Path $Work "dist\Controle de Contas\Controle de Contas.exe"
 if (!(Test-Path $Exe)) { throw "Executável não foi gerado." }
 
+Write-Host "CC_PROGRESS|63|Aplicativo compilado; conferindo versao"
 $FileVersion = (Get-Item $Exe).VersionInfo.FileVersion
 Write-Host "EXE gerado: $FileVersion"
 if ($FileVersion -notlike "$Version*") {
@@ -172,6 +179,7 @@ if (-not $Iscc) {
     throw "Inno Setup 6 não encontrado neste PC."
 }
 
+Write-Host "CC_PROGRESS|70|Montando o instalador do aplicativo"
 & $Iscc $IssNew
 if ($LASTEXITCODE -ne 0) { throw "Falha ao gerar o atualizador." }
 
@@ -180,6 +188,7 @@ if (!(Test-Path $Updater)) {
     throw "Atualizador não foi gerado."
 }
 
+Write-Host "CC_PROGRESS|82|Instalador compilado e pronto"
 Write-Host "Atualizador pronto: $Updater"
 
 # Nunca abra o atualizador diretamente de dentro da pasta de build: enquanto
@@ -201,9 +210,17 @@ if ((Get-FileHash -LiteralPath $Updater -Algorithm SHA256).Hash -ne
 # taskkill aqui: no PowerShell 5, "processo nao encontrado" pode virar erro
 # terminante mesmo com 2>$null e interromper um build ja concluido.
 Write-Host "Aplicativo aberto ou fechado: o instalador cuidara disso automaticamente."
+Write-Host "CC_PROGRESS|85|Aguardando conclusao do instalador Windows"
 Write-Host "Abrindo instalador $Version..."
 if (-not (Test-Path -LiteralPath $LaunchExe -PathType Leaf)) {
     throw "O atualizador preparado nao foi encontrado: $LaunchExe"
 }
-Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -ErrorAction Stop
-Write-Host "Instalador iniciado a partir da area independente: $LaunchFolder"
+# Uma instalacao so esta concluida quando o assistente Inno Setup terminou.
+# -Wait impede o painel de dar falso positivo de instalacao bem sucedida.
+$Installation = Start-Process -FilePath $LaunchExe -WorkingDirectory $LaunchFolder -PassThru -Wait -ErrorAction Stop
+if ($null -eq $Installation -or $Installation.ExitCode -ne 0) {
+    $code = if ($null -eq $Installation) { "desconhecido" } else { $Installation.ExitCode }
+    throw "O instalador nao concluiu com sucesso (codigo $code)."
+}
+Write-Host "CC_PROGRESS|88|Instalacao Windows concluida"
+Write-Host "Instalacao Windows finalizada. Atualizador: $LaunchExe"
