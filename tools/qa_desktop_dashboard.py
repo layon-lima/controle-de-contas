@@ -161,6 +161,8 @@ with window.banco.conexao() as conn:
         ("QA PAGAMENTO SEM COMPROVANTE", 123.45, "2026-10-09", now, now)
     )
     qa_id = int(cursor.lastrowid)
+    # Reproduz o cadastro real em que a data de envio pode ser string vazia.
+    conn.execute("UPDATE contas SET enviado_pagamento_em='' WHERE id=?", (qa_id,))
 # O ícone Enviar deve acionar o botão ORIGINAL de copiar dados,
 # e só então registrar o envio da conta selecionada.
 from PySide6.QtWidgets import QToolButton, QLabel
@@ -191,7 +193,19 @@ with window.banco.conexao() as conn:
     row = conn.execute(
         "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
     ).fetchone()
-    assert row and row["enviado_pagamento_em"], "Data de envio não foi registrada"
+    assert row and str(row["enviado_pagamento_em"] or "").strip(), (
+        "Data de envio não foi registrada com campo inicialmente vazio"
+    )
+    first_sent_at = str(row["enviado_pagamento_em"])
+# O horário original deve ser preservado nas cópias subsequentes.
+features._record_sent(qa_id)
+with window.banco.conexao() as conn:
+    updated = conn.execute(
+        "SELECT enviado_pagamento_em FROM contas WHERE id=?", (qa_id,)
+    ).fetchone()
+    assert updated and updated["enviado_pagamento_em"] == first_sent_at, (
+        "Reenvio sobrescreveu indevidamente a data inicial"
+    )
 window._desktop_dashboard._buttons["original_send"] = original_send
 # Ausência de handler herdado não pode deixar a ação inerte.
 window._desktop_dashboard._buttons["original_send"] = None
