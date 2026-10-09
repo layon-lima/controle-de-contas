@@ -117,7 +117,7 @@ class PortableDataTests(unittest.TestCase):
         self.assertEqual(s.list_accounts()["accounts"][0]["tags"], [])
 
     def test_attach_pdf_and_do_not_delete_physical_document(self):
-        result = s.upload_pdf(1, b"%PDF-1.4\nsample content", "nota fiscal.pdf")
+        result = s.upload_pdf(1, self._real_pdf("NOTA FISCAL"), "nota fiscal.pdf")
         self.assertTrue(result["name"].endswith(".pdf"))
         self.assertFalse(result["organized"])  # sem pasta-base configurada
         saved = s.pdf_path(1)
@@ -138,20 +138,22 @@ class PortableDataTests(unittest.TestCase):
             "fornecedor": "FORNECEDOR/TESTE", "valor": 123.45,
             "vencimento": "2026-10-15", "observacoes": "BOLETO FATURA TESTE.pdf"
         })
-        result = s.upload_pdf(1, b"%PDF-1.4\nfirst content", "qualquer.pdf")
+        first_pdf = self._real_pdf("PRIMEIRA FATURA")
+        second_pdf = self._real_pdf("SEGUNDA FATURA")
+        result = s.upload_pdf(1, first_pdf, "qualquer.pdf")
         target = s.pdf_path(1)
         self.assertTrue(result["organized"])
         self.assertEqual(
             target.parent, base / "BOLETOS 2026" / "10 - OUTUBRO"
         )
         self.assertEqual(target.name, "BOLETO FATURA TESTE.pdf")
-        self.assertEqual(target.read_bytes(), b"%PDF-1.4\nfirst content")
-        repeated = s.upload_pdf(1, b"%PDF-1.4\nsecond content", "qualquer.pdf")
+        self.assertEqual(target.read_bytes(), first_pdf)
+        repeated = s.upload_pdf(1, second_pdf, "qualquer.pdf")
         other = s.pdf_path(1)
         self.assertEqual(other.name, "BOLETO FATURA TESTE (1).pdf")
         self.assertNotEqual(target, other)
-        self.assertEqual(target.read_bytes(), b"%PDF-1.4\nfirst content")
-        self.assertEqual(other.read_bytes(), b"%PDF-1.4\nsecond content")
+        self.assertEqual(target.read_bytes(), first_pdf)
+        self.assertEqual(other.read_bytes(), second_pdf)
         self.assertTrue(repeated["organized"])
         self.assertEqual(len(list((self.root / "backups").glob("*.db"))), 1)
 
