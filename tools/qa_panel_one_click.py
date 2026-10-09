@@ -88,6 +88,25 @@ class OneClickDesktopUpdateTests(unittest.TestCase):
             script.index("Start-Process -FilePath $LaunchExe"),
         )
 
+    def test_already_closed_app_does_not_abort_completed_build(self):
+        """A ausencia do processo e normal; Inno Setup faz o fechamento."""
+        root = Path(__file__).resolve().parents[1]
+        script = (root / "tools" / "BUILD_AND_INSTALL_DESKTOP.ps1").read_text(
+            encoding="utf-8"
+        )
+        installer = (
+            root / "source_current" / "Controle_de_Contas_1.4.5.iss"
+        ).read_text(encoding="utf-8")
+        # Este comando antigo emitia NativeCommandError no Windows PowerShell
+        # quando o aplicativo ja estava fechado.
+        self.assertNotIn('taskkill /IM "Controle de Contas.exe"', script)
+        self.assertIn("Start-Process -FilePath $LaunchExe", script)
+        self.assertIn("CloseApplications=yes", installer)
+        self.assertIn("function PrepareToInstall", installer)
+        self.assertIn(
+            "o instalador cuidara disso automaticamente", script
+        )
+
     def test_job_never_starts_installer_when_sync_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
