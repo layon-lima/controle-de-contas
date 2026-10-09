@@ -835,8 +835,6 @@ class DesktopDashboard:
                     for label, asset in (
                         ("Editar", "edit"),
                         ("Abrir comprovante", "receipt"),
-                        ("TAGs", "accounts"),
-                        ("Marcar como enviado", "send"),
                         ("Excluir", "trash"),
                     ):
                         menu_action = menu.addAction(_asset_icon(asset), label)
