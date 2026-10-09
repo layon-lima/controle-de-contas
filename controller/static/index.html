@@ -249,12 +249,18 @@ async function pollJob(){
 }
 async function pollServer(){
   try{
-    const status=await request('/api/status');
+    // /api/health é local e rápido; GitHub ou Cloudflare fora do ar
+    // não podem fazer o painel afirmar que o servidor está offline.
+    await request('/api/health');
     byId('serverDot').className='dot online';
     byId('serverStatus').textContent='Servidor online';
-    byId('serverDetail').textContent=
-      'App '+(status.app_running?'aberto':'fechado')+
-      '  ·  Mobile '+(status.sync_running?'sincronizando':'em espera');
+    byId('serverDetail').textContent='Painel conectado';
+    try{
+      const status=await request('/api/status');
+      byId('serverDetail').textContent=
+        'App '+(status.app_running?'aberto':'fechado')+
+        '  ·  Mobile '+(status.sync_running?'sincronizando':'em espera');
+    }catch{ /* Saúde local não depende de consultas externas. */ }
   }catch{
     byId('serverDot').className='dot offline';
     byId('serverStatus').textContent='Servidor desconectado';
