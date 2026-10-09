@@ -251,7 +251,8 @@ function accountModal(a,preview=null,rerun=null){
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
     const predictedValue=suggested[key];
     const readable=predictedValue!==null&&predictedValue!==undefined&&String(predictedValue).trim()!=='';
-    const value=analysis?(readable?predictedValue:(a?a[key]||'')):(a?a[key]||'':key==='vencimento'?localToday():'');
+    const fallbackValue=a?(a[key]??''):(key==='vencimento'?localToday():'');
+    const value=analysis&&readable?predictedValue:fallbackValue;
     const controls=type==='textarea'
       ?'<textarea name="'+key+'">'+esc(value)+'</textarea>'
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';
