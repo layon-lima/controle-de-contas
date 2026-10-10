@@ -998,6 +998,26 @@ class Handler(BaseHTTPRequestHandler):
                     self._body()
                     self._json({"ok": True, **AI_ASSIST.disconnect()})
                     return
+                if self.command == "POST" and route == "/api/ai/correct":
+                    payload = self._body()
+                    if not AI_ASSIST.status()["enabled"]:
+                        raise ApiError(409, "Conecte e autorize o ChatGPT antes de pedir uma correção.")
+                    current = payload.get("fields")
+                    if not isinstance(current, dict):
+                        raise ApiError(400, "Dados atuais do formulário não encontrados.")
+                    # Usar apenas PDFs vinculados a uma previa legitima ou
+                    # cadastro local; nunca confiar em caminhos enviados pelo browser.
+                    ticket = payload.get("ticket")
+                    account_id = payload.get("account_id")
+                    if isinstance(ticket, str) and ticket:
+                        pdf_file, _name, _original_ocr = pdf_workflows.take_preview(ticket)
+                    elif isinstance(account_id, int) and not isinstance(account_id, bool) and account_id > 0:
+                        pdf_file = pdf_path(account_id)
+                    else:
+                        raise ApiError(400, "Abra um formulário com PDF para corrigir com GPT.")
+                    correction = AI_ASSIST.correct(pdf_file, current)
+                    self._json({"ok": True, **correction})
+                    return
                 if self.command == "POST" and route == "/api/batch/prepare-send":
                     self._json({"ok": True, **prepare_batch_send(self._body())})
                     return
@@ -1022,16 +1042,13 @@ class Handler(BaseHTTPRequestHandler):
                     ocr_mode = self.headers.get("X-Ocr-Mode") or "hybrid"
                     if ocr_mode not in {"hybrid", "legacy"}:
                         raise ApiError(400, "Modo OCR não reconhecido.")
-                    def analyze_and_fill(pdf_path):
-                        original = pdf_intelligence.analyze_pdf(
-                            pdf_path, enhanced=ocr_mode == "hybrid"
-                        )
-                        if ocr_mode == "hybrid":
-                            return AI_ASSIST.enhance(pdf_path, original)
-                        return original
-
+                    # OCR SEMPRE local nesta etapa. A IA so executa ao receber
+                    # clique explicito no botao "Corrigir com GPT" do formulario.
                     parsed = pdf_workflows.preview(
-                        self.rfile.read(size), filename, APP_DIR, analyze_and_fill
+                        self.rfile.read(size), filename, APP_DIR,
+                        lambda pdf_path: pdf_intelligence.analyze_pdf(
+                            pdf_path, enhanced=ocr_mode == "hybrid"
+                        ),
                     )
                     self._json({"ok": True, **parsed})
                     return
@@ -1084,8 +1101,6 @@ class Handler(BaseHTTPRequestHandler):
                         analysis = pdf_intelligence.analyze_pdf(
                             original, enhanced=mode != "mode=legacy"
                         )
-                        if mode != "mode=legacy":
-                            analysis = AI_ASSIST.enhance(original, analysis)
                         self._json({"ok": True, **analysis})
                         return
                     if self.command == "GET" and op == "pdf":
