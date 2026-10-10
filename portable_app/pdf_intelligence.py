@@ -35,24 +35,29 @@ def find_tesseract_binary(engine_root: Path | None = None) -> Path | None:
     candidates = []
     if engine_root:
         candidates.append(engine_root / "tesseract" / "tesseract.exe")
-    for env_var in ("ProgramFiles", "ProgramFiles(x86)"):
-        root = os.environ.get(env_var)
-        if root:
-            candidates.append(Path(root) / "Tesseract-OCR" / "tesseract.exe")
+    # O desktop instalado frequentemente inclui POR+ENG em sua pasta própria;
+    # esse Tesseract é preferível ao do PATH que pode conter só ENG.
     candidates.extend([
-        Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
-        Path("C:/Program Files (x86)/Tesseract-OCR/tesseract.exe"),
         local / "Programs" / "Controle de Contas" / "_internal" / "tesseract" / "tesseract.exe",
         local / "Programs" / "Controle de Contas" / "tesseract" / "tesseract.exe",
         local / "ControleContas" / "portable_reader_engine" / "tesseract" / "tesseract.exe",
     ])
+    for env_var in ("ProgramFiles", "ProgramFiles(x86)"):
+        directory = os.environ.get(env_var)
+        if directory:
+            candidates.append(Path(directory) / "Tesseract-OCR" / "tesseract.exe")
+    candidates.extend([
+        Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
+        Path("C:/Program Files (x86)/Tesseract-OCR/tesseract.exe"),
+    ])
     found = shutil.which("tesseract")
     if found:
         candidates.append(Path(found))
-    for candidate in candidates:
-        if candidate.is_file():
+    existing = [p for p in candidates if p.is_file()]
+    for candidate in existing:
+        if (candidate.parent / "tessdata" / "por.traineddata").is_file():
             return candidate
-    return None
+    return existing[0] if existing else None
 
 
 def _preserve_ocr_assets(destination: Path) -> None:
