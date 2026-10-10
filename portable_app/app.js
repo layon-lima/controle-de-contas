@@ -438,7 +438,7 @@ async function importNewPDF(file){
   if(!file)return;
   if($('backdrop').classList.contains('show')){notice('Conclua ou cancele a janela atual antes de importar outro PDF.',true);return;}
   if(importBusy){notice('Uma leitura de PDF já está em andamento.',true);return;}
-  if(!/\\.pdf$/i.test(file.name||'')){notice('Selecione um documento PDF.',true);return;}
+  if(!/\.pdf$/i.test(file.name||'')){notice('Selecione um documento PDF.',true);return;}
   if(file.size>30*1024*1024){notice('PDF maior que 30 MB.',true);return;}
   const button=$('pdfImport'),previous=button.innerHTML;
   importBusy=true;button.disabled=true;button.textContent='Lendo PDF e preenchendo…';
