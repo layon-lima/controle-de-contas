@@ -11,6 +11,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -124,7 +125,8 @@ def _database_signature() -> tuple[int, ...]:
 
 
 def _snapshot() -> tuple[list[dict], dict[int, Path]]:
-    with _connect() as conn:
+    # sqlite3.Connection.__exit__ não fecha no Windows; encerrar em cada snapshot.
+    with closing(_connect()) as conn:
         rows = conn.execute(
             """
             SELECT
