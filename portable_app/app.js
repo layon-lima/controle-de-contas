@@ -362,7 +362,7 @@ async function action(kind){
     if(kind==='pdf')await showPDF();
     else if(kind==='attach')$('uploadFile').click();
     else if(kind==='reanalyze'){
-      const read=await api('/api/accounts/'+a.id+'/analyze);
+      const read=await api('/api/accounts/'+a.id+'/analyze');
       accountModal(a,null,read);
     }
     else if(kind==='copy-code'){
