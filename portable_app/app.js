@@ -219,6 +219,9 @@ function accountModal(a,preview=null,rerun=null){
   const additional=extraWarnings.length
     ? '<div class="ocr-note warning"><b>Conferência da leitura:</b> '+
        extraWarnings.map(item=>esc(item)).join(' ')+'</div>' : '';
+  const aiNote=analysis?.ai_assistance?.used
+    ? '<p class="hint">IA complementar conferiu o PDF e preencheu campos que estavam vazios. Verifique os valores antes de salvar.</p>'
+    : '';
   const modeNote=comparison.mode==='conservador'
     ? '<p class="hint">OCR aprimorado ativo: o leitor original tem prioridade. A análise complementar só preenche campos vazios e sinaliza divergências.</p>'
     : '';
@@ -226,7 +229,7 @@ function accountModal(a,preview=null,rerun=null){
     rerun?'Leitura do PDF existente refeita. Confira e corrija antes de alterar o cadastro.':
     'Os dados são salvos no banco local existente. O PDF é opcional.';
   showModal(preview?'Conferir leitura do PDF':rerun?'Revisar cadastro pelo PDF':a?'Editar conta':'Nova conta',intro,
-    (analysis?warning+additional+modeNote:'')+'<form id="accountForm" class="formgrid">'+form+'</form>',
+    (analysis?warning+additional+aiNote+modeNote:'')+'<form id="accountForm" class="formgrid">'+form+'</form>',
     preview?'Confirmar e salvar PDF':a?'Salvar alterações':'Criar conta',async()=>{
       const form=$('accountForm');
       if(!form.reportValidity())return false;
@@ -436,6 +439,71 @@ function initializeColumnResizing(){
   });
 }
 initializeColumnResizing();
+
+
+/* A IA e opcional e fica desligada ate login e autorizacao explicita.
+   Nenhum dado financeiro sai do PC antes do consentimento. */
+let aiStatus={connected:false,enabled:false,consented:false};
+async function refreshAI(){
+  try{
+    aiStatus=await api('/api/ai/status');
+    const button=$('aiConnect');
+    button.textContent=aiStatus.enabled?'IA ativa':aiStatus.connected?'IA pausada':'Conectar ChatGPT';
+    button.classList.toggle('enabled',Boolean(aiStatus.enabled));
+    button.classList.toggle('disabled',Boolean(aiStatus.connected&&!aiStatus.enabled));
+    button.title=aiStatus.enabled?'OCR local + IA somente nos campos vazios':
+      'A IA é opcional. O OCR local continua independente.';
+  }catch(_){
+    // A interface de contas nao depende da disponibilidade deste recurso.
+  }
+}
+$('aiConnect').addEventListener('click',async()=>{
+  if($('backdrop').classList.contains('show'))return;
+  if(aiStatus.connected){
+    showModal('Assistência ChatGPT','O OCR continua sendo o leitor principal.',
+      '<div class="ai-settings"><label><input id="aiEnabled" type="checkbox" '+
+      (aiStatus.enabled?'checked':'')+
+      '> Complementar automaticamente campos vazios com IA</label>'+
+      '<p>Quando ativado, somente PDFs com campos importantes vazios são enviados para análise. '+
+      'A IA não altera os dados já encontrados, nem cadastra contas automaticamente. '+
+      'O uso consome a cota autorizada do seu ChatGPT, sem chave API.</p>'+
+      '<button type="button" id="disconnectAI" class="outline">Desconectar ChatGPT</button></div>',
+      'Salvar configuração',async()=>{
+        await api('/api/ai/consent','POST',{enabled:$('aiEnabled').checked});
+        await refreshAI();return true;
+      });
+    $('disconnectAI').addEventListener('click',async()=>{
+      if(!window.confirm('Desconectar o ChatGPT? O OCR continuará funcionando normalmente.'))return;
+      try{
+        await api('/api/ai/disconnect','POST',{});
+        closeModal({saved:true});
+        await refreshAI();
+        notice('ChatGPT desconectado. OCR local preservado.');
+      }catch(e){notice(e.message||String(e),true)}
+    });
+    return;
+  }
+  if(!window.confirm('Conectar ChatGPT para analisar automaticamente boletos quando o OCR deixar campos vazios? PDFs com lacunas serão enviados à OpenAI para essa análise, usando a cota autorizada do seu plano. Nenhuma API paga será configurada.'))return;
+  const tab=window.open('about:blank','_blank');
+  try{
+    await api('/api/ai/consent','POST',{enabled:true});
+    const result=await api('/api/ai/connect','POST',{});
+    if(tab)tab.location.replace(result.url);
+    else window.open(result.url,'_blank');
+    notice('Autorize a conexão na aba do ChatGPT e volte ao aplicativo.',false,9000);
+    let checks=0;
+    const watch=setInterval(async()=>{
+      checks++;
+      await refreshAI();
+      if(aiStatus.connected||checks>=48)clearInterval(watch);
+    },2500);
+  }catch(e){
+    if(tab&&!tab.closed)tab.close();
+    notice('Não foi possível iniciar conexão: '+(e.message||String(e)),true,9500);
+  }
+});
+window.addEventListener('focus',refreshAI);
+refreshAI();
 
 $('status').addEventListener('change',()=>{
   const value=$('status').value;

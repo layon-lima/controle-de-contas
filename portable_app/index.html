@@ -20,6 +20,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .kpi.red{background:#fff7f8;color:#c72e43}.kpi.yellow{background:#fffaf0;color:#b77c12}.kpi.green{background:#f3fcf7;color:#16845a}.kpi.blue{background:#f4f8ff;color:#226fe2}
 .top-actions{display:flex;align-items:center;gap:8px}.top-actions button,.outline{border:1px solid #dde7f4;background:#fff;color:#294d7e;border-radius:9px;min-height:36px;padding:0 12px;font-weight:650;white-space:nowrap}
 .top-actions button:hover,.outline:hover{background:#f1f7ff;border-color:#aacbeb}
+#aiConnect.enabled{border-color:#adddc6;background:#effaf4;color:#167044}
+#aiConnect.disabled{border-color:#e8edf4;background:#f5f8fb;color:#69798a}
+.ai-settings{display:flex;flex-direction:column;gap:12px}
+.ai-settings label{display:flex;align-items:center;gap:10px;font-weight:700;color:#294d70}
+.ai-settings input{width:17px;height:17px}
+.ai-settings .outline{width:max-content;padding:8px 12px}
+.ai-settings p{margin:0;font-size:12px;color:#71829a;line-height:1.5}
 .top-actions .primary,.primary{background:var(--green);border:1px solid var(--green);color:white;border-radius:9px;font-weight:700}
 .top-actions .primary:hover,.primary:hover{background:#06744f}
 main.surface{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -164,6 +171,7 @@ table{min-width:0}.vendor-name{min-width:0}
     </div>
     <div class="top-actions">
       <button id="folderBtn" title="Definir a pasta onde os boletos serão organizados"><img src="/icons/settings.svg" width="15" alt=""> Pasta boletos</button>
+      <button type="button" id="aiConnect" title="IA opcional: preencher apenas campos que o OCR deixou vazios">Conectar ChatGPT</button>
       <button id="mobileBtn"><img src="/icons/smartphone.svg" width="15" alt=""> Acesso mobile</button>
       <button id="pdfImport"><img src="/icons/upload.svg" width="16" alt=""> Importar PDF</button>
       <button class="primary" id="newAccount">＋ Nova conta</button>

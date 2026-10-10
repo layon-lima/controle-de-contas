@@ -140,3 +140,21 @@ O app nao garante aprender dados que nao estejam legiveis no boleto.
 
 ## Colunas ajustaveis e sem selecao em lote
 No desktop (>990px), arraste a borda direita dos titulos para aumentar ou reduzir cada coluna, com limite minimo. A coluna cresce para revelar o texto truncado; fonte, conteudo e alinhamento a esquerda nao mudam e a linha nao quebra. O tamanho escolhido persiste no navegador e pode ser restaurado com **Restaurar colunas**. Expansao intencional alem da tela habilita o scroll horizontal da tabela; em telas pequenas seguem os cards responsivos. Foram removidos quadrados e a barra de selecao em lote; ficam os menus individuais, pesquisa, filtros e pagamentos. Nenhum dado do banco e alterado.
+
+## IA silenciosa e opcional com ChatGPT
+O leitor OCR local sempre roda primeiro. Se faltar um campo principal (fornecedor,
+pagador, valor, vencimento ou codigo), e SOMENTE se a conta do ChatGPT estiver
+conectada e o usuario autorizou explicitamente analise automatica de PDFs,
+o app envia ate duas paginas do documento como imagens para uma leitura visual
+secundaria. As sugestoes sao aceitas SOMENTE em campos vazios, com validacao
+de valor, data e codigo de pagamento; todos os valores originais ficam
+intactos. O usuario sempre confere o formulario antes de salvar.
+Em caso de falha/rede/cota/desconexao, OCR antigo permanece identico.
+A autenticacao usa Sign in with ChatGPT com PKCE e valida identidade OIDC,
+sem chave API nem cobranca API configurada. Tokens protegidos com DPAPI no
+Windows e armazenados somente na maquina local. Usar a opcao Conectar
+ChatGPT, aceitar o envio, autorizar a conexao, e revisar o estado no botao
+IA ativa. O usuario pode pausar ou desconectar pelas configuracoes.
+A disponibilidade real e os modelos dependem da elegibilidade da conta
+para SIWC e das cotas definidas no ChatGPT. Nunca habilitar creditos extras
+por conta do aplicativo. Nao implementar uso automatico via API paga.
