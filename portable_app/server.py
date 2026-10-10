@@ -966,9 +966,14 @@ class Handler(BaseHTTPRequestHandler):
                         raise ApiError(413, "O PDF deve ter até 30 MB.")
                     from urllib.parse import unquote
                     filename = unquote(self.headers.get("X-Pdf-Name") or "boleto.pdf")
+                    ocr_mode = self.headers.get("X-Ocr-Mode") or "hybrid"
+                    if ocr_mode not in {"hybrid", "legacy"}:
+                        raise ApiError(400, "Modo OCR não reconhecido.")
                     parsed = pdf_workflows.preview(
                         self.rfile.read(size), filename, APP_DIR,
-                        pdf_intelligence.analyze_pdf,
+                        lambda pdf_path: pdf_intelligence.analyze_pdf(
+                            pdf_path, enhanced=ocr_mode == "hybrid"
+                        ),
                     )
                     self._json({"ok": True, **parsed})
                     return
@@ -1015,8 +1020,13 @@ class Handler(BaseHTTPRequestHandler):
                     op = parts[3] if len(parts) == 4 else ""
                     if self.command == "GET" and op == "analyze":
                         original = pdf_path(account_id)
+                        mode = urlsplit(self.path).query
+                        if mode not in ("", "mode=legacy", "mode=hybrid"):
+                            raise ApiError(400, "Modo OCR não reconhecido.")
                         self._json({"ok": True,
-                                    **pdf_intelligence.analyze_pdf(original)})
+                                    **pdf_intelligence.analyze_pdf(
+                                        original, enhanced=mode != "mode=legacy"
+                                    )})
                         return
                     if self.command == "GET" and op == "pdf":
                         receipt = urlsplit(self.path).query == "receipt=1"
