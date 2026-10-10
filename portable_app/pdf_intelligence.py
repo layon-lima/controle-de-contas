@@ -159,7 +159,8 @@ def _materialize_engine(root: Path) -> Path:
         return destination
 
 
-def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT) -> dict[str, Any]:
+def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT,
+                enhanced: bool = True) -> dict[str, Any]:
     """Delega ao MESMO ui.analisar_pdf patchado do desktop; não grava banco."""
     if not path.is_file() or path.suffix.lower() != ".pdf":
         raise FileNotFoundError("PDF de entrada não encontrado.")
@@ -205,6 +206,14 @@ def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT)
         "reason": data.get("reason") or {},
         "warnings": data.get("warnings") or [],
     }
+    # Interruptor imediato de compatibilidade: o usuário pode usar
+    # exclusivamente o OCR antigo sem desativar nenhuma função do sistema.
+    if not enhanced or os.environ.get("CONTAS_OCR_MODE", "").casefold() == "legacy":
+        baseline["ocr_comparison"] = {
+            "mode": "original_somente", "legacy_preserved": True,
+            "filled": [], "conflicts": [],
+        }
+        return baseline
     # O motor original SEMPRE executa primeiro. O novo leitor NÃO modifica
     # fornecedor/valor/vencimento/código já reconhecidos, tampouco arquivos,
     # banco ou perfis. Se a camada adicional falhar, devolve o OCR aprovado.
