@@ -3,7 +3,6 @@
 const $=id=>document.getElementById(id);
 const token=window.__CONTAS_TOKEN__;
 let accounts=[], selected=null, activeTab='open', dialogSave=null;
-const checked=new Set();
 let activePreviewTicket=null;
 const money=n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const localToday=()=>{
@@ -52,8 +51,6 @@ async function reload(){
   const data=await api('/api/accounts');
   accounts=data.accounts||[];
   if(selected&&!accounts.some(a=>a.id===selected))selected=null;
-  const valid=new Set(accounts.map(a=>a.id));
-  for(const id of checked)if(!valid.has(id))checked.delete(id);
   render();
 }
 function render(){
@@ -84,7 +81,6 @@ function render(){
     return true;
   });
   $('count').textContent=visible.length+' registros';
-  updateBulkBar();
   const body=$('rows');body.replaceChildren();
   if(!visible.length){
     const tr=document.createElement('tr'),td=document.createElement('td');
@@ -99,7 +95,7 @@ function render(){
     tr.title='Dê dois cliques para abrir as ações da conta';
     const dueDescription=dayLabel(a.vencimento);
     tr.innerHTML=
-       '<td><div class="vendor"><input class="bulk-check" type="checkbox" aria-label="Selecionar conta '+esc(a.fornecedor)+'" '+(checked.has(a.id)?'checked':'')+'><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
+       '<td data-label="Fornecedor"><div class="vendor"><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
       +'<td data-label="Observações" class="obs" title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'—')+'</td>'
       +'<td data-label="Vencimento"><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(dueDescription.includes('atrás')?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
       +'<td data-label="Valor" class="value">'+esc(money(a.valor))+'</td>'
@@ -107,64 +103,11 @@ function render(){
       +'<td data-label="Sugerido em" class="date-time">'+esc(timeBR(a.suggested_at))+'</td>'
       +'<td data-label="Enviado em" class="date-time">'+esc(timeBR(a.enviado_pagamento_em))+'</td>';
     tr.addEventListener('click',()=>select(a.id));
-    const checkbox=tr.querySelector('.bulk-check');
-    checkbox.addEventListener('click',e=>e.stopPropagation());
-    checkbox.addEventListener('dblclick',e=>e.stopPropagation());
-    checkbox.addEventListener('change',()=>{
-      if(checkbox.checked)checked.add(a.id);else checked.delete(a.id);
-      updateBulkBar();
-    });
     tr.addEventListener('dblclick',e=>openMenu(a.id,e));
     tr.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openMenu(a.id,e);}});
     body.appendChild(tr);
   }
 }
-function updateBulkBar(){
-  const count=checked.size;
-  $('bulkBar').hidden=count===0;
-  $('bulkCount').textContent=count+' conta'+(count===1?'':'s')+' selecionada'+(count===1?'':'s');
-}
-function checkedIds(){
-  return [...checked].filter(id=>accounts.some(a=>a.id===id)).sort((a,b)=>a-b);
-}
-function clearChecked(){checked.clear();render();}
-async function suggestBulk(){
-  const ids=checkedIds();if(!ids.length)return;
-  if(!confirm('Sugerir '+ids.length+' conta(s) no mobile?'))return;
-  try{
-    const result=await api('/api/batch/suggest','POST',{ids});
-    notice(result.count+' contas sugeridas para pagamento.');
-    clearChecked();await reload();
-  }catch(e){notice(e.message||String(e),true)}
-}
-async function sendBulk(){
-  const ids=checkedIds();if(!ids.length)return;
-  try{
-    const prepared=await api('/api/batch/prepare-send','POST',{ids});
-    await copyText(prepared.text); // gravação somente APÓS cópia confirmada
-    const result=await api('/api/batch/confirm-send','POST',{nonce:prepared.nonce});
-    notice(result.count+' contas copiadas e registradas como enviadas.');
-    clearChecked();await reload();
-  }catch(e){notice(e.message||String(e),true)}
-}
-function payBulk(){
-  const ids=checkedIds();if(!ids.length)return;
-  const today=localToday();
-  showModal('Pagamento em lote',
-    'Confirme o pagamento das '+ids.length+' contas selecionadas. Operação manual sem comprovante.',
-    '<label class="field">Data do pagamento<input id="bulkPaidDate" type="date" value="'+today+'"></label>'+
-    '<p class="hint">Contas já pagas serão ignoradas. Comprovantes são anexados individualmente pelo menu de cada conta.</p>',
-    'Registrar '+ids.length+' pagamentos',async()=>{
-      const result=await api('/api/batch/pay','POST',{
-        ids,data_pagamento:$('bulkPaidDate').value
-      });
-      const failures=Object.keys(result.errors||{}).length;
-      notice(result.count+' pagamentos registrados.'+(failures?' '+failures+' pendentes/recusados.':''),
-             failures>0);
-      clearChecked();await reload();return true;
-    });
-}
-
 function select(id){
   selected=id;
   for(const tr of $('rows').children)tr.classList.toggle('selected',Number(tr.dataset.id)===id);
@@ -392,10 +335,101 @@ async function uploadAccountPDF(file){
     ? 'PDF salvo em BOLETOS por ano e mês: '+data.folder
     : 'PDF anexado na pasta provisória. Configure a pasta-base em Pasta boletos.');await reload();
 }
-$('bulkSuggest').addEventListener('click',suggestBulk);
-$('bulkSend').addEventListener('click',sendBulk);
-$('bulkPay').addEventListener('click',payBulk);
-$('bulkClear').addEventListener('click',clearChecked);
+
+/* Desktop: colunas personalizadas, sem redimensionar o texto das celulas. */
+const COL_WEIGHT=[25,25,12,12,10,8,8],COL_MIN=[160,170,107,105,96,100,100];
+const COL_KEY='controle-contas-colunas-v1';
+const table=document.querySelector('.table-scroll table');
+const tableArea=document.querySelector('.table-scroll');
+const cols=Array.from(table.querySelectorAll('colgroup col'));
+const heads=Array.from(table.querySelectorAll('thead th'));
+let widths=null,customWidths=false;
+function autoColumnWidths(){
+  const area=Math.max(1,tableArea.clientWidth-2);
+  const extra=Math.max(0,area-COL_MIN.reduce((a,b)=>a+b,0));
+  const w=COL_MIN.map((minimum,i)=>minimum+Math.floor(extra*COL_WEIGHT[i]/100));
+  w[w.length-1]+=Math.max(0,area-w.reduce((a,b)=>a+b,0));
+  return w;
+}
+function readColumnWidths(){
+  try{
+    const x=JSON.parse(window.localStorage.getItem(COL_KEY)||'null');
+    if(Array.isArray(x)&&x.length===COL_MIN.length&&x.every((n,i)=>Number.isFinite(n)&&n>=COL_MIN[i]&&n<=1500))return x;
+  }catch(_){}
+  return null;
+}
+function setColumnWidths(next){
+  widths=next.map((n,i)=>Math.max(COL_MIN[i],Math.min(1500,Math.round(n))));
+  cols.forEach((col,i)=>{col.style.width=widths[i]+'px';});
+  table.style.width=widths.reduce((a,b)=>a+b,0)+'px';
+  heads.forEach((th,i)=>th.querySelector('.col-resize')?.setAttribute('aria-valuenow',String(widths[i])));
+}
+function persistColumnWidths(){
+  try{window.localStorage.setItem(COL_KEY,JSON.stringify(widths));}catch(_){}
+}
+function changeColumnWidth(i,next){
+  if(window.innerWidth<=990)return;
+  const data=widths.slice();
+  data[i]=Math.max(COL_MIN[i],Math.min(1500,Math.round(next)));
+  setColumnWidths(data);customWidths=true;
+}
+function resetColumnWidths(){
+  customWidths=false;
+  try{window.localStorage.removeItem(COL_KEY);}catch(_){}
+  if(window.innerWidth>990)setColumnWidths(autoColumnWidths());
+}
+function initializeColumnResizing(){
+  const saved=readColumnWidths();customWidths=Boolean(saved);
+  setColumnWidths(saved||autoColumnWidths());
+  heads.forEach((th,i)=>{
+    const handle=document.createElement('span');
+    handle.className='col-resize';handle.tabIndex=0;
+    handle.setAttribute('role','separator');
+    handle.setAttribute('aria-orientation','vertical');
+    handle.setAttribute('aria-label','Largura da coluna '+th.textContent.trim());
+    handle.setAttribute('aria-valuemin',String(COL_MIN[i]));
+    handle.setAttribute('aria-valuemax','1500');
+    handle.title='Arraste para ajustar; duplo clique para restaurar o padrão';
+    th.appendChild(handle);
+    let active=false,initialX=0,initialWidth=0;
+    handle.addEventListener('pointerdown',e=>{
+      if(e.button!==0||window.innerWidth<=990)return;
+      e.preventDefault();e.stopPropagation();
+      active=true;initialX=e.clientX;initialWidth=widths[i];
+      handle.classList.add('active');document.body.classList.add('resizing-column');
+      handle.setPointerCapture?.(e.pointerId);
+    });
+    handle.addEventListener('pointermove',e=>{
+      if(active){e.preventDefault();changeColumnWidth(i,initialWidth+e.clientX-initialX);}
+    });
+    const stop=e=>{
+      if(!active)return;
+      active=false;handle.classList.remove('active');document.body.classList.remove('resizing-column');
+      if(handle.hasPointerCapture?.(e.pointerId))handle.releasePointerCapture(e.pointerId);
+      persistColumnWidths();
+    };
+    handle.addEventListener('pointerup',stop);
+    handle.addEventListener('pointercancel',stop);
+    handle.addEventListener('lostpointercapture',stop);
+    handle.addEventListener('dblclick',e=>{e.preventDefault();e.stopPropagation();resetColumnWidths();});
+    handle.addEventListener('keydown',e=>{
+      let next;
+      if(e.key==='ArrowLeft')next=widths[i]-20;
+      else if(e.key==='ArrowRight')next=widths[i]+20;
+      else if(e.key==='Home')next=COL_MIN[i];
+      else return;
+      e.preventDefault();e.stopPropagation();
+      changeColumnWidth(i,next);persistColumnWidths();
+    });
+  });
+  setColumnWidths(widths);
+  $('resetColumns').addEventListener('click',resetColumnWidths);
+  window.addEventListener('resize',()=>{
+    if(window.innerWidth>990&&!customWidths)setColumnWidths(autoColumnWidths());
+  });
+}
+initializeColumnResizing();
+
 $('status').addEventListener('change',()=>{
   const value=$('status').value;
   activeTab=value==='Paga'?'paid':'open';

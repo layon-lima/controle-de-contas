@@ -137,3 +137,6 @@ apos salvar; anteriormente somente a confirmacao do novo PDF treinava.
 Se o aprendizado nao conseguir localizar a correcao no arquivo, o cadastro
 fica salvo sem perda e a interface mostra um aviso explicito por 10 segundos.
 O app nao garante aprender dados que nao estejam legiveis no boleto.
+
+## Colunas ajustaveis e sem selecao em lote
+No desktop (>990px), arraste a borda direita dos titulos para aumentar ou reduzir cada coluna, com limite minimo. A coluna cresce para revelar o texto truncado; fonte, conteudo e alinhamento a esquerda nao mudam e a linha nao quebra. O tamanho escolhido persiste no navegador e pode ser restaurado com **Restaurar colunas**. Expansao intencional alem da tela habilita o scroll horizontal da tabela; em telas pequenas seguem os cards responsivos. Foram removidos quadrados e a barra de selecao em lote; ficam os menus individuais, pesquisa, filtros e pagamentos. Nenhum dado do banco e alterado.

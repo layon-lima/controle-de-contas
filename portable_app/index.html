@@ -33,7 +33,13 @@ main.surface{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hid
 .filters .search input{width:100%;padding-left:37px}.filters input::placeholder{color:#91a1b5}
 .table-scroll{flex:1;min-height:340px;overflow:auto;margin:0 9px 8px;border:1px solid #e7edf5;border-radius:10px}
 table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;min-width:1000px}
-thead th{height:43px;background:#f8fbfe;color:#516982;text-align:left;padding:0 12px;font-size:11px;border-bottom:1px solid #e0e9f4;position:sticky;top:0;z-index:3;white-space:nowrap}
+thead th{height:43px;background:#f8fbfe;color:#516982;text-align:left;padding:0 20px 0 12px;font-size:11px;border-bottom:1px solid #e0e9f4;position:sticky;top:0;z-index:3;white-space:nowrap;overflow:visible}
+thead th .col-resize{position:absolute;right:-6px;top:0;bottom:0;width:12px;cursor:col-resize;z-index:5;touch-action:none;user-select:none}
+thead th .col-resize:after{content:"";position:absolute;left:5px;top:8px;bottom:8px;width:2px;border-radius:2px;background:transparent}
+thead th .col-resize:hover:after,thead th .col-resize:focus-visible:after,.resizing-column thead th .col-resize.active:after{background:#2885df}
+.resizing-column,.resizing-column *{cursor:col-resize!important;user-select:none!important}
+.reset-columns{border:1px solid #dce7f2;background:#f7faff;border-radius:7px;padding:5px 8px;font-weight:650;font-size:11px;color:#52749c;white-space:nowrap}
+.reset-columns:hover{background:#edf5ff;color:#1b68ad}
 thead th+th,tbody td+td{border-left:1px solid #ecf1f6}
 tbody tr{height:48px;cursor:pointer;transition:background .1s}tbody tr:nth-child(even){background:#fbfdff}
 tbody tr:hover{background:#f1f7ff}tbody tr.selected{background:#e2f0ff!important;box-shadow:inset 3px 0 0 #3a92ed}
@@ -48,12 +54,6 @@ tbody tr:last-child td{border-bottom:0}
 .pill:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .pill.Vencida{color:#bd3944;background:#ffebee}.pill.Próxima{color:#bc8217;background:#fff3dc}.pill.Emdia,.pill.Paga{color:#198357;background:#e6f7ed}
 .empty{color:#8595a6}
-.bulk-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 15px;margin:0 9px 8px;border-radius:9px;background:#eef6ff;border:1px solid #cbdff5}
-.bulk-bar[hidden]{display:none}
-.bulk-bar strong{font-size:12px;color:#1768bd;margin-right:auto}
-.bulk-bar button{border:1px solid #c7ddf5;border-radius:8px;background:white;padding:7px 11px;color:#2b567e;font-weight:700}
-.bulk-bar button:hover{background:#d8edff}
-.bulk-check{width:15px;height:15px;accent-color:#1877e1;flex:none;cursor:pointer}
 .kpi.clickable{cursor:pointer;transition:border-color .16s,box-shadow .16s,transform .16s}
 .kpi.clickable:hover{border-color:#9cbdf0;box-shadow:0 4px 12px rgba(25,103,201,.12);transform:translateY(-1px)}
 .kpi.clickable:focus-visible{outline:3px solid #7bb7ff;outline-offset:2px}
@@ -114,6 +114,7 @@ table{min-width:0}.vendor-name{min-width:0}
  .table-scroll{overflow-x:hidden;margin:0 8px 8px;border:0;background:transparent}
  table,tbody{display:block;width:100%;min-width:0}
  colgroup,thead{display:none}
+ .reset-columns{display:none}
  tbody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
  tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 12px;height:auto;padding:12px;border:1px solid #e0e9f3;border-radius:12px;background:white!important;min-width:0;box-shadow:0 2px 10px #12345609}
  tbody td,tbody td+td{display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;border:0;padding:0;white-space:normal;overflow-wrap:anywhere}
@@ -137,7 +138,6 @@ table{min-width:0}.vendor-name{min-width:0}
  .filters select{width:100%;min-width:0;max-width:100%}
  .filters .search{grid-column:1/-1;order:0;width:100%}
  .section-header{padding:11px 12px}.section-header h2{font-size:16px}
- .bulk-bar{margin:0 8px 8px;gap:6px;padding:9px}.bulk-bar button{flex:1 1 auto;min-width:0}
  tbody{grid-template-columns:minmax(0,1fr)}
  .dialog{padding:15px;max-height:calc(100dvh - 16px)}
  .backdrop{padding:8px}.dialog-actions{flex-wrap:wrap}.dialog-actions button{flex:1 1 auto}
@@ -171,21 +171,14 @@ table{min-width:0}.vendor-name{min-width:0}
     </div>
   </header>
   <main class="surface">
-    <div class="section-header"><h2 id="listTitle">Visão geral</h2><div><button type="button" class="back-to-open" id="backToOpen" hidden>← Em aberto</button><span class="count">Lançamentos <strong id="count">0 registros</strong></span></div></div>
+    <div class="section-header"><h2 id="listTitle">Visão geral</h2><div><button type="button" class="back-to-open" id="backToOpen" hidden>← Em aberto</button><span class="count">Lançamentos <strong id="count">0 registros</strong></span><button type="button" id="resetColumns" class="reset-columns" title="Voltar às larguras padrão">↺ Restaurar colunas</button></div></div>
     <div class="filters">
       <label>Status <select id="status"><option value="all">Todas</option><option>Vencida</option><option>Próxima</option><option>Em dia</option><option>Paga</option></select></label>
       <div class="search"><img src="/search.svg" alt=""><input type="search" id="search" placeholder="Pesquisar fornecedor, valor, descrição ou vencimento..."></div>
     </div>
-    <div class="bulk-bar" id="bulkBar" hidden>
-      <strong id="bulkCount">0 contas selecionadas</strong>
-      <button id="bulkSuggest" type="button">Sugerir pagamento</button>
-      <button id="bulkSend" type="button">Copiar / enviar</button>
-      <button id="bulkPay" type="button">Registrar pagamento</button>
-      <button id="bulkClear" type="button">Limpar seleção</button>
-    </div>
     <div class="table-scroll">
       <table aria-label="Contas a pagar, clique duas vezes em uma linha para as ações">
-        <colgroup><col style="width:25%"><col style="width:25%"><col style="width:12%"><col style="width:12%"><col style="width:10%"><col style="width:8%"><col style="width:8%"></colgroup>
+        <colgroup><col><col><col><col><col><col><col></colgroup>
         <thead><tr><th>Fornecedor</th><th>Observações</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Sugerido em</th><th>Enviado em</th></tr></thead>
         <tbody id="rows"><tr><td colspan="7" style="text-align:center;padding:45px">Carregando contas…</td></tr></tbody>
       </table>
