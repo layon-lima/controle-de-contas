@@ -724,7 +724,13 @@ def _field_line_score(field: str, target: Any, line: dict[str, Any]) -> float:
         return SequenceMatcher(None, a, b).ratio() * 0.75
     if field == "vencimento":
         target_date = _parse_date(str(target or "")) or str(target or "").strip()
-        return 1.0 if target_date and target_date in {_parse_date(text), str(text).strip()} else 0.0
+        if not target_date:
+            return 0.0
+        # Uma linha pode conter emissao, processamento E vencimento.
+        # A antiga verificacao olhava apenas a primeira data.
+        date_pattern = r"(?<!\\d)(?:\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})(?!\\d)"
+        return 1.0 if any(_parse_date(match.group(0)) == target_date
+                          for match in re.finditer(date_pattern, text)) else 0.0
     if field == "valor":
         try:
             tv = round(float(target), 2)
@@ -775,6 +781,19 @@ def _refine_value_rect(field: str, target: Any, line: dict[str, Any]) -> list[fl
                 max(0.0, precise[0] - 0.003), max(0.0, precise[1] - 0.003),
                 min(1.0, precise[2] + 0.004), min(1.0, precise[3] + 0.003),
             ]
+
+    if field == "vencimento":
+        expected = _parse_date(str(target or "")) or str(target or "").strip()
+        if expected:
+            # Selecionar APENAS a palavra/data confirmada, nao toda a
+            # linha onde aparecem emissao e vencimento juntos.
+            for start in range(len(words)):
+                for finish in range(start + 1, min(len(words), start + 3) + 1):
+                    fragment = " ".join(str(w["text"]) for w in words[start:finish])
+                    if _parse_date(fragment) == expected:
+                        r = _rect_union(words[start:finish])
+                        return [max(0.0, r[0] - 0.004), max(0.0, r[1] - 0.003),
+                                min(1.0, r[2] + 0.004), min(1.0, r[3] + 0.003)]
 
     if field == "codigo_pagamento":
         target_code = _normalize_code(str(target or ""))
@@ -1000,6 +1019,19 @@ def _clean_candidate(field: str, text: str) -> Any:
 def _read_rule(model: dict[str, Any], rule: dict[str, Any], field: str) -> Any:
     page_idx = int(rule.get("page", 0))
 
+    # Beneficiario e pagador tambem podem ter rotulo e nome NA MESMA linha.
+    # A leitura anterior descartava toda linha que continha um rotulo;
+    # uma correcao era gravada mas jamais reaplicada no mesmo PDF.
+    if field in {"recebedor", "pagador"}:
+        value_rect = _predicted_rect(model, rule, use_line=False)
+        for page in model.get("pages", []):
+            if int(page["page"]) != page_idx:
+                continue
+            fragment = _text_from_region_words(page, value_rect)
+            value = _clean_candidate(field, fragment)
+            if value:
+                return value
+
     # Referência textual livre (ex.: exercício 2026) usa a região exata.
     if field == "referencia" and str(rule.get("reference_kind") or "") == "text":
         value_rect = _predicted_rect(model, rule, use_line=False)
@@ -1070,6 +1102,7 @@ class LayoutLearningV2:
         self._data: dict[str, Any] | None = None
         self._model_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._signature_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
+        self._ocr_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
 
     def _cache_key(self, caminho: str | Path) -> tuple[str, int, int]:
         p = Path(caminho).resolve()
@@ -1112,6 +1145,18 @@ class LayoutLearningV2:
         if len(self._model_cache) >= 32:
             self._model_cache.clear()
         self._model_cache[key] = model
+        return model
+
+    def _ocr_model(self, caminho: str | Path) -> dict[str, Any]:
+        """Busca na imagem campos ausentes do texto interno do PDF."""
+        key = self._cache_key(caminho)
+        found = self._ocr_cache.get(key)
+        if found is not None:
+            return found
+        model = _ocr_document(caminho, tesseract_locator=self.tesseract_locator)
+        if len(self._ocr_cache) >= 8:
+            self._ocr_cache.clear()
+        self._ocr_cache[key] = model
         return model
 
     def _signature(self, caminho: str | Path) -> dict[str, Any]:
@@ -1212,12 +1257,23 @@ class LayoutLearningV2:
         applied: set[str] = set()
         insecure = set(str(x) for x in dados.get("campos_inseguros", []) or [])
         fields = profile.get("fields") or {}
+        ocr_model = None
 
         for field in FIELDS:
             rule = fields.get(field)
             if not isinstance(rule, dict) or _rule_strength(rule) < 1:
                 continue
-            value = _read_rule(model, rule, field)
+            source = model
+            if str(rule.get("source") or "") == "ocr" and model.get("source") != "ocr":
+                if ocr_model is None:
+                    try:
+                        ocr_model = self._ocr_model(caminho)
+                    except Exception:
+                        ocr_model = {}
+                if not ocr_model:
+                    continue
+                source = ocr_model
+            value = _read_rule(source, rule, field)
             if value in (None, ""):
                 continue
             if field == "recebedor":
@@ -1279,6 +1335,8 @@ class LayoutLearningV2:
         fields = profile.setdefault("fields", {})
         learned_fields: list[str] = []
         corrected_fields: list[str] = []
+        missing_fields: list[str] = []
+        ocr_model = None
 
         for field in FIELDS:
             final = final_values.get(field)
@@ -1301,12 +1359,25 @@ class LayoutLearningV2:
             corrected = bool(predicted not in (None, "") and not _equivalent(field, final, predicted))
             rule = _build_rule(model, field, final, corrected=corrected)
             old = fields.get(field)
+            # Em boletos hibridos, nomes e numeros podem estar impressos na
+            # imagem mesmo quando o PDF possui texto interno suficiente.
+            # A tentativa por imagem roda somente se o valor confirmado nao
+            # foi localizado na camada interna; nunca inventa o valor.
+            if rule is None and model.get("source") != "ocr":
+                if ocr_model is None:
+                    try:
+                        ocr_model = self._ocr_model(caminho)
+                    except Exception:
+                        ocr_model = {}
+                if ocr_model:
+                    rule = _build_rule(ocr_model, field, final, corrected=corrected)
             if rule is None:
-                # Se já existe regra e o valor previsto por ela foi aceito, confirma.
                 if isinstance(old, dict) and predicted not in (None, "") and _equivalent(field, final, predicted):
                     old["confirmations"] = int(old.get("confirmations", 0)) + 1
                     old["updated_at"] = datetime.now().isoformat(timespec="seconds")
                     learned_fields.append(field)
+                elif corrected or predicted in (None, ""):
+                    missing_fields.append(field)
                 continue
 
             if isinstance(old, dict):
@@ -1334,6 +1405,7 @@ class LayoutLearningV2:
             "profile_score": round(float(score), 3),
             "fields": learned_fields,
             "corrected_fields": corrected_fields,
+            "missing_fields": missing_fields,
         }
 
     def debug_profiles(self) -> list[dict[str, Any]]:
