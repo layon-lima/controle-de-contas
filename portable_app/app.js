@@ -44,9 +44,9 @@ async function api(route,method='GET',data){
   if(!response.ok||body.ok===false)throw new Error(body.error||'Operação não concluída.');
   return body;
 }
-function notice(message,error=false){
+function notice(message,error=false,duration=4200){
   const toast=$('toast');toast.textContent=message;toast.className='toast '+(error?'error':'ok');toast.style.display='block';
-  clearTimeout(notice.timer);notice.timer=setTimeout(()=>toast.style.display='none',4200);
+  clearTimeout(notice.timer);notice.timer=setTimeout(()=>toast.style.display='none',duration);
 }
 async function reload(){
   const data=await api('/api/accounts');
@@ -290,10 +290,16 @@ function accountModal(a,preview=null,rerun=null){
       const values=Object.fromEntries(new FormData(form));
       const route=preview?'/api/import/commit':a?'/api/accounts/'+a.id+'/edit':'/api/accounts';
       const saved=await api(route,'POST',preview?{...values,ticket:preview.ticket}:values);
-      if(preview){
-        notice(saved.organized?'Conta criada e PDF organizado na pasta de boletos.':'Conta criada. Configure a pasta-base para organizar os boletos.');
-        setAccountView('open');
+      if(saved.warning){
+        // Cadastro foi salvo, mas a correcao ainda nao ensinou o leitor.
+        // Aviso nao pode desaparecer dentro do retorno JSON.
+        notice(saved.warning,true,10000);
+      }else if(preview){
+        const trained=(saved.learning?.fields||[]).length;
+        notice(trained?'Conta salva. Aprendizado OCR registrado ('+trained+' campos).':
+          'Conta salva. Nenhum novo campo foi aprendido.');
       }else notice(a?'Conta atualizada.':'Conta cadastrada.');
+      if(preview)setAccountView('open');
       await reload();return true;
     });
 }

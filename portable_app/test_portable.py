@@ -124,6 +124,50 @@ class PortableDataTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db)) as conn:
             self.assertEqual(conn.execute("SELECT name FROM cc_tags WHERE id=1").fetchone()[0], "ANTIGA")
 
+
+    def test_manual_edit_of_existing_pdf_trains_corrected_field(self):
+        """A correção FEITA DEPOIS do cadastro também ensina o OCR."""
+        bill = self._real_pdf("BOLETO PARA CORRECAO")
+        s.upload_pdf(1, bill, "CONTA TESTE.pdf")
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={
+            "learned": True, "fields": ["recebedor"], "corrected_fields": ["recebedor"],
+        }) as train:
+            saved = s.edit_account(1, {
+                "fornecedor": "FORNECEDOR CORRIGIDO", "valor": 123.45,
+                "vencimento": date.today().isoformat(),
+                "observacoes": "Teste de cadastro",
+            })
+        self.assertFalse(saved["warning"])
+        self.assertTrue(train.called)
+        self.assertEqual(train.call_args.args[1]["fornecedor"], "FORNECEDOR CORRIGIDO")
+        self.assertEqual(s.list_accounts()["accounts"][0]["fornecedor"], "FORNECEDOR CORRIGIDO")
+
+    def test_failed_ocr_learning_does_not_lose_manual_correction(self):
+        """Feedback transparente: edicao salva mesmo se aprendizado falhar."""
+        bill = self._real_pdf("BOLETO PARA CORRECAO")
+        s.upload_pdf(1, bill, "CONTA TESTE.pdf")
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={
+            "learned": True, "fields": ["valor"], "corrected_fields": [],
+        }):
+            saved = s.edit_account(1, {
+                "fornecedor": "NOME CORRIGIDO", "valor": 123.45,
+                "vencimento": date.today().isoformat(),
+            })
+        self.assertIn("não foi aprendida", saved["warning"])
+        self.assertEqual(s.list_accounts()["accounts"][0]["fornecedor"], "NOME CORRIGIDO")
+
+    def test_existing_pdf_without_changes_is_not_retrained(self):
+        bill = self._real_pdf("BOLETO")
+        s.upload_pdf(1, bill, "CONTA TESTE.pdf")
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed") as train:
+            result = s.edit_account(1, {
+                "fornecedor": "PROVA SEM PDF", "valor": 123.45,
+                "vencimento": date.today().isoformat(),
+                "observacoes": "Observação alterada; não é campo OCR",
+            })
+        self.assertEqual(result["warning"], "")
+        train.assert_not_called()
+
     def test_attach_pdf_and_do_not_delete_physical_document(self):
         result = s.upload_pdf(1, self._real_pdf("NOTA FISCAL"), "nota fiscal.pdf")
         self.assertTrue(result["name"].endswith(".pdf"))
@@ -193,6 +237,8 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("window.__CONTAS_TOKEN__", js)
         self.assertIn("/api/import/preview", js)
         self.assertIn("preview.original_filename", js)
+        self.assertIn("notice(saved.warning,true,10000)", js)
+        self.assertIn("**edit_account(account_id, data)", (s.ROOT / "portable_app" / "server.py").read_text(encoding="utf-8"))
         self.assertNotIn('id="ocrMode"', html)
         self.assertNotIn('value="legacy"', html)
         self.assertIn("'X-Ocr-Mode':'hybrid'", js)

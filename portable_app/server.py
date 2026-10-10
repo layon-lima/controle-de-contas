@@ -243,6 +243,75 @@ def set_document_folder(data):
     return {"folder": str(folder), "configured": True}
 
 
+
+# Aprender somente campos efetivamente conferidos pelo usuario. Nao criar
+# regras para dados ausentes no PDF, e nao anunciar aprendizado silenciosamente.
+LEARNING_FIELDS = {
+    "fornecedor": "recebedor", "pagador": "pagador", "referencia": "referencia",
+    "valor": "valor", "vencimento": "vencimento",
+    "codigo_pagamento": "codigo_pagamento",
+}
+LEARNING_LABELS = {
+    "recebedor": "Fornecedor", "pagador": "Pagador", "referencia": "Referência",
+    "valor": "Valor", "vencimento": "Vencimento",
+    "codigo_pagamento": "PIX / linha digitável",
+}
+
+
+def _learning_differences(final: dict, previous: dict) -> set[str]:
+    changes = set()
+    for column, field in LEARNING_FIELDS.items():
+        latest = final.get(column)
+        if latest in (None, "", 0):
+            continue
+        earlier = previous.get(column)
+        if column == "valor":
+            try:
+                if abs(float(latest) - float(earlier or 0)) < 0.005:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        elif column == "codigo_pagamento":
+            if re.sub(r"[^a-zA-Z0-9]", "", str(latest)).casefold() == re.sub(
+                r"[^a-zA-Z0-9]", "", str(earlier or "")
+            ).casefold():
+                continue
+        elif " ".join(str(latest).split()).casefold() == " ".join(str(earlier or "").split()).casefold():
+            continue
+        changes.add(field)
+    return changes
+
+
+def _learn_reviewed_pdf(pdf_path: Path, final: dict, predicted: dict,
+                        *, required: set[str] | None = None) -> tuple[dict, str]:
+    """Nunca desmancha conta salva quando o aprendizado nao identifica a correcao."""
+    expected = _learning_differences(final, predicted) if required is None else required
+    try:
+        learned = pdf_intelligence.learn_from_confirmed(pdf_path, final, predicted)
+        if not isinstance(learned, dict):
+            raise RuntimeError("O motor nao devolveu o resultado do aprendizado.")
+    except Exception as exc:
+        return {}, "Conta salva, mas o OCR não conseguiu aprender: " + str(exc)
+    if learned.get("learned") is False:
+        reason = str(learned.get("reason") or "sem perfil reconhecido")
+        return learned, "Conta salva, mas o OCR não confirmou o aprendizado (" + reason + ")."
+    if expected:
+        confirmed = set(str(x) for x in learned.get("corrected_fields") or [])
+        # Quando o OCR anterior deixou um campo vazio, a regra pode ser nova
+        # sem constar em corrected_fields; ela deve aparecer em fields.
+        all_fields = set(str(x) for x in learned.get("fields") or [])
+        missed = sorted(field for field in expected if
+                        field not in confirmed and
+                        (predicted.get(next((col for col, f in LEARNING_FIELDS.items()
+                                            if f == field), field)) not in (None, "", 0)
+                         or field not in all_fields))
+        if missed:
+            labels = ", ".join(LEARNING_LABELS.get(field, field) for field in missed)
+            return learned, ("Conta salva, mas a correção de " + labels +
+                             " ainda não foi aprendida. Confira a leitura do próximo boleto.")
+    return learned, ""
+
+
 def create_account_from_preview(data):
     """Confirma campos corrigidos pelo usuário, grava PDF e cadastro atomicamente."""
     ticket = str(data.get("ticket") or "")
@@ -284,12 +353,7 @@ def create_account_from_preview(data):
     pdf_workflows.consume_preview(ticket)
     # A mesma aprendizagem V2 do desktop, após os dados serem confirmados.
     # Um problema de aprendizado NUNCA perde ou duplica o boleto recém-gravado.
-    learning = {}
-    warning = ""
-    try:
-        learning = pdf_intelligence.learn_from_confirmed(target, fields, predicted)
-    except Exception as exc:
-        warning = "Cadastro salvo; aprendizado de layout pendente: " + str(exc)
+    learning, warning = _learn_reviewed_pdf(target, fields, predicted)
     return {"id": account_id, "name": target.name,
             "folder": str(target.parent), "organized": organized,
             "learning": learning, "warning": warning}
@@ -298,12 +362,22 @@ def create_account_from_preview(data):
 def edit_account(account_id, data):
     values = normalize(data)
     with connection(write=True) as conn:
-        account(conn, account_id)
+        original = dict(account(conn, account_id))
         # Não toca em pagamentos, PDFs, atividade cloud ou datas de envio.
         pairs = ",".join(f"{key}=?" for key in FIELDS)
         conn.execute(
             f"UPDATE contas SET {pairs},atualizado_em=? WHERE id=?",
             [values[c] for c in FIELDS] + [stamp(), account_id])
+    # Edicao manual de um campo previamente lido errado TAMBEM ensina o
+    # layout do PDF. Antes, so o cadastro novo treinava o leitor.
+    changed = _learning_differences(values, original)
+    previous_pdf = str(original.get("pdf_conta") or "").strip()
+    if not changed or not previous_pdf or not Path(previous_pdf).is_file():
+        return {"learning": {}, "warning": ""}
+    learned, warning = _learn_reviewed_pdf(
+        Path(previous_pdf), values, original, required=changed
+    )
+    return {"learning": learned, "warning": warning}
 
 
 def remove_account(account_id):
@@ -1000,8 +1074,7 @@ class Handler(BaseHTTPRequestHandler):
                     if self.command == "POST":
                         data = self._body()
                         if op == "edit":
-                            edit_account(account_id, data)
-                            result = {"saved": True}
+                            result = {"saved": True, **edit_account(account_id, data)}
                         elif op == "delete":
                             remove_account(account_id)
                             result = {"deleted": True}

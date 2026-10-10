@@ -126,3 +126,14 @@ a releitura OCR de conta existente não substitui automaticamente Observações.
 
 ## Remoção de TAGs
 A interface web e sua API não oferecem mais filtros, colunas, menus ou cadastros de TAGs. Eventuais tabelas antigas `cc_tags` e `cc_account_tags` são mantidas intactas no banco para não destruir dados históricos durante a migração.
+
+## OCR: revisao e aprendizado verificavel
+O OCR V2 prioriza a regiao precisa que foi confirmada, evitando escolher
+um valor incorreto quando ha varios numeros na mesma linha. Perfis historicos
+praticamente identicos podem resolver empate estrutural de modo conservador.
+Corrigir o fornecedor, pagador, vencimento, valor, referencia ou codigo
+em **Editar conta** com PDF existente agora tambem executa o aprendizado
+apos salvar; anteriormente somente a confirmacao do novo PDF treinava.
+Se o aprendizado nao conseguir localizar a correcao no arquivo, o cadastro
+fica salvo sem perda e a interface mostra um aviso explicito por 10 segundos.
+O app nao garante aprender dados que nao estejam legiveis no boleto.

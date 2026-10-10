@@ -40,6 +40,11 @@ def run(engine: Path, path: Path):
         "confidence": confidence if isinstance(confidence, dict) else {},
         "reason": reason if isinstance(reason, dict) else {},
         "insecure_fields": data.get("campos_inseguros") or [],
+        "layout_applied": {
+            "profile_id": str(data.get("_layout_v2") or ""),
+            "fields": data.get("_campos_layout_v2") or [],
+            "similarity": data.get("_layout_v2_score") or 0,
+        },
         "warnings": [],
     }
 
