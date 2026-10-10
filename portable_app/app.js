@@ -362,7 +362,7 @@ async function action(kind){
     if(kind==='pdf')await showPDF();
     else if(kind==='attach')$('uploadFile').click();
     else if(kind==='reanalyze'){
-      const read=await api('/api/accounts/'+a.id+'/analyze');
+      const read=await api('/api/accounts/'+a.id+'/analyze?mode='+$('ocrMode').value);
       accountModal(a,null,read);
     }
     else if(kind==='copy-code'){
@@ -447,7 +447,7 @@ $('importFile').addEventListener('change',async e=>{
     const response=await fetch('/api/import/preview',{
       method:'POST',
       headers:{'X-Local-Token':token,'Content-Type':'application/pdf',
-               'X-Pdf-Name':encodeURIComponent(file.name)},
+               'X-Pdf-Name':encodeURIComponent(file.name),'X-Ocr-Mode':$('ocrMode').value},
       body:file,
     });
     const result=await response.json().catch(()=>({error:'Resposta inválida do leitor OCR.'}));
