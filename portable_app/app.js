@@ -251,10 +251,17 @@ function showModal(title,description,bodyHTML,label,onSave){
   dialogSave=onSave;$('backdrop').classList.add('show');
   $('dialogBody').querySelector('input,select,textarea')?.focus();
 }
-function closeModal(){
+function closeModal({saved=false}={}){
+  if(!$('backdrop').classList.contains('show'))return false;
+  // Nao descartar um cadastro/edicao por clique acidental fora do formulario,
+  // Escape ou Cancelar. A previa OCR so expira quando a saida for confirmada.
+  if(!saved&&$('accountForm')&&!window.confirm(
+    'Deseja realmente abandonar este formulario? As informacoes preenchidas serao perdidas.'
+  ))return false;
   $('backdrop').classList.remove('show');dialogSave=null;
   const ticket=activePreviewTicket;activePreviewTicket=null;
-  if(ticket)api('/api/import/cancel','POST',{ticket}).catch(()=>{});
+  if(ticket&&!saved)api('/api/import/cancel','POST',{ticket}).catch(()=>{});
+  return true;
 }
 const accountFields=[
   ['fornecedor','Fornecedor *','text'],['valor','Valor (R$) *','number'],
@@ -521,12 +528,12 @@ document.addEventListener('click',e=>{
   if(!e.target.closest('#menu')&&!e.target.closest('tbody tr'))closeMenu();
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenu();closeModal();}});
-$('cancel').addEventListener('click',closeModal);
+$('cancel').addEventListener('click',()=>closeModal());
 $('backdrop').addEventListener('click',e=>{if(e.target===$('backdrop'))closeModal()});
 $('save').addEventListener('click',async()=>{
   if(!dialogSave)return;
   $('save').disabled=true;
-  try{const ok=await dialogSave();if(ok)closeModal()}
+  try{const ok=await dialogSave();if(ok)closeModal({saved:true})}
   catch(e){notice(e.message||String(e),true)}
   finally{$('save').disabled=false}
 });

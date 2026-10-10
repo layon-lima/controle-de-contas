@@ -218,6 +218,10 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("totals.Paga[0]++", js)
         self.assertIn("togglePaidView", js)
         self.assertIn("setAccountView('paid')", js)
+        self.assertIn("if(!saved&&$('accountForm')&&!window.confirm(", js)
+        self.assertIn("if(ticket&&!saved)api('/api/import/cancel'", js)
+        self.assertIn("if(ok)closeModal({saved:true})", js)
+        self.assertIn("addEventListener('click',()=>closeModal())", js)
 
     def test_cancelled_ocr_preview_leaves_no_record_or_document(self):
         from portable_app import pdf_workflows as flow
