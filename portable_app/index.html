@@ -78,6 +78,8 @@ tbody tr:last-child td{border-bottom:0}
 .field textarea{min-height:68px;resize:vertical}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.dialog-actions button{padding:10px 17px;border-radius:8px}
 .tag-options{display:flex;flex-wrap:wrap;gap:8px}.tag-option{border:1px solid #dae5f2;border-radius:9px;padding:9px;cursor:pointer}.tag-option input{accent-color:#147ce7}
 .hint{color:#8598ad;font-size:11px;margin-top:9px}
+.ocr-mode{display:flex;align-items:center;gap:6px;color:#617b97;font-size:11px;font-weight:700}
+.ocr-mode select{max-width:145px;min-height:36px;border:1px solid #dce7f2;border-radius:8px;color:#2d567b;background:#fff;padding:0 7px;font-weight:650}
 .ocr-note{background:#f2f7ff;border:1px solid #cbdffa;border-radius:10px;color:#34577b;padding:10px 12px;line-height:1.55;font-size:12px;margin:0 0 14px}
 .ocr-note.warning{background:#fff9ed;border-color:#f5d89f;color:#7b571b}
 .ocr-progress{font-size:11px;color:#596e89;font-weight:700}
@@ -100,6 +102,12 @@ tbody tr:last-child td{border-bottom:0}
     <div class="top-actions">
       <button id="folderBtn" title="Definir a pasta onde os boletos serão organizados"><img src="/icons/settings.svg" width="15" alt=""> Pasta boletos</button>
       <button id="mobileBtn"><img src="/icons/smartphone.svg" width="15" alt=""> Acesso mobile</button>
+      <label class="ocr-mode" title="Pode voltar ao leitor original quando quiser">Leitura
+        <select id="ocrMode" aria-label="Modo de leitura de PDFs">
+          <option value="hybrid">OCR aprimorado</option>
+          <option value="legacy">OCR original</option>
+        </select>
+      </label>
       <button id="pdfImport"><img src="/icons/upload.svg" width="16" alt=""> Importar PDF</button>
       <button class="primary" id="newAccount">＋ Nova conta</button>
       <input type="file" id="uploadFile" accept=".pdf,application/pdf" hidden><input type="file" id="importFile" accept=".pdf,application/pdf" hidden>
