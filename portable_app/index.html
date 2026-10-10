@@ -27,6 +27,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .ai-settings input{width:17px;height:17px}
 .ai-settings .outline{width:max-content;padding:8px 12px}
 .ai-settings p{margin:0;font-size:12px;color:#71829a;line-height:1.5}
+.gpt-correction{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px 11px;background:#f4f8ff;border:1px solid #d4e4fa;border-radius:10px}
+.gpt-correction button{padding:8px 12px;border-color:#bfd5ee;white-space:nowrap;font-weight:750;color:#195db2}
+.gpt-correction span{font-size:11px;color:#637a94;flex:1;min-width:150px}
+.gpt-corrected{border-color:#8bb5ef!important;box-shadow:0 0 0 2px #ddecff}
+@media(max-width:680px){.gpt-correction button{width:100%}.gpt-correction span{min-width:0}}
 .top-actions .primary,.primary{background:var(--green);border:1px solid var(--green);color:white;border-radius:9px;font-weight:700}
 .top-actions .primary:hover,.primary:hover{background:#06744f}
 main.surface{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -171,7 +176,7 @@ table{min-width:0}.vendor-name{min-width:0}
     </div>
     <div class="top-actions">
       <button id="folderBtn" title="Definir a pasta onde os boletos serão organizados"><img src="/icons/settings.svg" width="15" alt=""> Pasta boletos</button>
-      <button type="button" id="aiConnect" title="IA opcional: preencher apenas campos que o OCR deixou vazios">Conectar ChatGPT</button>
+      <button type="button" id="aiConnect" title="IA opcional: corrigir documentos somente sob seu comando">Conectar ChatGPT</button>
       <button id="mobileBtn"><img src="/icons/smartphone.svg" width="15" alt=""> Acesso mobile</button>
       <button id="pdfImport"><img src="/icons/upload.svg" width="16" alt=""> Importar PDF</button>
       <button class="primary" id="newAccount">＋ Nova conta</button>
