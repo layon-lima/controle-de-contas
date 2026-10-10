@@ -32,15 +32,16 @@ $Shortcut.WorkingDirectory = $Root
 $Shortcut.Description = "Controle de Contas web local - sem instalador"
 $Shortcut.WindowStyle = 1
 
-$IconScript = Join-Path $Root "tools\CREATE_WEB_ICON.ps1"
-if (-not (Test-Path -LiteralPath $IconScript -PathType Leaf)) {
-    throw "Gerador do icone Windows nao encontrado."
-}
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $IconScript
-if ($LASTEXITCODE -ne 0) { throw "Falha ao criar icone para atalho web." }
 $Icon = Join-Path $Root "source_current\assets\controle_contas_web.ico"
 if (-not (Test-Path -LiteralPath $Icon -PathType Leaf)) {
-    throw "Icone Windows web nao foi gerado."
+    # Backup para clones antigos sem o recurso ja incluido no GitHub.
+    $IconScript = Join-Path $Root "tools\CREATE_WEB_ICON.ps1"
+    if (Test-Path -LiteralPath $IconScript -PathType Leaf) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $IconScript
+    }
+}
+if (-not (Test-Path -LiteralPath $Icon -PathType Leaf)) {
+    throw "Icone Windows web indisponivel."
 }
 $Shortcut.IconLocation = $Icon + ",0"
 $Shortcut.Save()
