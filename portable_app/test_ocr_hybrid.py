@@ -53,6 +53,30 @@ class HybridOcrTests(unittest.TestCase):
         self.assertFalse(hybrid.valid_bank_slip("1" * 47))
         self.assertIsNone(hybrid.payment_code(bad))
 
+    def test_collection_slip_48_digits_requires_four_real_checksums(self):
+        first = "83612345678"  # Identificador 8 / referência 6: mod 10.
+        chunks = [first, "12345678901", "98765432109", "13579135791"]
+        code = "".join(c + str(hybrid._mod10(c)) for c in chunks)
+        self.assertEqual(len(code), 48)
+        self.assertTrue(hybrid.valid_collection_slip(code))
+        self.assertEqual(hybrid.payment_code(code), code)
+        bad = code[:23] + str((int(code[23]) + 1) % 10) + code[24:]
+        self.assertFalse(hybrid.valid_collection_slip(bad))
+        self.assertIsNone(hybrid.payment_code(bad))
+
+    def test_labeled_values_on_separate_lines_are_still_verified(self):
+        result = hybrid.read_labeled_text(
+            "BENEFICIARIO\nEMPRESA BOLETO LTDA\n"
+            "VENCIMENTO\n28/02/2028\n"
+            "VALOR TOTAL\nR$ 78,50"
+        )
+        self.assertEqual(result["vencimento"], "2028-02-28")
+        self.assertEqual(result["valor"], 78.50)
+        self.assertEqual(result["fornecedor"], "empresa boleto ltda")
+        self.assertNotIn("valor", hybrid.read_labeled_text(
+            "VALOR TOTAL\n- R$ 80,00"
+        ))
+
     def test_pix_crc_accepts_valid_code_and_rejects_corruption(self):
         pix = pix_payload()
         self.assertTrue(hybrid.valid_pix_emv(pix))
