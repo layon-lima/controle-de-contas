@@ -11,7 +11,7 @@ from pathlib import Path
 import fitz
 import pytesseract
 
-from pdf_intelligence import analyze_pdf, find_legacy_engine
+from pdf_intelligence import analyze_pdf, find_legacy_engine, find_tesseract_binary
 
 
 def main():
@@ -21,12 +21,21 @@ def main():
     for name in required:
         if not (package / name).is_file():
             raise RuntimeError("Motor OCR original incompleto: " + name)
+    engine_binary = find_tesseract_binary(engine)
+    if engine_binary is not None:
+        pytesseract.pytesseract.tesseract_cmd = str(engine_binary)
     try:
         tesseract_version = str(pytesseract.get_tesseract_version())
+        languages = pytesseract.get_languages(config="")
+        if "por" not in languages:
+            raise RuntimeError(
+                "Tesseract está sem o idioma português (por.traineddata). "
+                "A leitura de boletos brasileiros perderia qualidade."
+            )
     except Exception as exc:
         raise RuntimeError(
-            "Tesseract OCR não foi encontrado ou não iniciou. PDFs escaneados "
-            "deixariam de ser lidos; configure o Tesseract antes da migração."
+            "Motor Tesseract português não está pronto. PDFs escaneados "
+            "deixariam de ser lidos como no desktop: " + str(exc)
         ) from exc
 
     # Usar uma guia genérica com campos reais; a exigência aqui é que o
