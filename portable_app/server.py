@@ -47,10 +47,11 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows
+    from . import pdf_intelligence, pdf_workflows, sync_runtime
 else:
     import pdf_intelligence
     import pdf_workflows
+    import sync_runtime
 
 
 FIELDS = ("fornecedor", "documento", "pagador", "referencia", "valor",
@@ -924,7 +925,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True, **list_accounts()})
                     return
                 if self.command == "GET" and route == "/api/health":
-                    self._json({"ok": True, "db": DB_PATH.is_file()})
+                    self._json({"ok": True, "db": DB_PATH.is_file(),
+                                "mobile": sync_runtime.status()})
+                    return
+                if self.command == "POST" and route == "/api/mobile/reconnect":
+                    self._body()
+                    self._json({"ok": True, "mobile": sync_runtime.ensure_running()})
                     return
                 if self.command == "GET" and route == "/api/settings/folder":
                     self._json({"ok": True, **get_document_folder()})
@@ -1046,7 +1052,14 @@ def main():
         webbrowser.open(f"http://{HOST}:{PORT}/")
         return
     url = f"http://{HOST}:{PORT}/"
-    print("Controle de Contas portátil:", url)
+    # A sincronização Cloudflare agora usa processo Python próprio; não chama
+    # nem reinstala o EXE desktop. Falha de rede não bloqueia contas locais.
+    try:
+        mobile = sync_runtime.ensure_running()
+        print("Cloudflare mobile:", mobile)
+    except (OSError, RuntimeError) as exc:
+        print("AVISO: sincronizador mobile não iniciou:", exc)
+    print("Controle de Contas web:", url)
     threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
         httpd.serve_forever(poll_interval=0.5)
