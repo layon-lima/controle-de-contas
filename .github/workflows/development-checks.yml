@@ -18,10 +18,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      - name: Install portable test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check "PyMuPDF>=1.25,<2" "pytesseract>=0.3.13,<1"
       - name: Verify portable app without user data
         shell: pwsh
         run: |
-          python -m py_compile .\portable_app\server.py
+          python -m py_compile .\portable_app\server.py .\portable_app\pdf_workflows.py .\portable_app\pdf_intelligence.py .\portable_app\sync_runtime.py .\portable_app\cloud_sync_worker.py .\portable_app\verify_reader.py .\portable_app\verify_sync.py .\portable_app\verify_data.py
           python -m unittest discover -s portable_app -p "test_*.py" -v
           node --check .\portable_app\app.js
 
