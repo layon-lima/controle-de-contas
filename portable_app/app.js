@@ -219,9 +219,6 @@ function accountModal(a,preview=null,rerun=null){
   const additional=extraWarnings.length
     ? '<div class="ocr-note warning"><b>Conferência da leitura:</b> '+
        extraWarnings.map(item=>esc(item)).join(' ')+'</div>' : '';
-  const aiNote=analysis?.ai_assistance?.used
-    ? '<p class="hint">IA complementar conferiu o PDF e preencheu campos que estavam vazios. Verifique os valores antes de salvar.</p>'
-    : '';
   const modeNote=comparison.mode==='conservador'
     ? '<p class="hint">OCR aprimorado ativo: o leitor original tem prioridade. A análise complementar só preenche campos vazios e sinaliza divergências.</p>'
     : '';
@@ -229,7 +226,12 @@ function accountModal(a,preview=null,rerun=null){
     rerun?'Leitura do PDF existente refeita. Confira e corrija antes de alterar o cadastro.':
     'Os dados são salvos no banco local existente. O PDF é opcional.';
   showModal(preview?'Conferir leitura do PDF':rerun?'Revisar cadastro pelo PDF':a?'Editar conta':'Nova conta',intro,
-    (analysis?warning+additional+aiNote+modeNote:'')+'<form id="accountForm" class="formgrid">'+form+'</form>',
+    (analysis?warning+additional+modeNote:'')+
+    ((preview?.ticket||(a&&a.has_pdf))
+      ? '<div class="gpt-correction"><button type="button" id="correctGPT" class="outline">✦ Corrigir com GPT</button>'+
+        '<span id="gptCorrectionMessage" role="status">Opcional. Só usa sua cota quando você clicar. Confira as sugestões antes de salvar.</span></div>'
+      : '')+
+    '<form id="accountForm" class="formgrid">'+form+'</form>',
     preview?'Confirmar e salvar PDF':a?'Salvar alterações':'Criar conta',async()=>{
       const form=$('accountForm');
       if(!form.reportValidity())return false;
@@ -248,6 +250,55 @@ function accountModal(a,preview=null,rerun=null){
       if(preview)setAccountView('open');
       await reload();return true;
     });
+  if($('correctGPT')){
+    $('correctGPT').addEventListener('click',async()=>{
+      const button=$('correctGPT'),form=$('accountForm');
+      if(!aiStatus.connected||!aiStatus.enabled){
+        $('gptCorrectionMessage').textContent='Conecte e habilite o ChatGPT no topo do aplicativo para usar a correção.';
+        notice('ChatGPT não conectado ou desativado. A leitura OCR continua funcionando.',true,7500);
+        return;
+      }
+      const oldText=button.textContent;
+      button.disabled=true;$('save').disabled=true;
+      button.textContent='Conferindo PDF com GPT…';
+      $('gptCorrectionMessage').textContent='Aguarde a análise. Nenhum dado será salvo automaticamente.';
+      try{
+        const current=Object.fromEntries(new FormData(form));
+        const request=preview?.ticket
+          ? {ticket:preview.ticket,fields:current}
+          : {account_id:a.id,fields:current};
+        const corrected=await api('/api/ai/correct','POST',request);
+        // Se o usuario fechou/trocou o formulario durante a leitura,
+        // nao permitir que resposta tardia modifique outro cadastro.
+        if($('accountForm')!==form||!$('backdrop').classList.contains('show'))return;
+        let applied=0;
+        for(const key of corrected.changed||[]){
+          if(!accountFields.some(item=>item[0]===key))continue;
+          const input=Array.from(form.elements).find(item=>item.name===key);
+          if(!input)continue;
+          const value=corrected.fields?.[key];
+          if(value===null||value===undefined||String(value).trim()==='')continue;
+          input.value=String(value);
+          input.classList.add('gpt-corrected');
+          applied++;
+        }
+        const message=applied
+          ? 'GPT sugeriu alterações em '+applied+' campo(s). Confira os valores e clique em Salvar para treinar o OCR.'
+          : 'GPT não encontrou correções seguras. Confira os dados manualmente.';
+        $('gptCorrectionMessage').textContent=message;
+        notice(message,!applied,8200);
+      }catch(e){
+        if($('accountForm')===form){
+          $('gptCorrectionMessage').textContent='Não foi possível corrigir com GPT. Seus dados permanecem como estavam.';
+          notice(e.message||String(e),true,9000);
+        }
+      }finally{
+        if($('accountForm')===form){
+          button.disabled=false;button.textContent=oldText;$('save').disabled=false;
+        }
+      }
+    });
+  }
 }
 function payModal(a){
   if(a.status==='Paga'){notice('Conta já paga.',true);return}
@@ -448,11 +499,11 @@ async function refreshAI(){
   try{
     aiStatus=await api('/api/ai/status');
     const button=$('aiConnect');
-    button.textContent=aiStatus.enabled?'IA ativa':aiStatus.connected?'IA pausada':'Conectar ChatGPT';
+    button.textContent=aiStatus.enabled?'ChatGPT conectado':aiStatus.connected?'IA desativada':'Conectar ChatGPT';
     button.classList.toggle('enabled',Boolean(aiStatus.enabled));
     button.classList.toggle('disabled',Boolean(aiStatus.connected&&!aiStatus.enabled));
-    button.title=aiStatus.enabled?'OCR local + IA somente nos campos vazios':
-      'A IA é opcional. O OCR local continua independente.';
+    button.title=aiStatus.enabled?'GPT disponível somente pelo botão Corrigir com GPT no formulário':
+      'A IA é opcional e nunca roda automaticamente.';
   }catch(_){
     // A interface de contas nao depende da disponibilidade deste recurso.
   }
@@ -463,9 +514,10 @@ $('aiConnect').addEventListener('click',async()=>{
     showModal('Assistência ChatGPT','O OCR continua sendo o leitor principal.',
       '<div class="ai-settings"><label><input id="aiEnabled" type="checkbox" '+
       (aiStatus.enabled?'checked':'')+
-      '> Complementar automaticamente campos vazios com IA</label>'+
-      '<p>Quando ativado, somente PDFs com campos importantes vazios são enviados para análise. '+
-      'A IA não altera os dados já encontrados, nem cadastra contas automaticamente. '+
+      '> Permitir correção manual com GPT nos formulários</label>'+
+      '<p>Nenhum PDF será enviado automaticamente. A IA só revisa dados quando você clicar em Corrigir com GPT '+
+      'dentro de um formulário com PDF. Confira as sugestões e salve para treinar o OCR. '+
+      'A correção manual pode substituir campos preenchidos incorretamente. '+
       'O uso consome a cota autorizada do seu ChatGPT, sem chave API.</p>'+
       '<button type="button" id="disconnectAI" class="outline">Desconectar ChatGPT</button></div>',
       'Salvar configuração',async()=>{
@@ -483,7 +535,7 @@ $('aiConnect').addEventListener('click',async()=>{
     });
     return;
   }
-  if(!window.confirm('Conectar ChatGPT para analisar automaticamente boletos quando o OCR deixar campos vazios? PDFs com lacunas serão enviados à OpenAI para essa análise, usando a cota autorizada do seu plano. Nenhuma API paga será configurada.'))return;
+  if(!window.confirm('Conectar ChatGPT para CORRIGIR BOLETOS SOMENTE QUANDO VOCÊ CLICAR em Corrigir com GPT? Nenhum PDF será enviado automaticamente. Cada correção solicitada enviará imagens do documento à OpenAI usando a cota autorizada do seu plano. Nenhuma API paga será configurada.'))return;
   const tab=window.open('about:blank','_blank');
   try{
     await api('/api/ai/consent','POST',{enabled:true});
