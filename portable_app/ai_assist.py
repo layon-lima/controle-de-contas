@@ -347,12 +347,15 @@ class ChatGPTAssist:
         if not completed:
             return {}
         answer = "".join(chunks).strip()
-        if answer.startswith("~~~json"):
-            answer = answer[7:].rsplit("~~~", 1)[0].strip()
-        if answer.startswith("{"):
-            response = json.loads(answer)
-            return response.get("fields", {}) if isinstance(response, dict) else {}
-        return {}
+        # Alguns modelos cercam o JSON com Markdown mesmo quando instruidos
+        # a devolver apenas JSON. Nunca executar texto, apenas decodificar.
+        begin, end = answer.find("{"), answer.rfind("}")
+        if begin < 0 or end <= begin:
+            return {}
+        response = json.loads(answer[begin:end + 1])
+        return response.get("fields", {}) if isinstance(response, dict) and isinstance(
+            response.get("fields"), dict
+        ) else {}
 
     def enhance(self, path: Path, baseline: dict):
         if not self.status()["enabled"] or not isinstance(baseline.get("fields"), dict):
