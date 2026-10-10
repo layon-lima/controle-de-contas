@@ -728,7 +728,7 @@ def _field_line_score(field: str, target: Any, line: dict[str, Any]) -> float:
             return 0.0
         # Uma linha pode conter emissao, processamento E vencimento.
         # A antiga verificacao olhava apenas a primeira data.
-        date_pattern = r"(?<!\\d)(?:\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})(?!\\d)"
+        date_pattern = r"(?<!\d)(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{4})(?!\d)"
         return 1.0 if any(_parse_date(match.group(0)) == target_date
                           for match in re.finditer(date_pattern, text)) else 0.0
     if field == "valor":
