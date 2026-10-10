@@ -1010,15 +1010,23 @@ def _read_rule(model: dict[str, Any], rule: dict[str, Any], field: str) -> Any:
             if text:
                 return text.strip()
 
-    # Código de pagamento usa a região exata, não a linha inteira.
-    if field == "codigo_pagamento":
+    # Leia primeiro o retangulo exato que foi CORRIGIDO/CONFIRMADO
+    # pelo usuario. Em boletos, uma mesma linha pode ter muitos
+    # valores/datas; ler a linha inteira acaba escolhendo o primeiro.
+    if field in {"codigo_pagamento", "valor", "vencimento", "referencia"}:
         value_rect = _predicted_rect(model, rule, use_line=False)
         for page in model.get("pages", []):
             if int(page["page"]) != page_idx:
                 continue
-            code = _code_from_region_words(page, value_rect)
-            if code:
-                return code
+            if field == "codigo_pagamento":
+                value = _code_from_region_words(page, value_rect)
+                if value and (not rule.get("code_length") or len(value) == int(rule["code_length"])):
+                    return value
+                continue
+            fragment = _text_from_region_words(page, value_rect)
+            value = _clean_candidate(field, fragment)
+            if value not in (None, ""):
+                return value
 
     expected_line = _predicted_rect(model, rule, use_line=True)
     candidates: list[tuple[float, Any, dict[str, Any]]] = []
@@ -1136,11 +1144,50 @@ class LayoutLearningV2:
         scored.sort(key=lambda x: x[0], reverse=True)
         best_score, best = scored[0]
         second = scored[1][0] if len(scored) > 1 else 0.0
-        # Limiar alto + margem. Em caso de dúvida, não aplica perfil errado.
+        # Limiar alto + margem. Perfis historicos duplicados de um
+        # MESMO layout podem causar empate e bloquear TODAS as correcoes.
+        # Resolver empate apenas quando as assinaturas sao praticamente
+        # identicas e os marcadores do tipo de documento coincidem.
         if best_score < 0.76:
             return None, best_score, second
         if second >= 0.72 and (best_score - second) < 0.055:
-            return None, best_score, second
+            contenders = [(value, p) for value, p in scored
+                          if value >= max(0.94, best_score - 0.055)]
+            same_family = bool(contenders) and len(contenders) >= 2
+            marker_set = set(sig.get("markers") or [])
+            for _value, p in contenders:
+                signatures = p.get("signatures") or ([p["signature"]] if p.get("signature") else [])
+                if not signatures or set(max(
+                    (signatures or [{}]),
+                    key=lambda s: signature_similarity(sig, s),
+                ).get("markers") or []) != marker_set:
+                    same_family = False
+                    break
+            if same_family:
+                for n, (_value, p) in enumerate(contenders):
+                    for _other_value, q in contenders[n + 1:]:
+                        left = p.get("signatures") or ([p["signature"]] if p.get("signature") else [])
+                        right = q.get("signatures") or ([q["signature"]] if q.get("signature") else [])
+                        if max((signature_similarity(a, b)
+                                for a in left for b in right), default=0) < 0.975:
+                            same_family = False
+                            break
+                    if not same_family:
+                        break
+            if not same_family:
+                return None, best_score, second
+            # Priorize o perfil explicitamente corrigido mais vezes;
+            # confirmacoes simples nao vencem uma correcao manual.
+            best = max(
+                (p for _, p in contenders),
+                key=lambda p: (
+                    sum(int(rule.get("corrections", 0)) for rule in
+                        (p.get("fields") or {}).values() if isinstance(rule, dict)),
+                    sum(int(rule.get("confirmations", 0)) for rule in
+                        (p.get("fields") or {}).values() if isinstance(rule, dict)),
+                    int(p.get("saves", 0)),
+                ),
+            )
         return best, best_score, second
 
     def _new_profile(self, sig: dict[str, Any]) -> dict[str, Any]:
