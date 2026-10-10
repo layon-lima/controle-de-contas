@@ -102,6 +102,29 @@ def valid_bank_slip(code: str) -> bool:
     ))
 
 
+def _mod11_collection(digits: str) -> int:
+    total = 0
+    weight = 2
+    for ch in reversed(digits):
+        total += int(ch) * weight
+        weight = 2 if weight == 9 else weight + 1
+    rest = total % 11
+    calculated = 11 - rest
+    return 0 if calculated in (0, 10, 11) else calculated
+
+
+def valid_collection_slip(code: str) -> bool:
+    """Linha de arrecadação de 48 dígitos (tributos/concessionárias)."""
+    if not re.fullmatch(r"8\d{47}", code):
+        return False
+    reference = code[2]
+    if reference not in "6789":
+        return False
+    validator = _mod10 if reference in "67" else _mod11_collection
+    return all(validator(code[i:i + 11]) == int(code[i + 11])
+               for i in range(0, 48, 12))
+
+
 def valid_pix_emv(code: str) -> bool:
     """CRC-16/CCITT-FALSE do payload BR Code, sem supor validade da chave PIX."""
     payload = str(code or "").strip()
@@ -123,7 +146,7 @@ def valid_pix_emv(code: str) -> bool:
 def payment_code(text: str) -> str | None:
     raw = str(text).strip()
     cleaned = re.sub(r"[^0-9]", "", raw)
-    if valid_bank_slip(cleaned):
+    if valid_bank_slip(cleaned) or valid_collection_slip(cleaned):
         return cleaned
     if valid_pix_emv(raw):
         return raw
