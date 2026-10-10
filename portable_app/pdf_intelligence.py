@@ -75,6 +75,12 @@ def _preserve_ocr_assets(destination: Path) -> None:
 
 
 def find_legacy_engine(root: Path = ROOT) -> Path:
+    # Preferência: cópia independente em APPDATA com patches OCR atuais.
+    # Não depender de diretório de build nem da permanência do EXE instalado.
+    try:
+        return _materialize_engine(root)
+    except ReaderUnavailable:
+        pass
     candidates = sorted(
         (p for p in root.glob(".local_build_*") if p.is_dir()),
         key=lambda p: p.stat().st_mtime,
@@ -83,8 +89,6 @@ def find_legacy_engine(root: Path = ROOT) -> Path:
     candidates += [root / x for x in ENGINE_NAMES]
     for candidate in candidates:
         package = candidate / "controle_contas"
-        # O projeto recuperado contém módulos de leitura .pyc originais,
-        # mais os patches atuais. Nunca importar só os patches sem o motor.
         needed = ("patches.py", "layout_learning_v2.py")
         if all((package / n).is_file() for n in needed) and (
             (package / "pdf_reader.py").is_file()
@@ -93,10 +97,10 @@ def find_legacy_engine(root: Path = ROOT) -> Path:
             (package / "ui.py").is_file() or (package / "ui.pyc").is_file()
         ):
             return candidate
-    # Mesmo em PCs sem pasta .local_build, o projeto distribui o motor
-    # original recuperado no source.zip + overlay versionado. Extrair para a
-    # pasta de dados, sem instalar EXE nem encostar no banco do usuário.
-    return _materialize_engine(root)
+    raise ReaderUnavailable(
+        "Não foi possível preparar o leitor OCR do desktop a partir da "
+        "distribuição nem dos builds locais. A versão instalada não foi alterada."
+    )
 
 
 def _materialize_engine(root: Path) -> Path:
