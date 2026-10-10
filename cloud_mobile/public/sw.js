@@ -1,5 +1,5 @@
-const CACHE = "controle-contas-cloud-v14";
-const ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icon.svg", "/hero-aberto.webp"];
+const CACHE = "controle-contas-cloud-v15";
+const ASSETS = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
