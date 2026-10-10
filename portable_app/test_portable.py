@@ -371,6 +371,61 @@ class PortableDataTests(unittest.TestCase):
             })
         self.assertEqual(s.list_accounts()["count"], 2)
 
+    def test_receipt_rolls_back_pdf_when_database_insert_fails(self):
+        """Falha depois da mesclagem não pode destruir o boleto."""
+        bill = self._real_pdf("PDF ORIGINAL")
+        proof = self._real_pdf("PAGAMENTO FAKE")
+        s.upload_pdf(1, bill, "boleto.pdf")
+        target = s.pdf_path(1)
+        before = target.read_bytes()
+        with patch.object(s, "stamp", side_effect=RuntimeError("Falha simulada DB")):
+            with self.assertRaisesRegex(RuntimeError, "Falha simulada DB"):
+                s.register_payment_with_receipt(1, date.today().isoformat(), proof)
+        self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(s.list_accounts()["accounts"][0]["status"] != "Paga", True)
+        self.assertFalse(list(target.parent.glob("*.restore.pdf")))
+
+    def test_receipt_keeps_original_backup_if_windows_blocks_restore(self):
+        """Se a restauração falhar, o backup não pode ser excluído pelo finally."""
+        bill = self._real_pdf("BOLETO RESERVA")
+        proof = self._real_pdf("COMPROVANTE RESERVA")
+        s.upload_pdf(1, bill, "boleto.pdf")
+        target = s.pdf_path(1)
+        replace_orig = s.os.replace
+
+        def replace_checked(src, dst):
+            if str(src).endswith(".restore.pdf"):
+                raise PermissionError("WinError 32 simulado: arquivo em uso")
+            return replace_orig(src, dst)
+
+        with patch.object(s.os, "replace", side_effect=replace_checked):
+            with patch.object(s, "stamp", side_effect=RuntimeError("Falha simulada DB")):
+                with self.assertRaisesRegex(RuntimeError, "PRESERVADO"):
+                    s.register_payment_with_receipt(1, date.today().isoformat(), proof)
+
+        backup = list(target.parent.glob("*.restore.pdf"))
+        self.assertEqual(len(backup), 1)
+        self.assertEqual(backup[0].read_bytes(), bill)
+        self.assertNotEqual(target.read_bytes(), bill)
+
+    def test_portable_sync_is_not_started_when_cloud_is_disabled(self):
+        with patch.object(s.sync_runtime.cloud_sync, "cloud_enabled", return_value=False):
+            with patch.object(s.sync_runtime.subprocess, "Popen") as spawn:
+                result = s.sync_runtime.ensure_running()
+                self.assertFalse(result["configured"])
+                spawn.assert_not_called()
+
+    def test_readonly_database_audit_does_not_change_any_bytes(self):
+        from portable_app import verify_data
+        before = self.db.read_bytes()
+        with patch.object(verify_data, "DB", self.db):
+            report = verify_data.audit()
+        after = self.db.read_bytes()
+        self.assertEqual(before, after)
+        self.assertEqual(report["database_integrity"], "ok")
+        self.assertEqual(report["accounts"], 1)
+        self.assertTrue(report["no_database_changes"])
+
     def test_payment_with_receipt_merges_pdf_and_disallows_second_payment(self):
         bill = self._real_pdf("BOLETO ORIGINAL")
         receipt = self._real_pdf("COMPROVANTE DE PAGAMENTO")
