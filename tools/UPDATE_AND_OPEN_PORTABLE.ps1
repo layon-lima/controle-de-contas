@@ -95,5 +95,5 @@ if (-not (Test-Path -LiteralPath $PrimaryScript -PathType Leaf)) {
 if ($LASTEXITCODE -ne 0) {
     throw "O Controle de Contas web abriu, mas nao foi possivel definir o atalho principal. O atalho antigo foi preservado."
 }
-Progress 100 "Controle de Contas web principal atualizado"
+Progress 88 "Controle de Contas web pronto; mobile sera publicado em seguida"
 Write-Host "APP_PORTATIL_OK|$TargetCommit|http://127.0.0.1:8767/"
