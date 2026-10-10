@@ -253,10 +253,18 @@ function accountModal(a,preview=null,rerun=null){
   if($('correctGPT')){
     $('correctGPT').addEventListener('click',async()=>{
       const button=$('correctGPT'),form=$('accountForm');
-      if(!aiStatus.connected||!aiStatus.enabled){
-        $('gptCorrectionMessage').textContent='Conecte e habilite o ChatGPT no topo do aplicativo para usar a correção.';
-        notice('ChatGPT não conectado ou desativado. A leitura OCR continua funcionando.',true,7500);
+      if(!aiStatus.connected){
+        $('gptCorrectionMessage').textContent='Autorize a conexão na aba do ChatGPT. Depois clique novamente em Corrigir com GPT; o formulário será preservado.';
+        $('aiConnect').click(); // o login pode iniciar sem fechar o formulario
         return;
+      }
+      if(!aiStatus.enabled){
+        if(!window.confirm('Habilitar correção manual com GPT? Nenhum PDF será enviado até você clicar novamente para corrigir.'))return;
+        try{
+          await api('/api/ai/consent','POST',{enabled:true});
+          await refreshAI();
+        }catch(e){notice(e.message||String(e),true);return;}
+        if(!aiStatus.enabled)return;
       }
       const oldText=button.textContent;
       button.disabled=true;$('save').disabled=true;
@@ -509,7 +517,9 @@ async function refreshAI(){
   }
 }
 $('aiConnect').addEventListener('click',async()=>{
-  if($('backdrop').classList.contains('show'))return;
+  // Login pode ser iniciado a partir do formulario sem apagar dados digitados.
+  // Apenas a janela de configuracoes nao deve substituir um modal aberto.
+  if($('backdrop').classList.contains('show')&&aiStatus.connected)return;
   if(aiStatus.connected){
     showModal('Assistência ChatGPT','O OCR continua sendo o leitor principal.',
       '<div class="ai-settings"><label><input id="aiEnabled" type="checkbox" '+
