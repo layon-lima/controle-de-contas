@@ -640,13 +640,27 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes):
         except Exception:
             if replaced:
                 if backup and backup.is_file():
-                    os.replace(backup, target)
+                    try:
+                        os.replace(backup, target)
+                    except OSError as restore_error:
+                        # NUNCA apagar o unico backup se o arquivo original
+                        # estiver bloqueado pelo Windows ou outro programa.
+                        raise RuntimeError(
+                            "Falha ao restaurar o PDF após erro no pagamento. "
+                            "O backup original foi PRESERVADO em: " + str(backup)
+                        ) from restore_error
                 elif existing is None:
                     target.unlink(missing_ok=True)
             raise
         finally:
             temporary.unlink(missing_ok=True)
-            if backup:
+            # Se a restauração falhar, o backup é mantido para recuperação.
+            if backup and backup.is_file() and not replaced:
+                backup.unlink(missing_ok=True)
+            elif backup and backup.is_file():
+                # Pagamento confirmado -> cópia temporária desnecessária.
+                # Se a atualização do banco falhar, já teremos movido o backup
+                # para o local original; portanto backup não existirá mais.
                 backup.unlink(missing_ok=True)
 
 
