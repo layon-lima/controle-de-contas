@@ -162,6 +162,23 @@ class HybridOcrTests(unittest.TestCase):
         scanner.assert_not_called()
         self.assertEqual(result["fields"], base["fields"])
 
+    def test_original_mode_never_invokes_hybrid_reader(self):
+        self.pdf.write_bytes(b"%PDF-1.4\nsynthetic")
+        data = {"ok": True, "fields": {"fornecedor": "LEGADO",
+                                       "valor": 101.0,
+                                       "vencimento": "2026-12-31"}}
+        from subprocess import CompletedProcess
+        with patch.object(pdf_intelligence, "find_legacy_engine",
+                          return_value=Path(self.folder.name)), \
+             patch.object(pdf_intelligence.subprocess, "run",
+                          return_value=CompletedProcess([], 0, json.dumps(data), "")), \
+             patch.object(hybrid, "enhance_pdf",
+                          side_effect=AssertionError("Novo OCR não deve rodar")) as extra:
+            result = pdf_intelligence.analyze_pdf(self.pdf, enhanced=False)
+        extra.assert_not_called()
+        self.assertEqual(result["fields"]["fornecedor"], "LEGADO")
+        self.assertEqual(result["ocr_comparison"]["mode"], "original_somente")
+
     def test_failing_secondary_engine_preserves_legacy_result(self):
         self.pdf.write_bytes(b"%PDF-1.4\nsynthetic")
         data = {
