@@ -91,3 +91,24 @@ a origem das alterações. Nenhum endpoint de pagamento é publicado na nuvem.
 `python -m unittest discover -s portable_app -p "test_*.py"`
 
 Os testes criam um banco de exemplo temporário. Não acessam os dados reais.
+
+## Entrada unica e retirada do executavel instalado
+Apos concluir os testes do painel de atualizacao, o atalho da area de trabalho
+**Controle de Contas** passa a iniciar a versao web com um icone ICO proprio
+criado localmente. O arquivo VBS na raiz continua sendo o iniciador unico.
+O atualizador tenta desinstalar o EXE legado via seu desinstalador oficial
+**somente** quando: web abre na revisao esperada, testes passam, mobile e
+sincronizador sao verificados, atalho web aponta para o VBS e o OCR preservado
+possui binario Tesseract independente e dados do idioma portugues.
+
+Nenhum processo antigo sera finalizado forcadamente. Se o app EXE estiver
+aberto ou faltar algum requisito, a desinstalacao e adiada com aviso no log,
+sem remover dados. Nao se apagam o banco em LOCALAPPDATA/ControleContas,
+os PDFs em pastas do usuario, os perfis de aprendizagem, backups ou
+as partes de codigo legado que o OCR web ainda reutiliza.
+
+Interface: arrastar um unico PDF sobre a pagina oferece cadastro novo com
+leitura aprimorada e confirmacao antes de salvar. O seletor de OCR foi removido;
+a leitura aprimorada e o padrao unico visivel. Em telas estreitas, a listagem
+assume cartoes sem deslocamento horizontal. A funcao interna de leitura
+original e mantida como parte/fallback do leitor aprimorado.

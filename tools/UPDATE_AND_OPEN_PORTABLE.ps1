@@ -96,5 +96,17 @@ if (-not (Test-Path -LiteralPath $PrimaryScript -PathType Leaf)) {
 if ($LASTEXITCODE -ne 0) {
     throw "O Controle de Contas web abriu, mas nao foi possivel definir o atalho principal. O atalho antigo foi preservado."
 }
-Progress 88 "Controle de Contas web pronto; mobile sera publicado em seguida"
+Progress 98 "Retirando app EXE antigo somente se OCR independente estiver pronto"
+$Retire = Join-Path $Root "tools\RETIRE_INSTALLED_DESKTOP.ps1"
+if (Test-Path -LiteralPath $Retire -PathType Leaf) {
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Retire
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "AVISO: retirada do aplicativo EXE pendente; web permanece principal."
+        }
+    } catch {
+        Write-Host "AVISO: desinstalacao antiga pendente: $($_.Exception.Message)"
+    }
+}
+Progress 99 "Controle de Contas web pronto; mobile sera publicado em seguida"
 Write-Host "APP_PORTATIL_OK|$TargetCommit|http://127.0.0.1:8767/"
