@@ -35,6 +35,9 @@ Check $PythonPath @("-X", "utf8", "-m", "py_compile",
     (Join-Path $AppDir "pdf_intelligence.py"),
     (Join-Path $AppDir "pdf_workflows.py"),
     (Join-Path $AppDir "ocr_worker.py"),
+    (Join-Path $AppDir "sync_runtime.py"),
+    (Join-Path $AppDir "cloud_sync_worker.py"),
+    (Join-Path $AppDir "verify_sync.py"),
     (Join-Path $AppDir "verify_reader.py"), $Launcher
 ) "Erro no codigo Python portatil."
 Write-Host "CC_PROGRESS|30|Conferindo motor OCR original"
@@ -78,5 +81,7 @@ if (-not $Online) {
     if (Test-Path $ErrorLog) { Get-Content $ErrorLog -Tail 30 | Out-Host }
     throw "O aplicativo portatil nao respondeu com a revisao atual. Nao sera marcado como atualizado."
 }
-Progress 88 "Controle de Contas portatil atualizado e aberto"
+Progress 88 "Migrando sincronizador mobile para o aplicativo web"
+Check $PythonPath @("-X", "utf8", (Join-Path $AppDir "verify_sync.py")) "Falha ao confirmar o sincronizador mobile independente. O aplicativo instalado permanece intacto."
+Progress 96 "Controle de Contas web verificado e aberto"
 Write-Host "APP_PORTATIL_OK|$TargetCommit|http://127.0.0.1:8767/"
