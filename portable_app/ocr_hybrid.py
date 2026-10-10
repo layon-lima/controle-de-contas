@@ -51,6 +51,9 @@ def amount(text: Any) -> float | None:
     match = re.search(r"(?:r\$\s*)?((?:\d{1,3}(?:\.\d{3})+|\d+),\d{2})\b", str(text))
     if not match:
         return None
+    # Nunca converter -R$ 2,00 ou R$ -2,00 em valor positivo.
+    if str(text)[:match.start()].rstrip().endswith("-"):
+        return None
     raw = match.group(1).replace(".", "").replace(",", ".")
     try:
         parsed = float(raw)
