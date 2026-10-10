@@ -297,14 +297,21 @@ def _learn_reviewed_pdf(pdf_path: Path, final: dict, predicted: dict,
         return learned, "Conta salva, mas o OCR não confirmou o aprendizado (" + reason + ")."
     if expected:
         confirmed = set(str(x) for x in learned.get("corrected_fields") or [])
-        # Quando o OCR anterior deixou um campo vazio, a regra pode ser nova
-        # sem constar em corrected_fields; ela deve aparecer em fields.
-        all_fields = set(str(x) for x in learned.get("fields") or [])
-        missed = sorted(field for field in expected if
-                        field not in confirmed and
-                        (predicted.get(next((col for col, f in LEARNING_FIELDS.items()
-                                            if f == field), field)) not in (None, "", 0)
-                         or field not in all_fields))
+        # O processo OCR real tambem devolve verified_fields: campos que
+        # foram relidos CORRETAMENTE apos aprender no proprio PDF.
+        # Testes que simulam leitores antigos nao fornecem esta chave.
+        verified = learned.get("verified_fields")
+        if isinstance(verified, list):
+            missed = sorted(field for field in expected if field not in set(verified))
+        else:
+            # Quando o OCR anterior deixou um campo vazio, a regra pode
+            # ser nova sem constar em corrected_fields.
+            all_fields = set(str(x) for x in learned.get("fields") or [])
+            missed = sorted(field for field in expected if
+                            field not in confirmed and
+                            (predicted.get(next((col for col, f in LEARNING_FIELDS.items()
+                                                if f == field), field)) not in (None, "", 0)
+                             or field not in all_fields))
         if missed:
             labels = ", ".join(LEARNING_LABELS.get(field, field) for field in missed)
             return learned, ("Conta salva, mas a correção de " + labels +

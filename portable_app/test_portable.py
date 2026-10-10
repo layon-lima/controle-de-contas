@@ -156,6 +156,21 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("não foi aprendida", saved["warning"])
         self.assertEqual(s.list_accounts()["accounts"][0]["fornecedor"], "NOME CORRIGIDO")
 
+    def test_learning_must_reapply_correction_before_claiming_success(self):
+        """Localizar no treinamento nao basta: leitura apos treinamento deve bater."""
+        bill = self._real_pdf("BOLETO")
+        s.upload_pdf(1, bill, "BOLETO.pdf")
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={
+            "learned": True, "fields": ["recebedor"],
+            "corrected_fields": ["recebedor"], "verified_fields": [],
+        }):
+            result = s.edit_account(1, {
+                "fornecedor": "NOME CONFERIDO", "valor": 123.45,
+                "vencimento": date.today().isoformat(),
+            })
+        self.assertIn("não foi aprendida", result["warning"])
+        self.assertEqual(s.list_accounts()["accounts"][0]["fornecedor"], "NOME CONFERIDO")
+
     def test_existing_pdf_without_changes_is_not_retrained(self):
         bill = self._real_pdf("BOLETO")
         s.upload_pdf(1, bill, "CONTA TESTE.pdf")

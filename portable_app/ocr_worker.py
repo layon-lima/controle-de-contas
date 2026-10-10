@@ -77,6 +77,22 @@ def learn(engine: Path, path: Path, payload: dict):
                 "codigo_pagamento": str(predicted.get("codigo_pagamento") or ""),
             },
         )
+        # Prova real: no MESMO PDF, a regra aprendida deve reler os
+        # dados corrigidos. Localizar um campo na fase de aprendizado
+        # nao significa necessariamente conseguir aplica-lo depois.
+        if output.get("learned"):
+            from controle_contas.layout_learning_v2 import _equivalent
+            validated, applied = patches._LAYOUT_V2.apply(str(path), {"campos_inseguros": []})
+            verified = []
+            for field in output.get("fields") or []:
+                column = "fornecedor" if field == "recebedor" else field
+                expected = final.get(column)
+                result = validated.get(column)
+                if field == "recebedor":
+                    result = validated.get("recebedor") or validated.get("fornecedor")
+                if field in applied and result not in (None, "") and _equivalent(field, expected, result):
+                    verified.append(field)
+            output["verified_fields"] = verified
     return {"ok": True, "learning": output}
 
 
