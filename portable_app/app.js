@@ -2,7 +2,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const token=window.__CONTAS_TOKEN__;
-let accounts=[], availableTags=[], selected=null, activeTab='open', dialogSave=null;
+let accounts=[], selected=null, activeTab='open', dialogSave=null;
 const checked=new Set();
 let activePreviewTicket=null;
 const money=n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -50,14 +50,10 @@ function notice(message,error=false){
 }
 async function reload(){
   const data=await api('/api/accounts');
-  accounts=data.accounts||[];availableTags=data.tags||[];
+  accounts=data.accounts||[];
   if(selected&&!accounts.some(a=>a.id===selected))selected=null;
   const valid=new Set(accounts.map(a=>a.id));
   for(const id of checked)if(!valid.has(id))checked.delete(id);
-  const choose=$('tagFilter'),previous=choose.value;
-  choose.replaceChildren(new Option('Todas as TAGs',''));
-  for(const tag of availableTags)choose.add(new Option(tag.name,String(tag.id)));
-  if([...choose.options].some(o=>o.value===previous))choose.value=previous;
   render();
 }
 function render(){
@@ -75,16 +71,15 @@ function render(){
   $('paidCard').setAttribute('aria-pressed',String(activeTab==='paid'));
   $('backToOpen').hidden=activeTab!=='paid';
   $('listTitle').textContent=activeTab==='paid'?'Contas pagas':'Visão geral';
-  const requested=$('status').value,tagId=$('tagFilter').value;
+  const requested=$('status').value;
   const query=$('search').value.trim().toLocaleLowerCase('pt-BR');
   const visible=accounts.filter(a=>{
     if(activeTab==='paid'&&a.status!=='Paga')return false;
     if(activeTab==='open'&&a.status==='Paga')return false;
     if(requested!=='all'&&a.status!==requested)return false;
-    if(tagId&&!(a.tags||[]).some(t=>String(t.id)===tagId))return false;
     if(query&&![
       a.fornecedor,a.observacoes,a.documento,a.referencia,a.pagador,a.valor,
-      a.vencimento,a.codigo_pagamento,...(a.tags||[]).map(t=>t.name)
+      a.vencimento,a.codigo_pagamento
     ].some(v=>String(v||'').toLocaleLowerCase('pt-BR').includes(query)))return false;
     return true;
   });
@@ -93,7 +88,7 @@ function render(){
   const body=$('rows');body.replaceChildren();
   if(!visible.length){
     const tr=document.createElement('tr'),td=document.createElement('td');
-    td.colSpan=8;td.style.cssText='text-align:center;padding:48px;color:#8494a9';
+    td.colSpan=7;td.style.cssText='text-align:center;padding:48px;color:#8494a9';
     td.textContent=accounts.length?'Nenhuma conta encontrada com estes filtros.':'Nenhuma conta cadastrada.';
     tr.appendChild(td);body.appendChild(tr);return;
   }
@@ -102,12 +97,10 @@ function render(){
     tr.dataset.id=a.id;tr.tabIndex=0;
     if(selected===a.id)tr.classList.add('selected');
     tr.title='Dê dois cliques para abrir as ações da conta';
-    const tagHtml=(a.tags||[]).map(t=>'<span class="tag">'+esc(t.name)+'</span>').join(' ')||'<span class="empty">—</span>';
     const dueDescription=dayLabel(a.vencimento);
     tr.innerHTML=
        '<td><div class="vendor"><input class="bulk-check" type="checkbox" aria-label="Selecionar conta '+esc(a.fornecedor)+'" '+(checked.has(a.id)?'checked':'')+'><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
       +'<td data-label="Observações" class="obs" title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'—')+'</td>'
-      +'<td data-label="TAG">'+tagHtml+'</td>'
       +'<td data-label="Vencimento"><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(dueDescription.includes('atrás')?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
       +'<td data-label="Valor" class="value">'+esc(money(a.valor))+'</td>'
       +'<td data-label="Status"><span class="pill '+esc(a.status.replace(/\s/g,''))+'">'+esc(a.status)+'</span></td>'
@@ -153,27 +146,6 @@ async function sendBulk(){
     notice(result.count+' contas copiadas e registradas como enviadas.');
     clearChecked();await reload();
   }catch(e){notice(e.message||String(e),true)}
-}
-function tagsBulk(){
-  const ids=checkedIds();if(!ids.length)return;
-  const options=availableTags.map(t=>
-    '<label class="tag-option"><input type="checkbox" value="'+t.id+'"> '+esc(t.name)+'</label>'
-  ).join('');
-  showModal('Adicionar TAGs em lote',
-    'As TAGs selecionadas serão adicionadas às '+ids.length+' contas, sem apagar as que já possuem.',
-    '<div id="tagBulkOptions" class="tag-options">'+
-      (options||'<span class="empty">Nenhuma TAG cadastrada</span>')+
-    '</div><label class="field" style="margin-top:15px">Criar nova TAG (opcional)'+
-    '<input id="tagBulkNew" maxlength="60" placeholder="Nome da TAG"></label>',
-    'Adicionar TAGs',async()=>{
-      const tag_ids=[...$('tagBulkOptions').querySelectorAll('input:checked')]
-        .map(x=>Number(x.value));
-      const result=await api('/api/batch/tags','POST',{
-        ids,tag_ids,new_tag:$('tagBulkNew').value
-      });
-      notice('TAGs adicionadas a '+result.count+' contas.');
-      clearChecked();await reload();return true;
-    });
 }
 function payBulk(){
   const ids=checkedIds();if(!ids.length)return;
@@ -352,20 +324,6 @@ function payModal(a){
       setAccountView('paid');await reload();return true;
     });
 }
-function tagModal(a){
-  const ids=new Set((a.tags||[]).map(t=>Number(t.id)));
-  const opts=availableTags.map(t=>
-    '<label class="tag-option"><input type="checkbox" value="'+t.id+'" '+(ids.has(Number(t.id))?'checked':'')+'> '+esc(t.name)+'</label>'
-  ).join('');
-  showModal('Gerenciar TAGs',a.fornecedor,
-    '<div id="tagOptions" class="tag-options">'+(opts||'<span class="empty">Nenhuma TAG criada</span>')+'</div>'
-    +'<label class="field" style="margin-top:15px">Criar nova TAG (opcional)<input id="newTag" maxlength="60" placeholder="Nome da TAG"></label>',
-    'Salvar TAGs',async()=>{
-      const selectedTags=[...$('tagOptions').querySelectorAll('input:checked')].map(e=>Number(e.value));
-      await api('/api/accounts/'+a.id+'/tags','POST',{ids:selectedTags,new_tag:$('newTag').value});
-      notice('TAGs atualizadas.');await reload();return true;
-    });
-}
 async function deleteAccount(a){
   if(!window.confirm('Excluir a conta de '+a.fornecedor+'?\nA exclusão é definitiva no cadastro. PDFs originais não serão apagados.'))return;
   await api('/api/accounts/'+a.id+'/delete','POST',{});
@@ -395,7 +353,6 @@ async function action(kind){
     }
     else if(kind==='pay')payModal(a);
     else if(kind==='edit')accountModal(a);
-    else if(kind==='tags')tagModal(a);
     else if(kind==='delete')await deleteAccount(a);
     else if(kind==='suggest'){
       if(!window.confirm('Sugerir esta conta para pagamento no mobile?'))return;
@@ -430,7 +387,6 @@ async function uploadAccountPDF(file){
     : 'PDF anexado na pasta provisória. Configure a pasta-base em Pasta boletos.');await reload();
 }
 $('bulkSuggest').addEventListener('click',suggestBulk);
-$('bulkTags').addEventListener('click',tagsBulk);
 $('bulkSend').addEventListener('click',sendBulk);
 $('bulkPay').addEventListener('click',payBulk);
 $('bulkClear').addEventListener('click',clearChecked);
@@ -444,7 +400,6 @@ $('paidCard').addEventListener('keydown',e=>{
   if(e.key==='Enter'||e.key===' '){e.preventDefault();togglePaidView();}
 });
 $('backToOpen').addEventListener('click',()=>setAccountView('open'));
-$('tagFilter').addEventListener('change',render);
 $('search').addEventListener('input',render);
 $('newAccount').addEventListener('click',()=>accountModal(null));
 $('pdfImport').addEventListener('click',()=>$('importFile').click());

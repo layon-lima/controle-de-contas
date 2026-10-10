@@ -28,8 +28,8 @@ estava na pasta de origem do usuário não é apagado. A edição manual dos dad
 de uma conta não reorganiza automaticamente os arquivos já existentes.
 
 **Interface:** tabela sem coluna de ações, card **Pagas** com histórico de
-todos os períodos, menu por duplo clique, filtros por situação/TAG/pesquisa,
-cadastro/edição, TAGs, sugestão Cloudflare, cópia com confirmação de envio,
+todos os períodos, menu por duplo clique, filtros por situação/pesquisa,
+cadastro/edição, sugestão Cloudflare, cópia com confirmação de envio,
 pagamento manual, exclusão e leitura/anexo/visualização de PDFs.
 Também permite marcar várias contas diretamente na tabela e sugerir, copiar
 para pagamento ou registrar pagamento manual em lote. Ao copiar várias,
@@ -123,3 +123,6 @@ registra no cadastro; jamais salva um arquivo sem nome. Nomes duplicados
 recebem sufixo numérico, sem sobrescrever arquivos anteriores.
 A mesclagem de comprovante preserva o caminho e o nome do PDF cadastrado;
 a releitura OCR de conta existente não substitui automaticamente Observações.
+
+## Remoção de TAGs
+A interface web e sua API não oferecem mais filtros, colunas, menus ou cadastros de TAGs. Eventuais tabelas antigas `cc_tags` e `cc_account_tags` são mantidas intactas no banco para não destruir dados históricos durante a migração.

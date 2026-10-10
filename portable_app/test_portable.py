@@ -109,12 +109,20 @@ class PortableDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             s.remove_account(1)
 
-    def test_tags_with_real_extra_tables(self):
-        s.assign_tags(1, [], "SERVIÇOS")
-        result = s.list_accounts()
-        self.assertEqual(result["accounts"][0]["tags"][0]["name"], "SERVIÇOS")
-        s.assign_tags(1, [])
-        self.assertEqual(s.list_accounts()["accounts"][0]["tags"], [])
+    def test_tags_feature_hidden_without_deleting_legacy_tables(self):
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.executescript(
+                "CREATE TABLE cc_tags(id INTEGER PRIMARY KEY,name TEXT);"
+                "CREATE TABLE cc_account_tags(account_id INTEGER,tag_id INTEGER);"
+                "INSERT INTO cc_tags VALUES(1,'ANTIGA');"
+                "INSERT INTO cc_account_tags VALUES(1,1);"
+            )
+            conn.commit()
+        state = s.list_accounts()
+        self.assertNotIn("tags", state)
+        self.assertNotIn("tags", state["accounts"][0])
+        with closing(sqlite3.connect(self.db)) as conn:
+            self.assertEqual(conn.execute("SELECT name FROM cc_tags WHERE id=1").fetchone()[0], "ANTIGA")
 
     def test_attach_pdf_and_do_not_delete_physical_document(self):
         result = s.upload_pdf(1, self._real_pdf("NOTA FISCAL"), "nota fiscal.pdf")
@@ -206,8 +214,11 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("data-action=\"reanalyze\"", html)
         self.assertIn("data-action=\"copy-code\"", html)
         self.assertIn("data-action=\"cancel-suggestion\"", html)
-        self.assertIn('id="bulkTags"', html)
-        self.assertIn("/api/batch/tags", js)
+        self.assertNotIn('id="bulkTags"', html)
+        self.assertNotIn('id="tagFilter"', html)
+        self.assertNotIn('data-action="tags"', html)
+        self.assertNotIn('data-label="TAG"', js)
+        self.assertNotIn("/api/batch/tags", js)
         self.assertIn('id="bulkBar"', html)
         self.assertIn("await copyText(prepared.text)", js)
         self.assertNotIn('class="footer"', html)
@@ -267,7 +278,6 @@ class PortableDataTests(unittest.TestCase):
 
     def test_database_handles_closed_before_temp_cleanup(self):
         """A edição, o backup e a consulta não devem deixar .db travados."""
-        s.assign_tags(1, [], "TESTE")
         s.prepare_send(1)
         s.list_accounts()
         backup = next((self.root / "backups").glob("*.db"))
@@ -292,28 +302,6 @@ class PortableDataTests(unittest.TestCase):
             self.assertTrue(s.account(conn, 1)["enviado_pagamento_em"])
         with self.assertRaises(ValueError):
             s.confirm_batch_send({"nonce": prepared["nonce"]})
-
-    def test_batch_tags_preserve_existing_assignments(self):
-        other_id = s.create_account({
-            "fornecedor": "OUTRA CONTA", "valor": 60,
-            "vencimento": "2027-01-15",
-        })
-        s.assign_tags(1, [], "ANTIGA")
-        tag_before = s.list_accounts()["accounts"][0]["tags"][0]["name"]
-        self.assertEqual(tag_before, "ANTIGA")
-        applied = s.batch_add_tags({
-            "ids": [1, other_id], "tag_ids": [], "new_tag": "NOVA",
-        })
-        self.assertEqual(applied["count"], 2)
-        after = {row["id"]: {t["name"] for t in row["tags"]}
-                 for row in s.list_accounts()["accounts"]}
-        self.assertEqual(after[1], {"ANTIGA", "NOVA"})
-        self.assertEqual(after[other_id], {"NOVA"})
-        with self.assertRaises(ValueError):
-            s.batch_add_tags({
-                "ids": [1], "tag_ids": [999_999], "new_tag": "",
-            })
-        self.assertEqual(after[1], {"ANTIGA", "NOVA"})
 
     def test_batch_pay_keeps_real_results_and_does_not_duplicate(self):
         new_id = s.create_account({

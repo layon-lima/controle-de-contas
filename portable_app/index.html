@@ -47,7 +47,6 @@ tbody tr:last-child td{border-bottom:0}
 .pill{border-radius:30px;padding:5px 12px;display:inline-flex;align-items:center;gap:6px;font-weight:750;font-size:11px}
 .pill:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .pill.Vencida{color:#bd3944;background:#ffebee}.pill.Próxima{color:#bc8217;background:#fff3dc}.pill.Emdia,.pill.Paga{color:#198357;background:#e6f7ed}
-.tag{padding:4px 11px;display:inline-block;border-radius:20px;background:#e9f2ff;color:#2466aa;font-size:11px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .empty{color:#8595a6}
 .bulk-bar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:9px 15px;margin:0 9px 8px;border-radius:9px;background:#eef6ff;border:1px solid #cbdff5}
 .bulk-bar[hidden]{display:none}
@@ -77,10 +76,7 @@ tbody tr:last-child td{border-bottom:0}
 .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{display:flex;flex-direction:column;gap:5px;color:#47627e;font-weight:700;font-size:11px;min-width:0}
 .field.wide{grid-column:1/-1}.field input,.field select,.field textarea{border:1px solid #dbe5f0;border-radius:8px;padding:10px 11px;min-width:0;color:#243e5a;background:#fff}
 .field textarea{min-height:68px;resize:vertical}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.dialog-actions button{padding:10px 17px;border-radius:8px}
-.tag-options{display:flex;flex-wrap:wrap;gap:8px}.tag-option{border:1px solid #dae5f2;border-radius:9px;padding:9px;cursor:pointer}.tag-option input{accent-color:#147ce7}
 .hint{color:#8598ad;font-size:11px;margin-top:9px}
-.ocr-mode{display:flex;align-items:center;gap:6px;color:#617b97;font-size:11px;font-weight:700}
-.ocr-mode select{max-width:145px;min-height:36px;border:1px solid #dce7f2;border-radius:8px;color:#2d567b;background:#fff;padding:0 7px;font-weight:650}
 .ocr-note{background:#f2f7ff;border:1px solid #cbdffa;border-radius:10px;color:#34577b;padding:10px 12px;line-height:1.55;font-size:12px;margin:0 0 14px}
 .ocr-note.warning{background:#fff9ed;border-color:#f5d89f;color:#7b571b}
 .ocr-progress{font-size:11px;color:#596e89;font-weight:700}
@@ -126,7 +122,6 @@ table{min-width:0}.vendor-name{min-width:0}
  tbody td:first-child:before{display:none}
  tbody td:nth-child(2){grid-column:1/-1}
  tbody td .vendor{min-width:0}.vendor-name{white-space:normal;overflow-wrap:anywhere}
- tbody td .tag{width:fit-content}
  tbody td[colspan]{grid-column:1/-1;min-height:160px;justify-content:center;align-items:center}
  .menu{max-width:calc(100vw - 24px)}
 }
@@ -179,22 +174,20 @@ table{min-width:0}.vendor-name{min-width:0}
     <div class="section-header"><h2 id="listTitle">Visão geral</h2><div><button type="button" class="back-to-open" id="backToOpen" hidden>← Em aberto</button><span class="count">Lançamentos <strong id="count">0 registros</strong></span></div></div>
     <div class="filters">
       <label>Status <select id="status"><option value="all">Todas</option><option>Vencida</option><option>Próxima</option><option>Em dia</option><option>Paga</option></select></label>
-      <label>TAGs <select id="tagFilter"><option value="">Todas as TAGs</option></select></label>
       <div class="search"><img src="/search.svg" alt=""><input type="search" id="search" placeholder="Pesquisar fornecedor, valor, descrição ou vencimento..."></div>
     </div>
     <div class="bulk-bar" id="bulkBar" hidden>
       <strong id="bulkCount">0 contas selecionadas</strong>
       <button id="bulkSuggest" type="button">Sugerir pagamento</button>
-      <button id="bulkTags" type="button">Adicionar TAGs</button>
       <button id="bulkSend" type="button">Copiar / enviar</button>
       <button id="bulkPay" type="button">Registrar pagamento</button>
       <button id="bulkClear" type="button">Limpar seleção</button>
     </div>
     <div class="table-scroll">
       <table aria-label="Contas a pagar, clique duas vezes em uma linha para as ações">
-        <colgroup><col style="width:25%"><col style="width:23%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:7%"><col style="width:6%"></colgroup>
-        <thead><tr><th>Fornecedor</th><th>Observações</th><th>TAG</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Sugerido em</th><th>Enviado em</th></tr></thead>
-        <tbody id="rows"><tr><td colspan="8" style="text-align:center;padding:45px">Carregando contas…</td></tr></tbody>
+        <colgroup><col style="width:25%"><col style="width:25%"><col style="width:12%"><col style="width:12%"><col style="width:10%"><col style="width:8%"><col style="width:8%"></colgroup>
+        <thead><tr><th>Fornecedor</th><th>Observações</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>Sugerido em</th><th>Enviado em</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="7" style="text-align:center;padding:45px">Carregando contas…</td></tr></tbody>
       </table>
     </div>
   </main>
@@ -211,7 +204,6 @@ table{min-width:0}.vendor-name{min-width:0}
   <button class="menu-item" data-action="pay"><img src="/icons/paid.svg" alt=""> Registrar pagamento</button>
   <div class="menu-sep"></div>
   <button class="menu-item" data-action="edit"><img src="/icons/edit.svg" alt=""> Editar conta</button>
-  <button class="menu-item" data-action="tags"><img src="/icons/tag.svg" alt=""> Gerenciar TAGs</button>
   <button class="menu-item" data-action="receipt"><img src="/icons/receipt.svg" alt=""> Abrir comprovante</button>
   <button class="menu-item danger" data-action="delete"><img src="/icons/trash.svg" alt=""> Excluir conta</button>
 </div>

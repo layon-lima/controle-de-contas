@@ -115,23 +115,6 @@ def before_first_write_backup():
         BACKUP_DONE = True
 
 
-def get_tags(conn):
-    tables = {r["name"] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
-    if not {"cc_tags", "cc_account_tags"}.issubset(tables):
-        return [], {}
-    labels = [dict(r) for r in conn.execute(
-        "SELECT id,name FROM cc_tags ORDER BY name COLLATE NOCASE")]
-    tags: dict[int, list[dict]] = {}
-    for row in conn.execute(
-        "SELECT x.account_id,t.id,t.name FROM cc_account_tags x "
-        "JOIN cc_tags t ON t.id=x.tag_id ORDER BY t.name COLLATE NOCASE"
-    ):
-        tags.setdefault(row["account_id"], []).append(
-            {"id": row["id"], "name": row["name"]})
-    return labels, tags
-
-
 def activity_map():
     path = APP_DIR / "cloud_activity.json"
     try:
@@ -164,7 +147,6 @@ def list_accounts():
             "ORDER BY CASE WHEN p.id IS NULL THEN 0 ELSE 1 END,"
             "c.vencimento ASC,c.id DESC"
         ).fetchall()
-        tag_labels, tags = get_tags(conn)
     activities = activity_map()
     output = []
     for row in rows:
@@ -174,11 +156,9 @@ def list_accounts():
         item["has_pdf"] = bool(pdf and Path(pdf).is_file())
         item["has_receipt"] = bool(receipt and Path(receipt).is_file())
         item["status"] = status(item["vencimento"], item["data_pagamento"])
-        item["tags"] = tags.get(item["id"], [])
         item["suggested_at"] = activities.get(item["id"], {}).get("suggested_at")
         output.append(item)
-    return {"accounts": output, "tags": tag_labels,
-            "db_available": True, "count": len(output)}
+    return {"accounts": output, "db_available": True, "count": len(output)}
 
 
 def account(conn, account_id: int):
@@ -472,79 +452,6 @@ def batch_suggest(data):
     if result.get("ok") is False or int(result.get("quantidade", -1)) != len(ids):
         raise RuntimeError("A nuvem não confirmou todas as contas selecionadas.")
     return {"count": len(ids), "suggested": True}
-
-
-def batch_add_tags(data):
-    """TAGs em lote: adicionar sem excluir as TAGs preexistentes."""
-    ids = _batch_ids(data)
-    raw_tags = data.get("tag_ids") or []
-    if not isinstance(raw_tags, list) or len(raw_tags) > 100:
-        raise ValueError("Lista de TAGs inválida.")
-    try:
-        tag_ids = {int(value) for value in raw_tags}
-    except (ValueError, TypeError) as exc:
-        raise ValueError("TAG inválida.") from exc
-    new_name = " ".join(str(data.get("new_tag") or "").split()).strip()
-    if len(new_name) > 60:
-        raise ValueError("TAG maior que 60 caracteres.")
-    if not tag_ids and not new_name:
-        raise ValueError("Selecione ao menos uma TAG.")
-    with LOCK:
-        with connection(write=True) as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS cc_tags ("
-                         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                         "name TEXT NOT NULL UNIQUE)")
-            conn.execute("CREATE TABLE IF NOT EXISTS cc_account_tags ("
-                         "account_id INTEGER NOT NULL,tag_id INTEGER NOT NULL,"
-                         "PRIMARY KEY(account_id,tag_id))")
-            if new_name:
-                conn.execute("INSERT OR IGNORE INTO cc_tags(name) VALUES(?)", (new_name,))
-                found = conn.execute(
-                    "SELECT id FROM cc_tags WHERE name=? COLLATE NOCASE",
-                    (new_name,)
-                ).fetchone()
-                if found:
-                    tag_ids.add(int(found["id"]))
-            known = {int(r["id"]) for r in conn.execute("SELECT id FROM cc_tags")}
-            if not tag_ids.issubset(known):
-                raise ValueError("TAG inexistente.")
-            for account_id in ids:
-                account(conn, account_id)
-                for tag_id in tag_ids:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO cc_account_tags(account_id,tag_id) "
-                        "VALUES(?,?)", (account_id, tag_id)
-                    )
-    return {"count": len(ids), "tags_added": len(tag_ids)}
-
-
-def assign_tags(account_id, ids, new_name=""):
-    with connection(write=True) as conn:
-        account(conn, account_id)
-        conn.execute("CREATE TABLE IF NOT EXISTS cc_tags ("
-                     "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                     "name TEXT NOT NULL UNIQUE)")
-        conn.execute("CREATE TABLE IF NOT EXISTS cc_account_tags ("
-                     "account_id INTEGER NOT NULL,tag_id INTEGER NOT NULL,"
-                     "PRIMARY KEY(account_id,tag_id))")
-        if new_name:
-            new_name = " ".join(str(new_name).split())
-            if len(new_name) > 60:
-                raise ValueError("TAG longa demais.")
-            conn.execute("INSERT OR IGNORE INTO cc_tags(name) VALUES(?)", (new_name,))
-            found = conn.execute(
-                "SELECT id FROM cc_tags WHERE name=? COLLATE NOCASE", (new_name,)
-            ).fetchone()
-            if found is not None:
-                ids = list(ids) + [found["id"]]
-        valid = {r["id"] for r in conn.execute("SELECT id FROM cc_tags")}
-        ids = {int(i) for i in ids}
-        if not ids.issubset(valid):
-            raise ValueError("TAG desconhecida.")
-        conn.execute("DELETE FROM cc_account_tags WHERE account_id=?", (account_id,))
-        for tag_id in ids:
-            conn.execute("INSERT INTO cc_account_tags(account_id,tag_id) VALUES (?,?)",
-                         (account_id, tag_id))
 
 
 def register_payment(account_id, data):
@@ -983,9 +890,6 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "POST" and route == "/api/batch/confirm-send":
                     self._json({"ok": True, **confirm_batch_send(self._body())})
                     return
-                if self.command == "POST" and route == "/api/batch/tags":
-                    self._json({"ok": True, **batch_add_tags(self._body())})
-                    return
                 if self.command == "POST" and route == "/api/batch/pay":
                     self._json({"ok": True, **batch_pay(self._body())})
                     return
@@ -1105,9 +1009,6 @@ class Handler(BaseHTTPRequestHandler):
                             result = prepare_send(account_id)
                         elif op == "confirm-send":
                             result = {"sent_at": confirm_send(account_id, data.get("nonce"))}
-                        elif op == "tags":
-                            assign_tags(account_id, data.get("ids") or [], data.get("new_tag") or "")
-                            result = {"saved": True}
                         elif op == "pay":
                             register_payment(account_id, data)
                             result = {"paid": True}
