@@ -47,11 +47,15 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist
 else:
     import pdf_intelligence
     import pdf_workflows
     import sync_runtime
+    import ai_assist
+AI_ASSIST = ai_assist.ChatGPTAssist(
+    APP_DIR, callback=f"http://{HOST}:{PORT}/auth/callback"
+)
 
 
 FIELDS = ("fornecedor", "documento", "pagador", "referencia", "valor",
@@ -921,6 +925,18 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self):
         try:
             route = urlsplit(self.path).path
+            if self.command == "GET" and route == "/auth/callback":
+                # Endpoint exclusivamente para retorno do OAuth autorizado.
+                # Nunca devolve token, codigo de autorizacao ou chave da API.
+                try:
+                    AI_ASSIST.finish(urlsplit(self.path).query)
+                    html = "<h2>ChatGPT conectado ao Controle de Contas.</h2><p>Pode fechar esta aba e voltar ao aplicativo.</p>"
+                except Exception:
+                    html = "<h2>Conexão não concluída.</h2><p>Volte ao aplicativo e tente conectar novamente.</p>"
+                self._send(("<!doctype html><html lang='pt-BR'><meta charset='utf-8'><title>Conectar ChatGPT</title><body>"
+                            + html + "</body></html>").encode("utf-8"),
+                           mime="text/html; charset=utf-8")
+                return
             if self.command == "GET" and route == "/health":
                 # Apenas metadado de versao: nunca expor contas nem tokens.
                 self._json({"online": True, "revision": SOURCE_REVISION})
@@ -965,6 +981,23 @@ class Handler(BaseHTTPRequestHandler):
             if route.startswith("/api/"):
                 self._check(writing=self.command == "POST")
                 parts = route.strip("/").split("/")
+                if self.command == "GET" and route == "/api/ai/status":
+                    self._json({"ok": True, **AI_ASSIST.status()})
+                    return
+                if self.command == "POST" and route == "/api/ai/consent":
+                    data = self._body()
+                    if not isinstance(data.get("enabled"), bool):
+                        raise ApiError(400, "Consentimento inválido.")
+                    self._json({"ok": True, **AI_ASSIST.consent(data["enabled"])})
+                    return
+                if self.command == "POST" and route == "/api/ai/connect":
+                    self._body()
+                    self._json({"ok": True, **AI_ASSIST.begin()})
+                    return
+                if self.command == "POST" and route == "/api/ai/disconnect":
+                    self._body()
+                    self._json({"ok": True, **AI_ASSIST.disconnect()})
+                    return
                 if self.command == "POST" and route == "/api/batch/prepare-send":
                     self._json({"ok": True, **prepare_batch_send(self._body())})
                     return
@@ -989,11 +1022,16 @@ class Handler(BaseHTTPRequestHandler):
                     ocr_mode = self.headers.get("X-Ocr-Mode") or "hybrid"
                     if ocr_mode not in {"hybrid", "legacy"}:
                         raise ApiError(400, "Modo OCR não reconhecido.")
-                    parsed = pdf_workflows.preview(
-                        self.rfile.read(size), filename, APP_DIR,
-                        lambda pdf_path: pdf_intelligence.analyze_pdf(
+                    def analyze_and_fill(pdf_path):
+                        original = pdf_intelligence.analyze_pdf(
                             pdf_path, enhanced=ocr_mode == "hybrid"
-                        ),
+                        )
+                        if ocr_mode == "hybrid":
+                            return AI_ASSIST.enhance(pdf_path, original)
+                        return original
+
+                    parsed = pdf_workflows.preview(
+                        self.rfile.read(size), filename, APP_DIR, analyze_and_fill
                     )
                     self._json({"ok": True, **parsed})
                     return
@@ -1043,10 +1081,12 @@ class Handler(BaseHTTPRequestHandler):
                         mode = urlsplit(self.path).query
                         if mode not in ("", "mode=legacy", "mode=hybrid"):
                             raise ApiError(400, "Modo OCR não reconhecido.")
-                        self._json({"ok": True,
-                                    **pdf_intelligence.analyze_pdf(
-                                        original, enhanced=mode != "mode=legacy"
-                                    )})
+                        analysis = pdf_intelligence.analyze_pdf(
+                            original, enhanced=mode != "mode=legacy"
+                        )
+                        if mode != "mode=legacy":
+                            analysis = AI_ASSIST.enhance(original, analysis)
+                        self._json({"ok": True, **analysis})
                         return
                     if self.command == "GET" and op == "pdf":
                         receipt = urlsplit(self.path).query == "receipt=1"
