@@ -154,6 +154,27 @@ async function sendBulk(){
     clearChecked();await reload();
   }catch(e){notice(e.message||String(e),true)}
 }
+function tagsBulk(){
+  const ids=checkedIds();if(!ids.length)return;
+  const options=availableTags.map(t=>
+    '<label class="tag-option"><input type="checkbox" value="'+t.id+'"> '+esc(t.name)+'</label>'
+  ).join('');
+  showModal('Adicionar TAGs em lote',
+    'As TAGs selecionadas serão adicionadas às '+ids.length+' contas, sem apagar as que já possuem.',
+    '<div id="tagBulkOptions" class="tag-options">'+
+      (options||'<span class="empty">Nenhuma TAG cadastrada</span>')+
+    '</div><label class="field" style="margin-top:15px">Criar nova TAG (opcional)'+
+    '<input id="tagBulkNew" maxlength="60" placeholder="Nome da TAG"></label>',
+    'Adicionar TAGs',async()=>{
+      const tag_ids=[...$('tagBulkOptions').querySelectorAll('input:checked')]
+        .map(x=>Number(x.value));
+      const result=await api('/api/batch/tags','POST',{
+        ids,tag_ids,new_tag:$('tagBulkNew').value
+      });
+      notice('TAGs adicionadas a '+result.count+' contas.');
+      clearChecked();await reload();return true;
+    });
+}
 function payBulk(){
   const ids=checkedIds();if(!ids.length)return;
   const today=localToday();
@@ -185,6 +206,7 @@ function openMenu(id,event){
   menu.classList.add('visible');
   menu.querySelector('[data-action="pdf"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="reanalyze"]').disabled=!a.has_pdf;
+  menu.querySelector('[data-action="cancel-suggestion"]').disabled=!a.suggested_at;
   menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||'').trim();
   menu.querySelector('[data-action="receipt"]').disabled=!a.has_receipt;
   menu.querySelector('[data-action="pay"]').disabled=a.status==='Paga';
@@ -343,6 +365,11 @@ async function action(kind){
     }
     else if(kind==='receipt')await showPDF(true);
     else if(kind==='send')await sendPayment();
+    else if(kind==='cancel-suggestion'){
+      if(!window.confirm('Cancelar a sugestão desta conta no mobile?'))return;
+      const result=await api('/api/accounts/'+a.id+'/cancel-suggestion','POST',{});
+      if(result.cancelled){notice('Sugestão cancelada.');await reload();}
+    }
     else if(kind==='pay')payModal(a);
     else if(kind==='edit')accountModal(a);
     else if(kind==='tags')tagModal(a);
@@ -380,6 +407,7 @@ async function uploadAccountPDF(file){
     : 'PDF anexado na pasta provisória. Configure a pasta-base no desktop clássico.');await reload();
 }
 $('bulkSuggest').addEventListener('click',suggestBulk);
+$('bulkTags').addEventListener('click',tagsBulk);
 $('bulkSend').addEventListener('click',sendBulk);
 $('bulkPay').addEventListener('click',payBulk);
 $('bulkClear').addEventListener('click',clearChecked);
