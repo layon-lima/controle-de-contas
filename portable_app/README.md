@@ -35,6 +35,21 @@ Também permite marcar várias contas diretamente na tabela e sugerir, copiar
 para pagamento ou registrar pagamento manual em lote. Ao copiar várias,
 o banco só recebe a data de envio após confirmação do clipboard.
 
+**OCR híbrido conservador (ATT 018):** na barra superior, **Leitura**
+permite escolher `OCR aprimorado` (padrão) ou `OCR original` (retorno
+imediato ao comportamento anterior, sem reinstalação). O aprimorado SEMPRE
+executa primeiro o motor original e preserva todos os campos que ele
+preencheu. Uma segunda análise limitada consulta o texto digital ou,
+somente quando faltam ao menos dois campos críticos num PDF escaneado,
+faz OCR de até duas páginas com contraste tratado e limite de tempo.
+As sugestões são aceitas apenas para campos vazios e com rótulos
+explícitos: fornecedor, pagador, valor em reais, vencimento válido,
+linha digitável bancária/arrecadação validada ou PIX EMV com CRC válido.
+Valores conflitantes são destacados para conferência, jamais substituídos
+automaticamente. O OCR complementar não escreve banco, perfis ou PDFs.
+Quando falha, retorna o mesmo resultado original com um aviso; não interrompe
+o cadastro. A escolha também funciona ao reler um boleto existente.
+
 **Importação com autopreenchimento:** o botão **Importar PDF** abre o motor OCR
 original recuperado do desktop (incluindo perfis de aprendizado V1/V2,
 regras DARF/FGTS e análise de PDF escaneado/híbrido), em processo Python isolado.
