@@ -358,11 +358,17 @@ function readColumnWidths(){
   }catch(_){}
   return null;
 }
+function applyColumnLayout(){
+  // A vista compacta usa cards: zerar larguras inline do desktop para
+  // impedir que a tabela continue larga e corte os cards em telas pequenas.
+  const desktop=window.innerWidth>990;
+  cols.forEach((col,i)=>{col.style.width=desktop?widths[i]+'px':'';});
+  table.style.width=desktop?widths.reduce((a,b)=>a+b,0)+'px':'';
+  heads.forEach((th,i)=>th.querySelector('.col-resize')?.setAttribute('aria-valuenow',String(widths[i])));
+}
 function setColumnWidths(next){
   widths=next.map((n,i)=>Math.max(COL_MIN[i],Math.min(1500,Math.round(n))));
-  cols.forEach((col,i)=>{col.style.width=widths[i]+'px';});
-  table.style.width=widths.reduce((a,b)=>a+b,0)+'px';
-  heads.forEach((th,i)=>th.querySelector('.col-resize')?.setAttribute('aria-valuenow',String(widths[i])));
+  applyColumnLayout();
 }
 function persistColumnWidths(){
   try{window.localStorage.setItem(COL_KEY,JSON.stringify(widths));}catch(_){}
@@ -426,6 +432,7 @@ function initializeColumnResizing(){
   $('resetColumns').addEventListener('click',resetColumnWidths);
   window.addEventListener('resize',()=>{
     if(window.innerWidth>990&&!customWidths)setColumnWidths(autoColumnWidths());
+    else applyColumnLayout();
   });
 }
 initializeColumnResizing();
