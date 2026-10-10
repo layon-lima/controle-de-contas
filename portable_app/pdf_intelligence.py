@@ -194,7 +194,7 @@ def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT)
     if not isinstance(raw, dict):
         raise ReaderUnavailable("O motor não retornou campos válidos.")
     # Não inventar informações: campos inseguros permanecem sinalizados.
-    return {
+    baseline = {
         "engine": "desktop-ocr-v2",
         "fields": {key: raw.get(key) for key in (
             "fornecedor", "documento", "pagador", "referencia", "valor",
@@ -205,6 +205,27 @@ def analyze_pdf(path: Path, *, root: Path = ROOT, timeout: int = ENGINE_TIMEOUT)
         "reason": data.get("reason") or {},
         "warnings": data.get("warnings") or [],
     }
+    # O motor original SEMPRE executa primeiro. O novo leitor NÃO modifica
+    # fornecedor/valor/vencimento/código já reconhecidos, tampouco arquivos,
+    # banco ou perfis. Se a camada adicional falhar, devolve o OCR aprovado.
+    try:
+        if __package__:
+            from .ocr_hybrid import enhance_pdf
+        else:
+            from ocr_hybrid import enhance_pdf
+        return enhance_pdf(path, baseline)
+    except Exception as exc:
+        # Isolamento de falhas é parte da garantia de não regressão.
+        baseline["ocr_comparison"] = {
+            "mode": "legado_preservado",
+            "legacy_preserved": True,
+            "filled": [],
+            "conflicts": [],
+        }
+        baseline["warnings"] = list(baseline["warnings"]) + [
+            "Leitura complementar indisponível; leitura original preservada."
+        ]
+        return baseline
 
 
 def learn_from_confirmed(path: Path, fields: dict, predicted: dict, *,
