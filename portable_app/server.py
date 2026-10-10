@@ -870,12 +870,37 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(json.dumps(obj, ensure_ascii=False).encode("utf-8"), code)
 
+    def _drain_rejected_post(self):
+        """Consome apenas corpos pequenos de POSTs rejeitados antes de responder.
+
+        No Windows, fechar o socket com dados da requisição ainda pendentes
+        pode gerar WinError 10053 antes de o cliente receber o HTTP 403.
+        O prazo curto impede que um cliente incompleto bloqueie o servidor.
+        """
+        if self.command != "POST":
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+            if not 0 < length <= 8192:
+                return
+            previous_timeout = self.connection.gettimeout()
+            self.connection.settimeout(0.25)
+            try:
+                self.rfile.read(length)
+            finally:
+                self.connection.settimeout(previous_timeout)
+        except (ValueError, OSError):
+            # O cliente continua não autorizado mesmo se interromper o envio.
+            pass
+
     def _check(self, writing=False):
         origin = self.headers.get("Origin", "")
         expected = f"http://{HOST}:{PORT}"
         if origin and origin != expected:
+            self._drain_rejected_post()
             raise ApiError(403, "Origem não autorizada.")
         if self.headers.get("X-Local-Token", "") != TOKEN:
+            self._drain_rejected_post()
             raise ApiError(403, "Sessão inválida. Reabra pelo iniciador.")
         if writing and self.headers.get("Content-Type", "").split(";")[0].strip() not in ("application/json", "application/pdf"):
             raise ApiError(415, "Formato não aceito.")
