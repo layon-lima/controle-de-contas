@@ -97,7 +97,7 @@ def valid_pix_emv(code: str) -> bool:
     payload = str(code or "").strip()
     if not payload.startswith("000201") or len(payload) > 1024:
         return False
-    if not re.fullmatch(r"[A-Za-z0-9.\\-*/+:_@ \n]+", payload):
+    if not re.fullmatch(r"[A-Za-z0-9 .*/+:_@\-]+", payload):
         return False
     match = re.search(r"6304([0-9A-Fa-f]{4})$", payload)
     if match is None:
