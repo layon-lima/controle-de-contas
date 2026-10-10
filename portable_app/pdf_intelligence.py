@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import shutil
+import sysconfig
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,51 @@ PREPARE_LOCK = threading.RLock()
 
 class ReaderUnavailable(RuntimeError):
     pass
+
+
+def find_tesseract_binary(engine_root: Path | None = None) -> Path | None:
+    """Localiza o OCR do antigo EXE ou do Windows sem depender do PATH."""
+    local = Path(os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local"))
+    candidates = []
+    if engine_root:
+        candidates.append(engine_root / "tesseract" / "tesseract.exe")
+    for env_var in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(env_var)
+        if root:
+            candidates.append(Path(root) / "Tesseract-OCR" / "tesseract.exe")
+    candidates.extend([
+        Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
+        Path("C:/Program Files (x86)/Tesseract-OCR/tesseract.exe"),
+        local / "Programs" / "Controle de Contas" / "_internal" / "tesseract" / "tesseract.exe",
+        local / "Programs" / "Controle de Contas" / "tesseract" / "tesseract.exe",
+        local / "ControleContas" / "portable_reader_engine" / "tesseract" / "tesseract.exe",
+    ])
+    found = shutil.which("tesseract")
+    if found:
+        candidates.append(Path(found))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _preserve_ocr_assets(destination: Path) -> None:
+    """Copia tessdata e exe embarcados para sobreviver a eventual desinstalação.
+
+    Não remove nem modifica a instalação antiga e não exige admin.
+    """
+    target = destination / "tesseract" / "tesseract.exe"
+    if target.is_file():
+        return
+    binary = find_tesseract_binary(destination)
+    if not binary:
+        return
+    if binary.parent.resolve() == target.parent.resolve():
+        return
+    # Apenas na primeira preparação. Nunca copiar pastas para dentro delas mesmas.
+    source_dir = binary.parent
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_dir, target.parent, dirs_exist_ok=True)
 
 
 def find_legacy_engine(root: Path = ROOT) -> Path:
@@ -100,6 +146,7 @@ def _materialize_engine(root: Path) -> Path:
                     os.replace(temp, target)
                 finally:
                     temp.unlink(missing_ok=True)
+        _preserve_ocr_assets(destination)
         return destination
 
 
