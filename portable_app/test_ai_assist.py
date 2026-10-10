@@ -61,6 +61,61 @@ class AICompletionTests(unittest.TestCase):
         self.assertEqual(initial["fields"]["pagador"], "")
         self.assertEqual(result["ai_assistance"]["filled"], ["pagador"])
 
+    def test_manual_correction_requires_click_and_confirmed_consent(self):
+        original = {
+            "fornecedor": "BANCO ERRADO", "pagador": "ELMER MARLOW",
+            "vencimento": "2026-04-30", "valor": 3500.0,
+            "codigo_pagamento": "", "observacoes": "APOLICE ORIGINAL.pdf",
+        }
+        with patch.object(self.app, "ask") as ask:
+            with self.assertRaises(ValueError):
+                self.app.correct(Path("falso.pdf"), original)
+            ask.assert_not_called()
+        self.app.credentials = {
+            "access_token": "fake", "scopes": ["chatgpt.tokens.use.direct"]
+        }
+        self.app.settings = {"enabled": True, "consented": True}
+        with patch.object(self.app, "ask", return_value={
+            "fornecedor": "BRADESCO AUTO/RE COMPANHIA DE SEGUROS",
+            "pagador": "ELMER MARLOW",
+            "vencimento": "2026-07-30",
+            "valor": 3493.34,
+            "codigo_pagamento": "12345",
+        }) as ask:
+            reviewed = self.app.correct(Path("falso.pdf"), original)
+        ask.assert_called_once()
+        self.assertEqual(reviewed["fields"]["fornecedor"],
+                         "BRADESCO AUTO/RE COMPANHIA DE SEGUROS")
+        self.assertEqual(reviewed["fields"]["valor"], 3493.34)
+        self.assertEqual(reviewed["fields"]["vencimento"], "2026-07-30")
+        self.assertEqual(reviewed["fields"]["codigo_pagamento"], "")
+        self.assertNotIn("observacoes", reviewed["fields"])
+        self.assertEqual(original["fornecedor"], "BANCO ERRADO")
+        self.assertEqual(original["valor"], 3500.0)
+        self.assertEqual(set(reviewed["changed"]), {"fornecedor", "valor", "vencimento"})
+        self.assertFalse(hasattr(self.app, "save_account"))
+
+    def test_manual_ai_cannot_clear_fields_or_invent_invalid_payments(self):
+        from portable_app.ai_assist import merge_reviewed
+        data = {"fornecedor": "EMPRESA ORIGINAL", "vencimento": "2026-07-30",
+                "valor": 34.2, "codigo_pagamento": ""}
+        out, changed = merge_reviewed(data, {
+            "fornecedor": "", "vencimento": "2026-02-31",
+            "valor": -300, "codigo_pagamento": "1234"
+        })
+        self.assertEqual(changed, [])
+        self.assertEqual(out, data)
+
+    def test_missing_field_reviewer_is_opt_in_even_when_login_enabled(self):
+        self.app.credentials = {
+            "access_token": "fake", "scopes": ["chatgpt.tokens.use.direct"]
+        }
+        self.app.settings = {"enabled": False, "consented": True}
+        with patch.object(self.app, "ask") as ask:
+            with self.assertRaises(ValueError):
+                self.app.correct(Path("unused.pdf"), {"fornecedor": ""})
+            ask.assert_not_called()
+
     def test_full_ocr_never_calls_ai_even_when_connected(self):
         self.app.credentials = {
             "access_token": "fake", "scopes": ["chatgpt.tokens.use.direct"]
