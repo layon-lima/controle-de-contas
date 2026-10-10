@@ -33,6 +33,7 @@ Progress 25 "Validando integridade do codigo local"
 Check $PythonPath @("-X", "utf8", "-m", "py_compile",
     (Join-Path $AppDir "server.py"),
     (Join-Path $AppDir "pdf_intelligence.py"),
+    (Join-Path $AppDir "ocr_hybrid.py"),
     (Join-Path $AppDir "pdf_workflows.py"),
     (Join-Path $AppDir "ocr_worker.py"),
     (Join-Path $AppDir "sync_runtime.py"),
