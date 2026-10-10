@@ -7,10 +7,15 @@ $Vbs = Join-Path $Root "ABRIR_CONTROLE_DE_CONTAS.vbs"
 if (-not (Test-Path -LiteralPath $Vbs)) {
     throw "Iniciador web indisponível: $Vbs"
 }
+# A Area de Trabalho pode ser redirecionada pelo OneDrive. Nunca
+# informar sucesso caso o atalho nao tenha sido criado.
 $Desktop = [Environment]::GetFolderPath("Desktop")
-if (-not $Desktop -or -not (Test-Path -LiteralPath $Desktop)) {
-    Write-Host "ATENCAO: atalho nao criado: pasta Desktop indisponivel."
-    exit 0
+if (-not $Desktop -or -not (Test-Path -LiteralPath $Desktop -PathType Container)) {
+    $ShellDesktop = New-Object -ComObject WScript.Shell
+    $Desktop = [string]$ShellDesktop.SpecialFolders.Item("Desktop")
+}
+if (-not $Desktop -or -not (Test-Path -LiteralPath $Desktop -PathType Container)) {
+    throw "A pasta Area de Trabalho do Windows nao foi encontrada; atalho nao criado."
 }
 $ShortcutPath = Join-Path $Desktop "Controle de Contas.lnk"
 $LegacyPath = Join-Path $Desktop "Controle de Contas - Versao instalada (reserva).lnk"
@@ -45,4 +50,12 @@ if (-not (Test-Path -LiteralPath $Icon -PathType Leaf)) {
 }
 $Shortcut.IconLocation = $Icon + ",0"
 $Shortcut.Save()
-Write-Host "Atalho principal atualizado: $ShortcutPath (abre versao web)"
+if (-not (Test-Path -LiteralPath $ShortcutPath -PathType Leaf)) {
+    throw "O Windows nao confirmou a criacao do atalho: $ShortcutPath"
+}
+$Confirmed = $Shell.CreateShortcut($ShortcutPath)
+if ($Confirmed.Arguments -notlike "*ABRIR_CONTROLE_DE_CONTAS.vbs*" -or
+    $Confirmed.IconLocation -notlike "*controle_contas_web.ico*") {
+    throw "O atalho foi criado, mas o destino ou icone nao foram confirmados."
+}
+Write-Host "Atalho principal confirmado: $ShortcutPath (versao web)"

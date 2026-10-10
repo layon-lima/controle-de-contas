@@ -1,6 +1,7 @@
 ' Controle de Contas portátil: duplo clique, sem janela de terminal.
 ' Mantém o aplicativo instalado, seus dados e o sincronizador intactos.
 Dim shell, fs, folder, launcher, q, url, ready, i, http
+Dim shortcutScript, exitCode
 Set shell = CreateObject("WScript.Shell")
 Set fs = CreateObject("Scripting.FileSystemObject")
 folder = fs.GetParentFolderName(WScript.ScriptFullName)
@@ -30,6 +31,16 @@ For i = 1 To 32
     On Error GoTo 0
     If ready Then Exit For
 Next
-If Not ready Then
+If ready Then
+    ' Criar/atualizar o atalho do Windows mesmo quando o usuario inicia pelo VBS.
+    ' O app web ja respondeu: evitar configurar a versao nova se nao abriu.
+    shortcutScript = folder & "\tools\SET_WEB_AS_PRIMARY.ps1"
+    If fs.FileExists(shortcutScript) Then
+        exitCode = shell.Run("powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & q & shortcutScript & q, 0, True)
+        If exitCode <> 0 Then
+            MsgBox "O aplicativo abriu, mas nao consegui criar o atalho na Area de Trabalho. Verifique as permissoes da pasta Desktop.", 48, "Controle de Contas"
+        End If
+    End If
+Else
     MsgBox "O aplicativo portátil não abriu. Use START_CONTROLE_DE_CONTAS_PORTATIL.bat para ver o erro.", 48, "Controle de Contas"
 End If
