@@ -268,6 +268,10 @@ def create_account_from_preview(data):
     ticket = str(data.get("ticket") or "")
     source, source_name, predicted = pdf_workflows.take_preview(ticket)
     fields = normalize(data)
+    # Se o usuario apagou Observacoes, conservar o nome de origem do PDF
+    # como identificacao do cadastro. Nunca usar um nome vazio/aleatorio.
+    if not fields["observacoes"]:
+        fields["observacoes"] = _nome_pdf_organizado(source_name, "BOLETO")
     # Arquivo original + banco são confirmados como uma unidade.
     with LOCK:
         temp = None
@@ -772,13 +776,19 @@ def _pdf_destination(account_info, filename, account_id):
             account_info.get("observacoes"), account_info.get("fornecedor")
         )
     else:
-        # Sem configuracao antiga, preservar importacao numa pasta protegida
-        # sem inventar nova pasta-base para BOLETOS.
+        # Sem pasta-base, manter o PDF na pasta segura local.
         destination = APP_DIR / "documents" / "portatil"
-        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(filename).name)[:75]
-        if not safe.lower().endswith(".pdf"):
-            safe += ".pdf"
-        name = str(account_id) + "_" + safe
+        if account_id is None:
+            # NOVO cadastro por PDF: Observacoes define o nome fisico,
+            # inclusive sem configurar a pasta de boletos.
+            name = _nome_pdf_organizado(account_info.get("observacoes"), filename)
+        else:
+            # Anexos de contas existentes continuam com o comportamento
+            # anterior: nao alterar o nome cadastrado nem renomear PDFs.
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(filename).name)[:75]
+            if not safe.lower().endswith(".pdf"):
+                safe += ".pdf"
+            name = str(account_id) + "_" + safe
     destination.mkdir(parents=True, exist_ok=True)
     target = destination / name
     index = 1

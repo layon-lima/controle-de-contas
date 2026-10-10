@@ -66,6 +66,11 @@ def _purge_expired():
 def preview(data: bytes, filename: str, appdir: Path,
             analyzer: Callable[[Path], dict]) -> dict:
     check_pdf(data)
+    # Nome de origem (sem diretórios enviados pelo navegador), nunca o nome
+    # temporário do OCR. Usado somente como padrão no NOVO cadastro.
+    original_filename = Path(str(filename or "").replace("\\", "/")).name.strip()
+    if not original_filename.lower().endswith(".pdf"):
+        original_filename = "BOLETO.pdf"
     temp_folder = appdir / "portable_staging"
     temp_folder.mkdir(parents=True, exist_ok=True)
     cleanup_staging(appdir)
@@ -82,8 +87,8 @@ def preview(data: bytes, filename: str, appdir: Path,
         raise RuntimeError("Análise do PDF não retornou campos válidos.")
     with PREVIEW_LOCK:
         _purge_expired()
-        PREVIEWS[ticket] = (pdf, time.monotonic() + PREVIEW_SECONDS, filename, read["fields"])
-    return {"ticket": ticket, **read}
+        PREVIEWS[ticket] = (pdf, time.monotonic() + PREVIEW_SECONDS, original_filename, read["fields"])
+    return {"ticket": ticket, **read, "original_filename": original_filename}
 
 
 def take_preview(ticket: str) -> tuple[Path, str, dict]:

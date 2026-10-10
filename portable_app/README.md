@@ -112,3 +112,14 @@ leitura aprimorada e confirmacao antes de salvar. O seletor de OCR foi removido;
 a leitura aprimorada e o padrao unico visivel. Em telas estreitas, a listagem
 assume cartoes sem deslocamento horizontal. A funcao interna de leitura
 original e mantida como parte/fallback do leitor aprimorado.
+
+## Nome automático dos PDFs cadastrados
+No cadastro por **Importar PDF** ou arrastar e soltar, Observações começa com
+o nome original do PDF. Se o usuário trocar Observações antes de confirmar,
+esse será o nome físico do documento salvo (com extensão .pdf), tanto na pasta
+BOLETOS organizada quanto no armazenamento provisório. Se Observações ficar
+em branco ao confirmar, o sistema reutiliza o nome de origem do PDF e o
+registra no cadastro; jamais salva um arquivo sem nome. Nomes duplicados
+recebem sufixo numérico, sem sobrescrever arquivos anteriores.
+A mesclagem de comprovante preserva o caminho e o nome do PDF cadastrado;
+a releitura OCR de conta existente não substitui automaticamente Observações.

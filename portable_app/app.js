@@ -268,13 +268,21 @@ function accountModal(a,preview=null,rerun=null){
   if(preview?.ticket)activePreviewTicket=preview.ticket;
   const analysis=preview||rerun;
   const suggested=analysis?.fields||{};
+  const originalFilename=preview&&typeof preview.original_filename==='string'
+    ? preview.original_filename : '';
   const unsafe=(analysis?.insecure_fields||[]).map(v=>String(v));
   const form=accountFields.map(([key,title,type])=>{
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
     const predictedValue=suggested[key];
     const readable=predictedValue!==null&&predictedValue!==undefined&&String(predictedValue).trim()!=='';
     const fallbackValue=a?(a[key]??''):(key==='vencimento'?localToday():'');
-    const value=analysis&&readable?predictedValue:fallbackValue;
+    // Cadastro inicial: Observacoes inicia pelo nome do PDF original,
+    // independentemente das sugestoes OCR. Em releitura de conta ja existente,
+    // preservar as Observacoes cadastradas (sem mudar o nome do documento).
+    const value=key==='observacoes'&&preview
+      ? (originalFilename|| (readable?predictedValue:fallbackValue))
+      : key==='observacoes'&&a ? fallbackValue
+      : analysis&&readable?predictedValue:fallbackValue;
     const controls=type==='textarea'
       ?'<textarea name="'+key+'">'+esc(value)+'</textarea>'
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';

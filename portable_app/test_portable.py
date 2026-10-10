@@ -184,6 +184,7 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("/icons/sent.svg", html)
         self.assertIn("window.__CONTAS_TOKEN__", js)
         self.assertIn("/api/import/preview", js)
+        self.assertIn("preview.original_filename", js)
         self.assertNotIn('id="ocrMode"', html)
         self.assertNotIn('value="legacy"', html)
         self.assertIn("'X-Ocr-Mode':'hybrid'", js)
@@ -378,6 +379,8 @@ class PortableDataTests(unittest.TestCase):
         with s.connection() as conn:
             info = s.account(conn, result["id"])
         self.assertEqual(info["fornecedor"], "CORRIGIDO PELO USUARIO")
+        self.assertEqual(info["observacoes"], "BOLETO REVISADO.pdf")
+        self.assertEqual(Path(info["pdf_conta"]).name, "BOLETO REVISADO.pdf")
         self.assertEqual(Path(info["pdf_conta"]).read_bytes(), data)
         self.assertTrue(result["learning"]["learned"])
         self.assertEqual(learn.call_args.args[1]["fornecedor"], "CORRIGIDO PELO USUARIO")
@@ -386,6 +389,91 @@ class PortableDataTests(unittest.TestCase):
                 "ticket": preview["ticket"], "fornecedor": "OUTRA",
                 "valor": 99, "vencimento": "2026-11-07"
             })
+
+
+    def test_new_pdf_preview_uses_original_filename_even_when_ocr_suggests_another_name(self):
+        """Nome exibido vem do PDF, nao de Observacoes sugeridas pelo OCR."""
+        from portable_app import pdf_workflows as flow
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        contents = self._real_pdf("BOLETO DE OUTUBRO")
+        result = flow.preview(
+            contents, r"C:\\Documentos\\NOTA DE OUTUBRO.pdf", self.root,
+            lambda _: {"fields": {
+                "fornecedor": "TESTE", "valor": 78.90,
+                "vencimento": "2026-10-30",
+                "observacoes": "TEXTO OCR QUE NAO DEVE VIRAR NOME.pdf",
+            }},
+        )
+        self.assertEqual(result["original_filename"], "NOTA DE OUTUBRO.pdf")
+        self.assertEqual(flow.take_preview(result["ticket"])[1], "NOTA DE OUTUBRO.pdf")
+
+    def test_new_pdf_blank_observations_preserve_original_filename_and_record(self):
+        """Vazio na confirmacao: nome original persiste no cadastro e arquivo."""
+        from portable_app import pdf_workflows as flow
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        contents = self._real_pdf("ARQUIVO SEM OBSERVACOES")
+        result = flow.preview(
+            contents, "CONTA ORIGINAL.pdf", self.root,
+            lambda _: {"fields": {
+                "fornecedor": "TESTE", "valor": 134.20,
+                "vencimento": "2026-12-10",
+            }},
+        )
+        self.assertEqual(result["original_filename"], "CONTA ORIGINAL.pdf")
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={}):
+            committed = s.create_account_from_preview({
+                "ticket": result["ticket"], "fornecedor": "FORNECEDOR",
+                "valor": 134.20, "vencimento": "2026-12-10",
+                "observacoes": "   ",
+            })
+        with s.connection() as conn:
+            record = s.account(conn, committed["id"])
+        self.assertEqual(record["observacoes"], "CONTA ORIGINAL.pdf")
+        self.assertEqual(Path(record["pdf_conta"]).name, "CONTA ORIGINAL.pdf")
+        self.assertEqual(Path(record["pdf_conta"]).read_bytes(), contents)
+
+    def test_new_pdf_custom_observations_rename_file_and_receipt_keeps_that_name(self):
+        """Renomeia so na confirmacao inicial; anexar comprovante nao renomeia."""
+        from portable_app import pdf_workflows as flow
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        base = self.root / "BOLETOS PRINCIPAIS"
+        base.mkdir()
+        (self.root / "config_documentos.json").write_text(
+            json.dumps({"pasta_base": str(base)}, ensure_ascii=False), encoding="utf-8"
+        )
+        bill = self._real_pdf("BOLETO")
+        proof = self._real_pdf("COMPROVANTE")
+        result = flow.preview(
+            bill, "nome que veio do banco.pdf", self.root,
+            lambda _: {"fields": {
+                "fornecedor": "COBRANCA", "valor": 215.30,
+                "vencimento": "2026-12-10",
+            }},
+        )
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={}):
+            committed = s.create_account_from_preview({
+                "ticket": result["ticket"], "fornecedor": "COBRANCA",
+                "valor": 215.30, "vencimento": "2026-12-10",
+                "observacoes": "DOCUMENTO FINAL PERSONALIZADO",
+            })
+        account_id = committed["id"]
+        saved_path = s.pdf_path(account_id)
+        self.assertEqual(saved_path.name, "DOCUMENTO FINAL PERSONALIZADO.pdf")
+        self.assertEqual(saved_path.parent, base / "BOLETOS 2026" / "12 - DEZEMBRO")
+        merged = s.register_payment_with_receipt(account_id, date.today().isoformat(), proof)
+        self.assertTrue(merged["merged"])
+        self.assertEqual(s.pdf_path(account_id), saved_path)
+        self.assertEqual(saved_path.name, "DOCUMENTO FINAL PERSONALIZADO.pdf")
+        with s.connection() as conn:
+            record = s.account(conn, account_id)
+        self.assertEqual(record["observacoes"], "DOCUMENTO FINAL PERSONALIZADO")
+        self.assertEqual(Path(record["pdf_conta"]), saved_path)
+        import fitz
+        with fitz.open(str(saved_path)) as document:
+            self.assertEqual(document.page_count, 2)
 
     def test_preview_same_pdf_is_blocked_even_with_different_fields(self):
         from portable_app import pdf_workflows as flow
