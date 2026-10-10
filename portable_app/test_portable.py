@@ -188,6 +188,9 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("/pay-with-receipt", js)
         self.assertIn("data-action=\"reanalyze\"", html)
         self.assertIn("data-action=\"copy-code\"", html)
+        self.assertIn("data-action=\"cancel-suggestion\"", html)
+        self.assertIn('id="bulkTags"', html)
+        self.assertIn("/api/batch/tags", js)
         self.assertIn('id="bulkBar"', html)
         self.assertIn("await copyText(prepared.text)", js)
         self.assertNotIn('class="footer"', html)
@@ -268,6 +271,28 @@ class PortableDataTests(unittest.TestCase):
             self.assertTrue(s.account(conn, 1)["enviado_pagamento_em"])
         with self.assertRaises(ValueError):
             s.confirm_batch_send({"nonce": prepared["nonce"]})
+
+    def test_batch_tags_preserve_existing_assignments(self):
+        other_id = s.create_account({
+            "fornecedor": "OUTRA CONTA", "valor": 60,
+            "vencimento": "2027-01-15",
+        })
+        s.assign_tags(1, [], "ANTIGA")
+        tag_before = s.list_accounts()["accounts"][0]["tags"][0]["name"]
+        self.assertEqual(tag_before, "ANTIGA")
+        applied = s.batch_add_tags({
+            "ids": [1, other_id], "tag_ids": [], "new_tag": "NOVA",
+        })
+        self.assertEqual(applied["count"], 2)
+        after = {row["id"]: {t["name"] for t in row["tags"]}
+                 for row in s.list_accounts()["accounts"]}
+        self.assertEqual(after[1], {"ANTIGA", "NOVA"})
+        self.assertEqual(after[other_id], {"NOVA"})
+        with self.assertRaises(ValueError):
+            s.batch_add_tags({
+                "ids": [1], "tag_ids": [999_999], "new_tag": "",
+            })
+        self.assertEqual(after[1], {"ANTIGA", "NOVA"})
 
     def test_batch_pay_keeps_real_results_and_does_not_duplicate(self):
         new_id = s.create_account({
