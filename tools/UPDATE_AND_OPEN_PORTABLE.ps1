@@ -86,5 +86,14 @@ if (-not $Online) {
 }
 Progress 88 "Migrando sincronizador mobile para o aplicativo web"
 Check $PythonPath @("-X", "utf8", (Join-Path $AppDir "verify_sync.py")) "Falha ao confirmar o sincronizador mobile independente. O aplicativo instalado permanece intacto."
-Progress 96 "Controle de Contas web verificado e aberto"
+Progress 96 "Definindo a versao web como aplicativo principal"
+$PrimaryScript = Join-Path $Root "tools\SET_WEB_AS_PRIMARY.ps1"
+if (-not (Test-Path -LiteralPath $PrimaryScript -PathType Leaf)) {
+    throw "Ativador do atalho web principal nao foi encontrado."
+}
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PrimaryScript
+if ($LASTEXITCODE -ne 0) {
+    throw "O Controle de Contas web abriu, mas nao foi possivel definir o atalho principal. O atalho antigo foi preservado."
+}
+Progress 100 "Controle de Contas web principal atualizado"
 Write-Host "APP_PORTATIL_OK|$TargetCommit|http://127.0.0.1:8767/"
