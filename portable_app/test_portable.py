@@ -343,6 +343,44 @@ class PortableDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             flow.take_preview(staged["ticket"])
 
+    def test_gpt_correction_requires_click_and_does_not_save_preview(self):
+        """Botao GPT apenas devolve sugestoes; PDF e banco so mudam ao salvar."""
+        from portable_app import pdf_workflows as flow
+        baseline = {"fornecedor": "FORNECEDOR ERRADO", "valor": 40.5,
+                    "vencimento": "2026-12-21", "pagador": ""}
+        preview = flow.preview(self._real_pdf("BOLETO TESTE"),
+                               "DOCUMENTO.pdf", self.root,
+                               lambda _path: {"fields": baseline.copy()})
+        ticket = preview["ticket"]
+        self.addCleanup(flow.consume_preview, ticket)
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        url = "http://127.0.0.1:" + str(httpd.server_port) + "/api/ai/correct"
+        payload = json.dumps({"ticket": ticket, "fields": baseline}).encode()
+        request = Request(url, data=payload, method="POST", headers={
+            "Content-Type": "application/json", "X-Local-Token": s.TOKEN,
+        })
+        with patch.object(s.AI_ASSIST, "status", return_value={"enabled": False}), \
+             patch.object(s.AI_ASSIST, "correct") as correct:
+            with self.assertRaises(HTTPError) as refusal:
+                urlopen(request, timeout=5)
+            self.assertEqual(refusal.exception.code, 409)
+            refusal.exception.close()
+            correct.assert_not_called()
+        suggestions = {"fields": dict(baseline, fornecedor="EMPRESA CORRETA"),
+                       "changed": ["fornecedor"]}
+        with patch.object(s.AI_ASSIST, "status", return_value={"enabled": True}), \
+             patch.object(s.AI_ASSIST, "correct", return_value=suggestions) as correct:
+            with urlopen(request, timeout=5) as response:
+                result = json.load(response)
+            correct.assert_called_once()
+        self.assertEqual(result["fields"]["fornecedor"], "EMPRESA CORRETA")
+        self.assertEqual(flow.take_preview(ticket)[2], baseline)
+        self.assertEqual(s.list_accounts()["count"], 1)
+        self.assertTrue(flow.take_preview(ticket)[0].is_file())
+
     def test_shutdown_only_local_portable_service_with_token(self):
         httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
