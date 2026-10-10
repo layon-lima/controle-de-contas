@@ -135,6 +135,25 @@ def merge_missing(original, suggestions):
         filled.append(field)
     return result, filled
 
+def merge_reviewed(current, suggestions):
+    """Revisao solicitada: validar toda sugestao e permitir corrigir OCR existente."""
+    result, changed = dict(current), []
+    if not isinstance(suggestions, dict):
+        return result, changed
+    for field in FIELDS:
+        if field not in suggestions:
+            continue
+        sample, valid = merge_missing({field: ""}, {field: suggestions[field]})
+        if field not in valid:
+            continue
+        value = sample[field]
+        if str(value).strip() == str(current.get(field) or "").strip():
+            continue
+        result[field] = value
+        changed.append(field)
+    return result, changed
+
+
 class ChatGPTAssist:
     def __init__(self, root: Path, callback: str):
         self.root = Path(root) / "chatgpt_assist"
@@ -301,14 +320,17 @@ class ChatGPTAssist:
             return {}
         instructions = (
             "Analise todas as informações do boleto brasileiro em imagens. "
-            "O OCR local deixou vazios estes campos: " + ", ".join(missing) +
+            "O usuário solicitou CORRIGIR COM GPT. Verifique todos os campos, " +
+            "inclusive os já preenchidos pelo OCR, pois podem estar errados. " +
+            "Campos que merecem atenção: " + ", ".join(missing) +
             ". Retorne APENAS JSON com objeto fields, escolhendo somente: " +
             ", ".join(FIELDS) + ". Se um campo não aparecer claramente, deixe vazio. "
             "Nunca invente datas/nomes/valores. Fornecedor é BENEFICIÁRIO; "
             "pagador é PAGADOR. Vencimento não é emissão. "
             "Valor em número decimal e data ISO AAAA-MM-DD. "
             "Transcreva código PIX/barras exatamente, sem adivinhar. "
-            "Campos já obtidos pelo OCR não devem ser alterados. OCR: " +
+            "Retorne apenas informações visualmente confirmadas, com alta certeza. " +
+            "Nunca invente ou copie valores de exemplo. Formulário atual: " +
             json.dumps(fields, ensure_ascii=False)
         )
         content = [{"type": "input_text", "text": instructions}]
@@ -356,6 +378,21 @@ class ChatGPTAssist:
         return response.get("fields", {}) if isinstance(response, dict) and isinstance(
             response.get("fields"), dict
         ) else {}
+
+    def correct(self, path: Path, current: dict):
+        """Somente mediante clique: não grava, não treina, não altera o PDF."""
+        if not self.status()["enabled"] or not self.status()["consented"]:
+            raise ValueError("Conecte e autorize o ChatGPT antes de corrigir um boleto.")
+        values = {k: current.get(k, "") for k in FIELDS}
+        requested = [k for k in FIELDS if empty(values[k])]
+        if not requested:
+            requested = list(FIELDS)
+        proposed = self.ask(Path(path), values, requested)
+        updated, changed = merge_reviewed(values, proposed)
+        return {"fields": updated, "changed": changed,
+                "message": ("Confira as sugestões e salve para ensinar o OCR."
+                            if changed else
+                            "O GPT não encontrou alterações seguras. Confira o PDF.")}
 
     def enhance(self, path: Path, baseline: dict):
         if not self.status()["enabled"] or not isinstance(baseline.get("fields"), dict):
