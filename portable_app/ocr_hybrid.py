@@ -38,11 +38,18 @@ def _labeled(lines: list[str], patterns: tuple[str, ...]) -> list[str]:
     values: list[str] = []
     label = "(?:" + "|".join(patterns) + ")"
     regex = re.compile(r"^\s*" + label + r"\s*(?:[:\-–]\s*|\s{2,})(.+?)\s*$", re.I)
-    for line in lines:
+    label_only = re.compile(r"^\s*" + label + r"\s*:?\s*$", re.I)
+    for index, line in enumerate(lines):
         clean = folded(line).strip()
         match = regex.match(clean)
         if match:
             values.append(match.group(1).strip())
+        elif label_only.match(clean) and index + 1 < len(lines):
+            # Alguns PDFs digitais separam rótulo e valor em linhas.
+            # A validação do campo rejeitará candidatos sem formato válido.
+            following = folded(lines[index + 1]).strip()
+            if len(following) <= 120:
+                values.append(following)
     return values
 
 
@@ -192,7 +199,14 @@ def _read_scanned(path: Path) -> str:
     outputs: list[str] = []
     with fitz.open(str(path)) as pdf:
         for page in list(pdf)[:2]:
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), colorspace=fitz.csGRAY, alpha=False)
+            width, height = page.rect.width, page.rect.height
+            if width <= 0 or height <= 0:
+                continue
+            # Páginas gigantes/anômalas jamais geram bitmaps ilimitados.
+            scale = min(2.0, math.sqrt(6_000_000 / (width * height)))
+            if scale < 0.3:
+                continue
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False)
             image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
             # Nitidez e contraste local para imagem escaneada com fundo irregular.
             processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(image)
