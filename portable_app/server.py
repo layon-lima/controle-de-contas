@@ -470,6 +470,50 @@ def batch_suggest(data):
     return {"count": len(ids), "suggested": True}
 
 
+def batch_add_tags(data):
+    """TAGs em lote: adicionar sem excluir as TAGs preexistentes."""
+    ids = _batch_ids(data)
+    raw_tags = data.get("tag_ids") or []
+    if not isinstance(raw_tags, list) or len(raw_tags) > 100:
+        raise ValueError("Lista de TAGs inválida.")
+    try:
+        tag_ids = {int(value) for value in raw_tags}
+    except (ValueError, TypeError) as exc:
+        raise ValueError("TAG inválida.") from exc
+    new_name = " ".join(str(data.get("new_tag") or "").split()).strip()
+    if len(new_name) > 60:
+        raise ValueError("TAG maior que 60 caracteres.")
+    if not tag_ids and not new_name:
+        raise ValueError("Selecione ao menos uma TAG.")
+    with LOCK:
+        with connection(write=True) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS cc_tags ("
+                         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                         "name TEXT NOT NULL UNIQUE)")
+            conn.execute("CREATE TABLE IF NOT EXISTS cc_account_tags ("
+                         "account_id INTEGER NOT NULL,tag_id INTEGER NOT NULL,"
+                         "PRIMARY KEY(account_id,tag_id))")
+            if new_name:
+                conn.execute("INSERT OR IGNORE INTO cc_tags(name) VALUES(?)", (new_name,))
+                found = conn.execute(
+                    "SELECT id FROM cc_tags WHERE name=? COLLATE NOCASE",
+                    (new_name,)
+                ).fetchone()
+                if found:
+                    tag_ids.add(int(found["id"]))
+            known = {int(r["id"]) for r in conn.execute("SELECT id FROM cc_tags")}
+            if not tag_ids.issubset(known):
+                raise ValueError("TAG inexistente.")
+            for account_id in ids:
+                account(conn, account_id)
+                for tag_id in tag_ids:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO cc_account_tags(account_id,tag_id) "
+                        "VALUES(?,?)", (account_id, tag_id)
+                    )
+    return {"count": len(ids), "tags_added": len(tag_ids)}
+
+
 def assign_tags(account_id, ids, new_name=""):
     with connection(write=True) as conn:
         account(conn, account_id)
@@ -904,6 +948,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "POST" and route == "/api/batch/confirm-send":
                     self._json({"ok": True, **confirm_batch_send(self._body())})
                     return
+                if self.command == "POST" and route == "/api/batch/tags":
+                    self._json({"ok": True, **batch_add_tags(self._body())})
+                    return
                 if self.command == "POST" and route == "/api/batch/pay":
                     self._json({"ok": True, **batch_pay(self._body())})
                     return
@@ -1019,6 +1066,15 @@ class Handler(BaseHTTPRequestHandler):
                         elif op == "pay":
                             register_payment(account_id, data)
                             result = {"paid": True}
+                        elif op == "cancel-suggestion":
+                            sys.path.insert(0, str(ROOT / "source_current"))
+                            from controle_contas.cloud_sync import cancel_payment_suggestion
+                            response = cancel_payment_suggestion(account_id)
+                            if response.get("ok") is False:
+                                raise RuntimeError(
+                                    str(response.get("erro") or "A nuvem rejeitou o cancelamento.")
+                                )
+                            result = {"cancelled": True}
                         elif op == "suggest":
                             # Usa a mesma rotina de Cloudflare do app original.
                             sys.path.insert(0, str(ROOT / "source_current"))
