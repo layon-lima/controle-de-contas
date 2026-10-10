@@ -87,6 +87,73 @@ tbody tr:last-child td{border-bottom:0}
 
 @media(max-width:1350px){.topbar{flex-wrap:wrap}.kpis{order:3;min-width:100%;grid-template-columns:repeat(4,1fr)}.top-actions{margin-left:auto}}
 @media(max-width:760px){.app{padding:8px;gap:8px}.topbar{gap:8px}.brand{min-width:0}.kpis{grid-template-columns:repeat(2,1fr)}.top-actions{width:100%;justify-content:space-between}.top-actions button{padding:0 8px}.filters{flex-wrap:wrap}.filters .search{flex:1 0 100%;order:3}.formgrid{grid-template-columns:1fr}}
+
+/* Layout fluido: mais área útil e nenhuma tabela larga em telas compactas */
+html,body{max-width:100%;overflow-x:hidden}
+.app,.topbar,.surface,.filters,.section-header,.kpis,.top-actions{min-width:0}
+.topbar{display:grid;grid-template-columns:minmax(205px,auto) minmax(0,1fr) auto;align-items:center}
+.brand{min-width:0}.brand>div{min-width:0}.brand b{overflow-wrap:anywhere}
+.kpis{grid-template-columns:repeat(4,minmax(0,1fr));min-width:0}
+.kpi{min-width:0;padding:8px 8px 8px 38px}.kpi>img{left:9px}.kpi .subvalue{right:7px;font-size:9px}
+.top-actions{flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.top-actions button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+.section-header{gap:10px;flex-wrap:wrap}.section-header>div{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.filters{flex-wrap:wrap}.filters select{max-width:min(100%,210px)}
+.table-scroll{min-width:0;max-width:100%;overflow-x:auto}
+table{min-width:0}.vendor-name{min-width:0}
+.drop-zone{position:fixed;inset:10px;z-index:95;display:none;pointer-events:none;align-items:center;justify-content:center;background:rgba(237,247,255,.94);border:3px dashed #2488eb;border-radius:18px;box-shadow:0 0 0 10px rgba(14,48,88,.16)}
+.drop-zone.visible{display:flex}.drop-zone-content{display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px;text-align:center;color:#1b5184}
+.drop-zone-content img{width:70px;height:70px}.drop-zone-content strong{font-size:clamp(17px,2.3vw,25px)}.drop-zone-content span{font-size:13px}
+@media(max-width:1480px){
+ .topbar{grid-template-columns:minmax(0,1fr) auto}
+ .kpis{grid-column:1/-1;grid-row:2;order:initial}
+ .top-actions{grid-column:2;grid-row:1}
+}
+@media(max-width:1100px){
+ .app{padding:10px;gap:9px}.topbar{padding:10px;gap:10px}
+ .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.filters{gap:8px}
+}
+@media(max-width:990px){
+ .table-scroll{overflow-x:hidden;margin:0 8px 8px;border:0;background:transparent}
+ table,tbody{display:block;width:100%;min-width:0}
+ colgroup,thead{display:none}
+ tbody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 12px;height:auto;padding:12px;border:1px solid #e0e9f3;border-radius:12px;background:white!important;min-width:0;box-shadow:0 2px 10px #12345609}
+ tbody td,tbody td+td{display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;border:0;padding:0;white-space:normal;overflow-wrap:anywhere}
+ tbody td:before{content:attr(data-label);color:#8190a6;font-size:10px;font-weight:750;text-transform:uppercase}
+ tbody td:first-child{grid-column:1/-1;padding-bottom:6px;border-bottom:1px solid #edf2f7}
+ tbody td:first-child:before{display:none}
+ tbody td:nth-child(2){grid-column:1/-1}
+ tbody td .vendor{min-width:0}.vendor-name{white-space:normal;overflow-wrap:anywhere}
+ tbody td .tag{width:fit-content}
+ tbody td[colspan]{grid-column:1/-1;min-height:160px;justify-content:center;align-items:center}
+ .menu{max-width:calc(100vw - 24px)}
+}
+@media(max-width:680px){
+ .topbar{display:flex;flex-direction:column;align-items:stretch}
+ .brand{width:100%}.brand>img{width:40px;height:40px}
+ .brand b{font-size:16px}.brand small{font-size:9px}
+ .kpis{order:1;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+ .top-actions{order:2;width:100%;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+ .top-actions button{min-height:40px;padding:0 7px;font-size:12px;white-space:normal}
+ .filters{padding:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+ .filters label{display:flex;flex-direction:column;align-items:stretch;gap:4px}
+ .filters select{width:100%;min-width:0;max-width:100%}
+ .filters .search{grid-column:1/-1;order:0;width:100%}
+ .section-header{padding:11px 12px}.section-header h2{font-size:16px}
+ .bulk-bar{margin:0 8px 8px;gap:6px;padding:9px}.bulk-bar button{flex:1 1 auto;min-width:0}
+ tbody{grid-template-columns:minmax(0,1fr)}
+ .dialog{padding:15px;max-height:calc(100dvh - 16px)}
+ .backdrop{padding:8px}.dialog-actions{flex-wrap:wrap}.dialog-actions button{flex:1 1 auto}
+ .formgrid{grid-template-columns:minmax(0,1fr)}
+ .toast{right:10px;left:10px;max-width:none;bottom:10px}
+}
+@media(max-width:360px){
+ .app{padding:5px}.kpi{padding:7px 6px 8px 36px}.kpi b{font-size:17px}
+ .kpi small{font-size:8px}.kpi .subvalue{position:static;display:block;margin-top:3px;max-width:100%}
+ .top-actions{grid-template-columns:minmax(0,1fr)}
+}
+
 </style>
 </head>
 <body>
@@ -102,12 +169,6 @@ tbody tr:last-child td{border-bottom:0}
     <div class="top-actions">
       <button id="folderBtn" title="Definir a pasta onde os boletos serão organizados"><img src="/icons/settings.svg" width="15" alt=""> Pasta boletos</button>
       <button id="mobileBtn"><img src="/icons/smartphone.svg" width="15" alt=""> Acesso mobile</button>
-      <label class="ocr-mode" title="Pode voltar ao leitor original quando quiser">Leitura
-        <select id="ocrMode" aria-label="Modo de leitura de PDFs">
-          <option value="hybrid">OCR aprimorado</option>
-          <option value="legacy">OCR original</option>
-        </select>
-      </label>
       <button id="pdfImport"><img src="/icons/upload.svg" width="16" alt=""> Importar PDF</button>
       <button class="primary" id="newAccount">＋ Nova conta</button>
       <input type="file" id="uploadFile" accept=".pdf,application/pdf" hidden><input type="file" id="importFile" accept=".pdf,application/pdf" hidden>
@@ -154,6 +215,7 @@ tbody tr:last-child td{border-bottom:0}
   <button class="menu-item danger" data-action="delete"><img src="/icons/trash.svg" alt=""> Excluir conta</button>
 </div>
 <div id="backdrop" class="backdrop"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"><h3 id="dialogTitle"></h3><p id="dialogIntro"></p><div id="dialogBody"></div><div class="dialog-actions"><button class="outline" id="cancel">Cancelar</button><button class="primary" id="save">Salvar</button></div></div></div>
+<div id="dropZone" class="drop-zone" aria-hidden="true"><div class="drop-zone-content"><img src="/icons/upload.svg" alt=""><strong>Solte o PDF para criar uma conta</strong><span>O leitor automático preencherá os dados para sua conferência.</span></div></div>
 <div id="toast" class="toast" role="status"></div>
 <!--LOCAL_AUTH-->
 <script src="/app.js"></script>

@@ -106,13 +106,13 @@ function render(){
     const dueDescription=dayLabel(a.vencimento);
     tr.innerHTML=
        '<td><div class="vendor"><input class="bulk-check" type="checkbox" aria-label="Selecionar conta '+esc(a.fornecedor)+'" '+(checked.has(a.id)?'checked':'')+'><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
-      +'<td class="obs" title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'—')+'</td>'
-      +'<td>'+tagHtml+'</td>'
-      +'<td><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(dueDescription.includes('atrás')?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
-      +'<td class="value">'+esc(money(a.valor))+'</td>'
-      +'<td><span class="pill '+esc(a.status.replace(/\s/g,''))+'">'+esc(a.status)+'</span></td>'
-      +'<td class="date-time">'+esc(timeBR(a.suggested_at))+'</td>'
-      +'<td class="date-time">'+esc(timeBR(a.enviado_pagamento_em))+'</td>';
+      +'<td data-label="Observações" class="obs" title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'—')+'</td>'
+      +'<td data-label="TAG">'+tagHtml+'</td>'
+      +'<td data-label="Vencimento"><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(dueDescription.includes('atrás')?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
+      +'<td data-label="Valor" class="value">'+esc(money(a.valor))+'</td>'
+      +'<td data-label="Status"><span class="pill '+esc(a.status.replace(/\s/g,''))+'">'+esc(a.status)+'</span></td>'
+      +'<td data-label="Sugerido em" class="date-time">'+esc(timeBR(a.suggested_at))+'</td>'
+      +'<td data-label="Enviado em" class="date-time">'+esc(timeBR(a.enviado_pagamento_em))+'</td>';
     tr.addEventListener('click',()=>select(a.id));
     const checkbox=tr.querySelector('.bulk-check');
     checkbox.addEventListener('click',e=>e.stopPropagation());
@@ -283,7 +283,7 @@ function accountModal(a,preview=null,rerun=null){
   const fieldNames={recebedor:'Fornecedor',fornecedor:'Fornecedor',pagador:'Pagador',referencia:'Referência',valor:'Valor',vencimento:'Vencimento',codigo_pagamento:'Código de pagamento'};
   const warning=unsafe.length
     ? '<div class="ocr-note warning"><b>Conferir antes de salvar:</b> o leitor não confirmou com segurança '+esc([...new Set(unsafe.map(x=>fieldNames[x]||x))].join(', '))+'. Corrija os campos diretamente abaixo.</div>'
-    : '<div class="ocr-note"><b>PDF analisado pelo leitor original.</b> Confira os dados preenchidos e confirme o cadastro.</div>';
+    : '<div class="ocr-note"><b>PDF analisado pelo OCR aprimorado.</b> Confira os dados preenchidos e confirme o cadastro.</div>';
   const extraWarnings=(analysis?.warnings||[]).filter(x=>typeof x==='string'&&x.trim());
   const comparison=analysis?.ocr_comparison||{};
   const additional=extraWarnings.length
@@ -362,7 +362,7 @@ async function action(kind){
     if(kind==='pdf')await showPDF();
     else if(kind==='attach')$('uploadFile').click();
     else if(kind==='reanalyze'){
-      const read=await api('/api/accounts/'+a.id+'/analyze?mode='+$('ocrMode').value);
+      const read=await api('/api/accounts/'+a.id+'/analyze);
       accountModal(a,null,read);
     }
     else if(kind==='copy-code'){
@@ -412,7 +412,7 @@ async function uploadAccountPDF(file){
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
   notice(data.organized
     ? 'PDF salvo em BOLETOS por ano e mês: '+data.folder
-    : 'PDF anexado na pasta provisória. Configure a pasta-base no desktop clássico.');await reload();
+    : 'PDF anexado na pasta provisória. Configure a pasta-base em Pasta boletos.');await reload();
 }
 $('bulkSuggest').addEventListener('click',suggestBulk);
 $('bulkTags').addEventListener('click',tagsBulk);
@@ -433,29 +433,57 @@ $('tagFilter').addEventListener('change',render);
 $('search').addEventListener('input',render);
 $('newAccount').addEventListener('click',()=>accountModal(null));
 $('pdfImport').addEventListener('click',()=>$('importFile').click());
-$('importFile').addEventListener('change',async e=>{
-  const file=e.target.files[0];
-  e.target.value='';
+let importBusy=false;
+async function importNewPDF(file){
   if(!file)return;
-  if(!file.name.toLowerCase().endsWith('.pdf')){notice('Selecione um PDF.',true);return}
-  if(file.size>30*1024*1024){notice('PDF maior que 30 MB.',true);return}
-  const button=$('pdfImport');
-  button.disabled=true;
-  const previous=button.innerHTML;
-  button.textContent='Lendo PDF e preenchendo…';
+  if($('backdrop').classList.contains('show')){notice('Conclua ou cancele a janela atual antes de importar outro PDF.',true);return;}
+  if(importBusy){notice('Uma leitura de PDF já está em andamento.',true);return;}
+  if(!/\\.pdf$/i.test(file.name||'')){notice('Selecione um documento PDF.',true);return;}
+  if(file.size>30*1024*1024){notice('PDF maior que 30 MB.',true);return;}
+  const button=$('pdfImport'),previous=button.innerHTML;
+  importBusy=true;button.disabled=true;button.textContent='Lendo PDF e preenchendo…';
   try{
     const response=await fetch('/api/import/preview',{
       method:'POST',
       headers:{'X-Local-Token':token,'Content-Type':'application/pdf',
-               'X-Pdf-Name':encodeURIComponent(file.name),'X-Ocr-Mode':$('ocrMode').value},
+               'X-Pdf-Name':encodeURIComponent(file.name),'X-Ocr-Mode':'hybrid'},
       body:file,
     });
     const result=await response.json().catch(()=>({error:'Resposta inválida do leitor OCR.'}));
     if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível ler o PDF.');
     accountModal(null,result);
-  }catch(err){notice(err.message||String(err),true)}
-  finally{button.disabled=false;button.innerHTML=previous;}
+  }catch(err){notice(err.message||String(err),true);}
+  finally{importBusy=false;button.disabled=false;button.innerHTML=previous;}
+}
+$('importFile').addEventListener('change',e=>{
+  const file=e.target.files[0];e.target.value='';
+  if(file)importNewPDF(file);
 });
+// Soltar PDF sempre cria nova conta; não altera o PDF da linha selecionada.
+let dragDepth=0;
+function fileDrag(e){return Array.from(e.dataTransfer?.types||[]).includes('Files');}
+function hideDropZone(){dragDepth=0;$('dropZone').classList.remove('visible');}
+document.addEventListener('dragenter',e=>{
+  if(!fileDrag(e))return;
+  e.preventDefault();dragDepth++;$('dropZone').classList.add('visible');
+});
+document.addEventListener('dragover',e=>{
+  if(!fileDrag(e))return;
+  e.preventDefault();e.dataTransfer.dropEffect='copy';$('dropZone').classList.add('visible');
+});
+document.addEventListener('dragleave',e=>{
+  if(!fileDrag(e))return;
+  e.preventDefault();dragDepth=Math.max(0,dragDepth-1);
+  if(!dragDepth)$('dropZone').classList.remove('visible');
+});
+document.addEventListener('drop',e=>{
+  if(!fileDrag(e))return;
+  e.preventDefault();const files=Array.from(e.dataTransfer?.files||[]);
+  hideDropZone();
+  if(files.length!==1){notice('Arraste apenas um PDF de cada vez.',true);return;}
+  importNewPDF(files[0]);
+});
+window.addEventListener('blur',hideDropZone);
 $('uploadFile').addEventListener('change',async e=>{
   const file=e.target.files[0];if(file){try{await uploadAccountPDF(file)}catch(err){notice(err.message,true)}}
   e.target.value='';
@@ -464,7 +492,7 @@ $('folderBtn').addEventListener('click',async()=>{
   try{
     const data=await api('/api/settings/folder');
     showModal('Pasta de boletos',
-      'Mesma pasta-base usada no Controle de Contas instalado. Os PDFs são separados por ano e mês de vencimento.',
+      'Pasta-base usada pelo Controle de Contas. Os PDFs são separados por ano e mês de vencimento.',
       '<label class="field wide">Pasta-base no PC<input id="folderPath" type="text" placeholder="C:\\Meus Documentos\\Boletos" value="'+esc(data.folder||'')+'"></label>'+
       '<p class="hint">Escolha uma pasta que já exista. O aplicativo criará as subpastas BOLETOS ANO / MÊS automaticamente.</p>',
       'Salvar pasta',async()=>{
