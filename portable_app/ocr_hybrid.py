@@ -173,6 +173,22 @@ def _read_scanned(path: Path) -> str:
         import pytesseract
     except ImportError:
         return ""
+    # O Windows pode ter Tesseract fora do PATH. Usar o mesmo executável
+    # em português preservado pelo aplicativo desktop, se disponível.
+    try:
+        if __package__:
+            from .pdf_intelligence import find_tesseract_binary
+        else:
+            from pdf_intelligence import find_tesseract_binary
+        executable = find_tesseract_binary()
+        if executable:
+            pytesseract.pytesseract.tesseract_cmd = str(executable)
+        languages = set(pytesseract.get_languages(config=""))
+        language = "por+eng" if {"por", "eng"}.issubset(languages) else (
+            "por" if "por" in languages else "eng"
+        )
+    except (OSError, RuntimeError):
+        language = "por+eng"
     outputs: list[str] = []
     with fitz.open(str(path)) as pdf:
         for page in list(pdf)[:2]:
@@ -182,7 +198,7 @@ def _read_scanned(path: Path) -> str:
             processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(image)
             try:
                 words = pytesseract.image_to_string(
-                    processed, lang="por+eng", config="--psm 6", timeout=12
+                    processed, lang=language, config="--psm 6", timeout=12
                 )
             except (RuntimeError, OSError):
                 continue
