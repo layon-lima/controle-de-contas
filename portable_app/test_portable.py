@@ -339,9 +339,19 @@ class PortableDataTests(unittest.TestCase):
 
     def test_database_handles_closed_before_temp_cleanup(self):
         """A edição, o backup e a consulta não devem deixar .db travados."""
+        # prepare_send e list_accounts sao somente leitura. Desde a remocao
+        # das TAGs, este teste deixou de realizar uma escrita e, portanto,
+        # nao gerava o backup que tentava renomear.
+        s.edit_account(1, {
+            "fornecedor": "PROVA SEM PDF", "valor": 124.50,
+            "vencimento": date.today().isoformat(),
+            "observacoes": "Edicao para verificar backup e fechamento de conexoes",
+        })
         s.prepare_send(1)
         s.list_accounts()
-        backup = next((self.root / "backups").glob("*.db"))
+        backups = list((self.root / "backups").glob("*.db"))
+        self.assertEqual(len(backups), 1, "A primeira edicao deve criar um backup SQLite")
+        backup = backups[0]
         # Em Windows, renomear um arquivo aberto pelo SQLite dá WinError 32.
         renamed = backup.with_suffix(".renamed")
         backup.rename(renamed)
