@@ -22,7 +22,6 @@ API = "https://api.openai.com/v1"
 SCOPES = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
 FIELDS = ("fornecedor", "pagador", "valor", "vencimento", "codigo_pagamento",
           "documento", "referencia", "tipo_pagamento")
-CRITICAL = ("fornecedor", "pagador", "valor", "vencimento", "codigo_pagamento")
 LOCK = threading.RLock()
 
 def b64(value):
@@ -393,25 +392,3 @@ class ChatGPTAssist:
                 "message": ("Confira as sugestões e salve para ensinar o OCR."
                             if changed else
                             "O GPT não encontrou alterações seguras. Confira o PDF.")}
-
-    def enhance(self, path: Path, baseline: dict):
-        if not self.status()["enabled"] or not isinstance(baseline.get("fields"), dict):
-            return baseline
-        fields = baseline["fields"]
-        missing = [k for k in CRITICAL if empty(fields.get(k))]
-        if not missing:
-            return baseline
-        try:
-            merged, filled = merge_missing(fields, self.ask(path, fields, missing))
-        except Exception:
-            return baseline  # offline, limite do plano, falha: OCR íntegro
-        if not filled:
-            return baseline
-        result = dict(baseline)
-        result["fields"] = merged
-        result["ai_assistance"] = {"filled": filled, "used": True}
-        unsafe = set(baseline.get("insecure_fields") or [])
-        for key in filled:
-            unsafe.discard("recebedor" if key == "fornecedor" else key)
-        result["insecure_fields"] = sorted(unsafe)
-        return result

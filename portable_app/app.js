@@ -162,7 +162,7 @@ async function sendPayment(){
 }
 function showModal(title,description,bodyHTML,label,onSave){
   $('dialogTitle').textContent=title;$('dialogIntro').textContent=description;
-  $('dialogBody').innerHTML=bodyHTML;$('save').textContent=label;
+  $('dialogBody').innerHTML=bodyHTML;$('save').textContent=label;$('save').disabled=false;
   dialogSave=onSave;$('backdrop').classList.add('show');
   $('dialogBody').querySelector('input,select,textarea')?.focus();
 }

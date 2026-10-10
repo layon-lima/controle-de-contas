@@ -20,9 +20,9 @@ class AICompletionTests(unittest.TestCase):
         self.assertFalse(self.app.status()["connected"])
         with self.assertRaises(ValueError):
             self.app.begin()
-        raw = {"fields": {"fornecedor": "", "valor": 45.1}}
         with patch.object(self.app, "ask") as ask:
-            self.assertIs(self.app.enhance(Path("unused.pdf"), raw), raw)
+            with self.assertRaises(ValueError):
+                self.app.correct(Path("unused.pdf"), {"fornecedor": ""})
             ask.assert_not_called()
 
     def test_consent_does_not_activate_without_valid_login(self):
@@ -34,32 +34,6 @@ class AICompletionTests(unittest.TestCase):
         self.assertIn("code_challenge_method=S256", url)
         self.assertIn("127.0.0.1%3A8767", url)
         self.assertNotIn("access_token", url)
-
-    def test_connected_flow_only_requests_missing_critical_fields(self):
-        self.app.credentials = {
-            "access_token": "fake", "scopes": ["chatgpt.tokens.use.direct"]
-        }
-        self.app.settings = {"enabled": True, "consented": True}
-        initial = {"fields": {
-            "fornecedor": "BRADESCO AUTO/RE COMPANHIA DE SEGUROS",
-            "pagador": "", "valor": 3493.34, "vencimento": "2026-07-30",
-            "codigo_pagamento": "", "observacoes": "BOLETO ORIGINAL.pdf",
-        }, "insecure_fields": ["pagador", "codigo_pagamento"]}
-        with patch.object(self.app, "ask", return_value={
-            "pagador": "ELMER MARLOW",
-            "fornecedor": "EMPRESA ERRADA",
-            "valor": 99.99,
-            "vencimento": "2026-08-10",
-        }) as ask:
-            result = self.app.enhance(Path("unused.pdf"), initial)
-        self.assertEqual(ask.call_args.args[2], ["pagador", "codigo_pagamento"])
-        self.assertEqual(result["fields"]["pagador"], "ELMER MARLOW")
-        self.assertEqual(result["fields"]["fornecedor"], "BRADESCO AUTO/RE COMPANHIA DE SEGUROS")
-        self.assertEqual(result["fields"]["valor"], 3493.34)
-        self.assertEqual(result["fields"]["vencimento"], "2026-07-30")
-        self.assertEqual(result["fields"]["codigo_pagamento"], "")
-        self.assertEqual(initial["fields"]["pagador"], "")
-        self.assertEqual(result["ai_assistance"]["filled"], ["pagador"])
 
     def test_manual_correction_requires_click_and_confirmed_consent(self):
         original = {
@@ -116,19 +90,6 @@ class AICompletionTests(unittest.TestCase):
                 self.app.correct(Path("unused.pdf"), {"fornecedor": ""})
             ask.assert_not_called()
 
-    def test_full_ocr_never_calls_ai_even_when_connected(self):
-        self.app.credentials = {
-            "access_token": "fake", "scopes": ["chatgpt.tokens.use.direct"]
-        }
-        self.app.settings = {"enabled": True, "consented": True}
-        original = {"fields": {
-            "fornecedor": "A", "pagador": "B", "valor": 4,
-            "vencimento": "2026-10-22", "codigo_pagamento": "PIX",
-        }}
-        with patch.object(self.app, "ask") as ask:
-            self.assertIs(self.app.enhance(Path("unused.pdf"), original), original)
-            ask.assert_not_called()
-
     def test_bad_dates_and_payment_codes_ignored(self):
         result, fields = merge_missing({
             "valor": None, "vencimento": "", "codigo_pagamento": "",
@@ -139,15 +100,6 @@ class AICompletionTests(unittest.TestCase):
         })
         self.assertEqual(fields, ["fornecedor"])
         self.assertEqual(result["codigo_pagamento"], "")
-
-    def test_network_fail_does_not_block_original_ocr(self):
-        self.app.credentials = {
-            "access_token": "fake", "scopes": ["chatgpt.tokens.use.direct"]
-        }
-        self.app.settings = {"enabled": True}
-        original = {"fields": {"fornecedor": ""}}
-        with patch.object(self.app, "ask", side_effect=OSError("offline")):
-            self.assertIs(self.app.enhance(Path("unused.pdf"), original), original)
 
     def test_auth_state_is_one_time_and_cannot_be_forged(self):
         self.app.consent(True)
