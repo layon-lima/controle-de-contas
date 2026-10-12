@@ -70,6 +70,33 @@ class PortableDataTests(unittest.TestCase):
         self.assertFalse(account["has_pdf"])
         self.assertNotEqual(account["status"], "Paga")
 
+    def test_payment_text_uses_requested_order_and_blank_line_before_pix(self):
+        pix = ("00020101021226900014br.gov.bcb.pix2568qrcodepix.bb.com.br/"
+               "pix/v2/cobv/78def1eb-2249-49b6-9f9c-7b7205947d79")
+        data = {
+            "fornecedor": "RECEITA FEDERAL",
+            "documento": "00000000000100",
+            "pagador": "JONAS NELMAR MARLOW",
+            "referencia": "ITR",
+            "valor": 270.35,
+            "vencimento": "2026-10-09",
+            "tipo_pagamento": "PIX",
+            "codigo_pagamento": pix,
+            "observacoes": "ITR CIB 9463750-4",
+        }
+        expected = (
+            "RECEBEDOR: RECEITA FEDERAL\n"
+            "PAGADOR: JONAS NELMAR MARLOW\n"
+            "VALOR: R$ 270,35\n"
+            "VENCIMENTO: 2026-10-09\n"
+            "OBSERVAÇÕES: ITR CIB 9463750-4\n\n"
+            "CÓDIGO PIX / LINHA DIGITÁVEL: " + pix
+        )
+        self.assertEqual(s.payment_text(data), expected)
+        # Sem código, não deixar uma linha vazia desnecessária no final.
+        data["codigo_pagamento"] = ""
+        self.assertEqual(s.payment_text(data), expected.split("\n\n")[0])
+
     def test_send_is_not_persisted_until_acknowledgment(self):
         ready = s.prepare_send(1)
         self.assertIn("VALOR: R$ 123,45", ready["text"])

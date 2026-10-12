@@ -407,21 +407,20 @@ def remove_account(account_id):
 
 
 def payment_text(data):
-    # Mesma ordem e os mesmos campos do desktop, sem qualquer dependência de PDF.
+    # Texto copiado para pagamento. Não altera o cadastro nem o PDF.
     values = normalize(data)
     money = f"{values['valor']:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
     entries = [
-        ("FORNECEDOR", values["fornecedor"]),
-        ("DOCUMENTO", values["documento"]),
+        ("RECEBEDOR", values["fornecedor"]),
         ("PAGADOR", values["pagador"]),
-        ("REFERÊNCIA", values["referencia"]),
         ("VALOR", "R$ " + money),
         ("VENCIMENTO", values["vencimento"]),
-        ("TIPO DE PAGAMENTO", values["tipo_pagamento"]),
-        ("CÓDIGO PIX / LINHA DIGITÁVEL", values["codigo_pagamento"]),
         ("OBSERVAÇÕES", values["observacoes"]),
     ]
-    return "\n".join(f"{label}: {value}" for label, value in entries if value)
+    message = "\n".join(f"{label}: {value}" for label, value in entries if value)
+    if values["codigo_pagamento"]:
+        message += "\n\nCÓDIGO PIX / LINHA DIGITÁVEL: " + values["codigo_pagamento"]
+    return message
 
 
 def prepare_send(account_id):
