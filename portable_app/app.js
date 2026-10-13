@@ -418,8 +418,10 @@ function confirmEligibleReceipt(file, report){
   const date=report.payment_date||localToday();
   const content=
     '<div class="receipt-drop-status receipt-warning">'+
-      eligible.length+' conta(s) elegível(is) por recebedor, valor e vencimento. '+
-      'Confira e escolha a correta.</div>'+
+      eligible.length+' conta(s) elegível(is) por '+
+      (report.receipt_type==='darf'?'número do DARF ou código de barras':
+       'recebedor, valor e vencimento')+
+      '. Confira e escolha a correta.</div>'+
     '<div class="receipt-eligible-list">'+options+'</div>'+
     '<label class="field" style="margin-top:12px">Data do pagamento'+
       '<input type="date" id="eligiblePaidOn" value="'+esc(date)+'"></label>'+
