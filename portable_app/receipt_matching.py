@@ -113,7 +113,7 @@ def _labels(text: str) -> dict[str, set[str]]:
     """Busca SOMENTE codigos rotulados, para evitar false positives."""
     norm = _clean_text(text)
     found = {"boleto": set(), "pix": set(), "nosso_numero": set(),
-             "txid": set(), "e2e": set()}
+             "txid": set(), "identifier": set(), "e2e": set()}
     lines = norm.splitlines()
     for number, line in enumerate(lines):
         text_line = " ".join(line.split())
@@ -128,6 +128,25 @@ def _labels(text: str) -> dict[str, set[str]]:
                 code = _strong_pix(m.group(0))
                 if code:
                     found["pix"].add(code)
+        # Ex.: comprovante Pix Bradesco: "Identificador: 070126...".
+        # É identificador da cobrança no comprovante, não o EndToEndId.
+        source = text_line + (" " + following if text_line.endswith(":") else "")
+        m = re.search(
+            r"^(?:IDENTIFICADOR(?:\s+DA\s+COBRANCA)?|ID DA COBRANCA)"
+            r"\s*[:#-]\s*([A-Z0-9._/-]{8,60})(?![A-Z0-9])", source
+        )
+        if m:
+            code = re.sub(r"[^A-Z0-9]", "", m.group(1))
+            if code and not re.fullmatch(r"E\d{8}[A-Z0-9]{20,30}", code):
+                found["identifier"].add(code)
+        # Campo Bradesco "Número de controle" é E2E de transação;
+        # permite detecção de comprovante duplicado, não identifica boleto.
+        m = re.search(
+            r"(?:NUMERO DE CONTROLE|END\s*TO\s*END|E2E|ID DA TRANSACAO)"
+            r"\s*[:#-]\s*(E\d{8}[A-Z0-9]{20,30})\b", text_line
+        )
+        if m:
+            found["e2e"].add(m.group(1))
         if re.search(r"NOSSO NUMERO", text_line):
             m = re.search(r"NOSSO NUMERO\s*[:#-]?\s*([A-Z0-9./-]{6,35})",
                           text_line + " " + following)
@@ -148,7 +167,8 @@ def _labels(text: str) -> dict[str, set[str]]:
 
 
 def _account_codes(info: dict, *, include_pdf: bool = False) -> dict[str, set[str]]:
-    codes = {"boleto": set(), "pix": set(), "nosso_numero": set(), "txid": set()}
+    codes = {"boleto": set(), "pix": set(), "nosso_numero": set(),
+             "txid": set(), "identifier": set()}
     raw = str(info.get("codigo_pagamento") or "")
     bank = _bank_code(raw)
     pix = _strong_pix(raw)
@@ -156,6 +176,13 @@ def _account_codes(info: dict, *, include_pdf: bool = False) -> dict[str, set[st
         codes["boleto"].add(bank)
     if pix:
         codes["pix"].add(pix)
+        txid = _pix_txid(pix)
+        if txid:
+            codes["txid"].add(txid)
+            codes["identifier"].add(txid)
+    # Códigos curtos exclusivos que aparecem no cadastro, como 26 dígitos.
+    for value in re.findall(r"(?<![A-Z0-9])\d{20,35}(?![A-Z0-9])", raw.upper()):
+        codes["identifier"].add(value)
     if include_pdf:
         filename = str(info.get("pdf_conta") or "").strip()
         if filename:
