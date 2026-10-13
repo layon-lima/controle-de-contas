@@ -313,5 +313,95 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertEqual(result["candidate_ids"], [])
 
 
+    def _darf_receipt(self, barcode: str, doc_number: str = "07.01.11111.2222222-3",
+                      control: str = "887766554433221100"):
+        return pdf("Comprovante de pagamento DARF Numerado",
+                   "Numero de controle: " + control,
+                   "Agencia: 1234",
+                   "Codigo de barras: " + barcode,
+                   "Data do pagamento: 13/10/2026",
+                   "Numero do documento: " + doc_number,
+                   "Valor total: R$ 25,00")
+
+    def test_darf_reader_parses_receipt_without_recipient_or_due(self):
+        barcode = "85820000000 25000385262 95070126266 88452619708"
+        original = self._darf_receipt(barcode)
+        extracted = rm._darf_receipt_facts(rm.pdf_text(original))
+        self.assertEqual(extracted["receipt_value"], 25)
+        self.assertEqual(extracted["payment_date"], "2026-10-13")
+        self.assertEqual(extracted["receipt_type"], "darf")
+        self.assertEqual(extracted["recipient"], "")
+        self.assertEqual(extracted["receipt_due"], "")
+        self.assertEqual(extracted["payment_control"], "887766554433221100")
+
+    def test_darf_receipt_barcode44_matches_account_line48_with_checks(self):
+        groups = ["85820000000", "25000385262", "95070126266", "88452619708"]
+        receipt = self._darf_receipt(" ".join(groups))
+        raw48 = " ".join(group+"8" for group in groups)
+        paid_account = account(3, raw48, amount=25, due="2026-10-21")
+        other = account(4, "85820000000 25000385262 95070126266 99999999999",
+                        amount=25, due="2026-10-21")
+        found = rm.eligible_receipt_accounts(receipt, [other, paid_account], [])
+        self.assertEqual(found["status"], "eligible")
+        self.assertEqual(found["candidate_ids"], [3])
+        self.assertIsNone(found["matched_account_id"])
+
+    def test_darf_receipt_matches_document_in_original_darf_pdf(self):
+        code = "07.01.11111.2222222-3"
+        receipt = self._darf_receipt(
+            "85820000000 25000385262 95070126266 88452619708", code
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "conta.pdf"
+            original.write_bytes(pdf("Documento de Arrecadacao de Receitas Federais",
+                                     "Numero do Documento", code,
+                                     "Valor Total do Documento 25,00"))
+            linked = account(7, "", amount=25, doc=str(original))
+            unrelated = account(8, "", amount=25)
+            found = rm.eligible_receipt_accounts(receipt, [unrelated, linked], [])
+        self.assertEqual(found["status"], "eligible")
+        self.assertEqual(found["candidate_ids"], [7])
+
+    def test_darf_receipt_does_not_link_other_darf_same_amount(self):
+        receipt = self._darf_receipt(
+            "85820000000 25000385262 95070126266 88452619708",
+            "07.01.11111.2222222-3"
+        )
+        account_other = account(
+            12, "85880000000 8 25000385262 7 94070126265 2 64439319780 8",
+            amount=25, due="2026-10-21"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            document = Path(tmp) / "outro.pdf"
+            document.write_bytes(pdf("Documento de Arrecadacao de Receitas Federais",
+                                     "Numero: 07.01.99999.4444444-5"))
+            account_other["pdf_conta"] = str(document)
+            result = rm.eligible_receipt_accounts(receipt, [account_other], [])
+        self.assertEqual(result["status"], "unverified")
+        self.assertEqual(result["candidate_ids"], [])
+
+    def test_darf_receipt_blocks_reused_control_even_after_pdf_reexport(self):
+        receipt = self._darf_receipt("85820000000 25000385262 95070126266 88452619708")
+        candidate = account(2, "85820000000 25000385262 95070126266 88452619708",
+                            amount=25)
+        response = rm.eligible_receipt_accounts(
+            receipt, [candidate], ["Pago DARFCTRL:887766554433221100"])
+        self.assertEqual(response["status"], "conflict")
+        self.assertEqual(response["candidate_ids"], [])
+
+    def test_darf_receipt_paid_only_or_missing_matching_code_does_not_guess(self):
+        barcode = "85820000000 25000385262 95070126266 88452619708"
+        receipt = self._darf_receipt(barcode)
+        paid = {**account(5, barcode, amount=25), "is_paid": 1}
+        self.assertEqual(
+            rm.eligible_receipt_accounts(receipt, [paid], [])["status"],
+            "conflict"
+        )
+        no_codes = account(6, "", amount=25, due="2026-10-21")
+        unknown = rm.eligible_receipt_accounts(receipt, [no_codes], [])
+        self.assertEqual(unknown["status"], "unverified")
+        self.assertEqual(unknown["candidate_ids"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
