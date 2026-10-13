@@ -164,3 +164,25 @@ A autenticacao SIWC existente usa PKCE, validacao OIDC e protecao
 Windows DPAPI, dependendo da elegibilidade da conta para SIWC.
 O botao Conectar ChatGPT no topo permite conectar, habilitar,
 desabilitar e desconectar; habilitar NAO dispara analise automatica.
+
+
+## Conferencia conservadora de comprovantes (ATT 039)
+Ao anexar o comprovante, o portatil faz uma PREVIA de correspondencia
+usando identificadores encontrados no PDF: linha digitavel/codigo de barras,
+payload PIX dinamico, TXID ou Nosso Numero explicitos em ambos os documentos.
+Um EndToEndId (E2E) identifica a transacao PIX, nao e automaticamente o
+TXID original do boleto. O E2E e o SHA-256 do comprovante sao registrados
+no historico para impedir reutilizacao em outra conta.
+
+Se o identificador exclusivo encontrado pertencer a outra conta, o registro
+e BLOQUEADO antes de mesclar PDFs ou alterar o banco. Se varias contas
+tiverem mesmo fornecedor, valor e vencimento e nenhuma identidade
+comprovavel for encontrada, o formulario exige confirmacao manual
+explicita da conta selecionada. Sem evidencias suficientes e sem
+ambiguidade, o processo existente continua, mas a situacao fica
+registrada como "Nao conferido", nunca como identidade validada.
+Quando houver correspondencia unica de identificador, o historico recebe
+"Identificador confirmado". A mesclagem segura, rollback dos PDFs,
+verificacao de paginas e registro manual sem comprovante foram mantidos.
+Documentos digitalizados sem texto identificavel podem exigir revisao
+manual; a ausencia de identificador comparavel nao sera adivinhada.
