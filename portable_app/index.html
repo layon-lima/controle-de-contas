@@ -105,6 +105,13 @@ tbody tr:last-child td{border-bottom:0}
 .receipt-drop-status.receipt-success{background:#edfaf2;border-color:#bbdec9}
 .receipt-drop-status.receipt-error{background:#fff0f0;border-color:#ecc0c0}
 .receipt-drop-status.receipt-warning{background:#fff9e9;border-color:#e8d8a9}
+.receipt-confirm-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.receipt-confirm-summary>div{padding:11px 13px;border-radius:9px;background:#f6f9fc;min-width:0}
+.receipt-confirm-summary small{display:block;font-size:11px;color:#60758b;margin-bottom:4px}
+.receipt-confirm-summary strong{display:block;color:#213c58;font-size:14px;overflow-wrap:anywhere}
+.receipt-confirm-summary>div:first-child,.receipt-confirm-summary>div:last-child{grid-column:1/-1}
+@media(max-width:480px){.receipt-confirm-summary{grid-template-columns:1fr}.receipt-confirm-summary>div{grid-column:1/-1}}
+
 #receiptMatchedAccount{width:100%;max-width:100%;padding:11px 9px;border:1px solid #c7d5e2;border-radius:9px;background:#fff;color:#223a53;font-size:13px}
 #receiptPaidOn{width:100%}
 #dialogBody .receipt-manual{padding:9px 0;line-height:1.5}
