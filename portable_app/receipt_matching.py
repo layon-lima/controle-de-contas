@@ -22,8 +22,8 @@ def pdf_text(data: bytes | Path) -> str:
     with (fitz.open(str(data)) if isinstance(data, Path)
           else fitz.open(stream=data, filetype="pdf")) as pdf:
         pages = []
-        for page in list(pdf)[:MAX_SCAN_PAGES]:
-            pages.append(page.get_text("text", sort=True) or "")
+        for n in range(min(len(pdf), MAX_SCAN_PAGES)):
+            pages.append(pdf[n].get_text("text", sort=True) or "")
         return "\n".join(pages)[:MAX_SCAN_TEXT]
 
 
@@ -54,10 +54,12 @@ def _labels(text: str) -> dict[str, set[str]]:
     norm = _clean_text(text)
     found = {"boleto": set(), "pix": set(), "nosso_numero": set(),
              "txid": set(), "e2e": set()}
-    for line in norm.splitlines():
+    lines = norm.splitlines()
+    for number, line in enumerate(lines):
         text_line = " ".join(line.split())
+        following = " ".join(lines[number + 1].split()) if number + 1 < len(lines) else ""
         if re.search(r"LINHA DIGITAVEL|CODIGO DE BARRAS|CODIGO DO BOLETO", text_line):
-            for m in re.finditer(r"[0-9.\s-]{44,108}", text_line):
+            for m in re.finditer(r"[0-9.\s-]{44,108}", text_line + " " + following):
                 code = _bank_code(m.group(0))
                 if code:
                     found["boleto"].add(code)
@@ -67,9 +69,12 @@ def _labels(text: str) -> dict[str, set[str]]:
                 if code:
                     found["pix"].add(code)
         if re.search(r"NOSSO NUMERO", text_line):
-            m = re.search(r"NOSSO NUMERO\s*[:#-]?\s*([A-Z0-9./-]{6,35})", text_line)
+            m = re.search(r"NOSSO NUMERO\s*[:#-]?\s*([A-Z0-9./-]{6,35})",
+                          text_line + " " + following)
             if m:
-                found["nosso_numero"].add(re.sub(r"[^A-Z0-9]", "", m.group(1)))
+                identifier = re.sub(r"[^A-Z0-9]", "", m.group(1))
+                if len(_digits(identifier)) >= 5:
+                    found["nosso_numero"].add(identifier)
         if re.search(r"\bTX\s*ID\b|\bTXID\b|ID DA COBRANCA", text_line):
             m = re.search(r"(?:TX\s*ID|TXID|ID DA COBRANCA)\s*[:#-]?\s*([A-Z0-9._-]{8,40})", text_line)
             if m:
