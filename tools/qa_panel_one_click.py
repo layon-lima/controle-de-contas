@@ -15,7 +15,10 @@ from controller import server
 
 class OneClickDesktopUpdateTests(unittest.TestCase):
     def test_panel_opens_web_portable_not_retired_desktop_exe(self):
-        with patch.object(server, "_portable_online", side_effect=[False, True]), \
+        # A regressao roda SEM criar logs no LOCALAPPDATA real do usuario.
+        with tempfile.TemporaryDirectory() as temp, \
+             patch.object(server, "APP_DATA_DIR", Path(temp)), \
+             patch.object(server, "_portable_online", side_effect=[False, True]), \
              patch.object(server, "_portable_command", return_value=["python", "-u"]), \
              patch.object(server.subprocess, "Popen") as process, \
              patch.object(server, "_find_app_executable") as legacy:
