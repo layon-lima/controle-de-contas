@@ -445,7 +445,7 @@ async function importDroppedReceipt(file){
   if(importBusy||receiptImportBusy){
     notice('Já existe um PDF em processamento.',true);return;
   }
-  if(!/\\.pdf$/i.test(file.name||'')){
+  if(!/\.pdf$/i.test(file.name||'')){
     notice('Arraste um comprovante em PDF.',true);return;
   }
   if(file.size>30*1024*1024){
