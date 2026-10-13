@@ -101,6 +101,14 @@ tbody tr:last-child td{border-bottom:0}
 .receipt-error{color:#b33232;font-weight:750}
 .receipt-manual{display:flex;align-items:flex-start;gap:8px;margin-top:8px;font-weight:650;color:#3e4b60;cursor:pointer}
 .receipt-manual input{margin-top:3px;flex:0 0 auto;accent-color:#185ca3}
+.receipt-drop-status{padding:12px 14px;margin:7px 0 15px;border:1px solid #dbe5ef;border-radius:10px;background:#f7faff;line-height:1.5;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.receipt-drop-status.receipt-success{background:#edfaf2;border-color:#bbdec9}
+.receipt-drop-status.receipt-error{background:#fff0f0;border-color:#ecc0c0}
+.receipt-drop-status.receipt-warning{background:#fff9e9;border-color:#e8d8a9}
+#receiptMatchedAccount{width:100%;max-width:100%;padding:11px 9px;border:1px solid #c7d5e2;border-radius:9px;background:#fff;color:#223a53;font-size:13px}
+#receiptPaidOn{width:100%}
+#dialogBody .receipt-manual{padding:9px 0;line-height:1.5}
+
 
 
 @media(max-width:1350px){.topbar{flex-wrap:wrap}.kpis{order:3;min-width:100%;grid-template-columns:repeat(4,1fr)}.top-actions{margin-left:auto}}
@@ -223,7 +231,7 @@ table{min-width:0}.vendor-name{min-width:0}
   <button class="menu-item danger" data-action="delete"><img src="/icons/trash.svg" alt=""> Excluir conta</button>
 </div>
 <div id="backdrop" class="backdrop"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"><h3 id="dialogTitle"></h3><p id="dialogIntro"></p><div id="dialogBody"></div><div class="dialog-actions"><button class="outline" id="cancel">Cancelar</button><button class="primary" id="save">Salvar</button></div></div></div>
-<div id="dropZone" class="drop-zone" aria-hidden="true"><div class="drop-zone-content"><img src="/icons/upload.svg" alt=""><strong>Solte o PDF para criar uma conta</strong><span>O leitor automático preencherá os dados para sua conferência.</span></div></div>
+<div id="dropZone" class="drop-zone" aria-hidden="true"><div class="drop-zone-content"><img src="/icons/upload.svg" alt=""><strong>Solte um boleto ou comprovante PDF</strong><span>Boletos entram no cadastro; comprovantes e pagamentos procuram a conta correspondente.</span></div></div>
 <div id="toast" class="toast" role="status"></div>
 <!--LOCAL_AUTH-->
 <script src="/app.js"></script>
