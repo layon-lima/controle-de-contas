@@ -830,19 +830,83 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("comprovante|pagamento", frontend)
         self.assertIn("if(isReceiptFilename(files[0].name))importDroppedReceipt(files[0])", frontend)
         self.assertIn("else importNewPDF(files[0])", frontend)
-        self.assertIn("/api/receipts/identify", frontend)
-        # Localizar automaticamente nao da permissao para PAGAR automaticamente.
-        # So o callback de confirmacao pode invocar /pay-with-receipt.
-        self.assertIn("function confirmMatchedReceipt(file, answer)", frontend)
-        self.assertIn("showModal('Confirmar comprovante'", frontend)
-        self.assertIn("confirmMatchedReceipt(file,answer)", frontend)
-        self.assertIn("'X-Receipt-Auto-Verified':'yes'", frontend)
-        self.assertIn("'X-Paid-Date':paymentDate", frontend)
-        self.assertIn("if(answer.status!=='verified'", frontend)
-        self.assertNotIn("droppedReceiptModal", frontend)
+        self.assertIn("/api/receipts/eligible", frontend)
+        # Recebedor + valor + vencimento listam TODOS os elegíveis.
+        # Apenas um clique explícito em Confirmar chama o pagamento.
+        self.assertIn("function confirmEligibleReceipt(file, report)", frontend)
+        self.assertIn("showModal('Conferir comprovante'", frontend)
+        self.assertIn("confirmEligibleReceipt(file,report)", frontend)
+        self.assertIn("name=\"receiptEligible\"", frontend)
+        self.assertIn("'X-Receipt-Eligible-Confirmed':'yes'", frontend)
+        self.assertIn("'X-Paid-Date':paidOn", frontend)
+        self.assertIn("if(report.status!=='eligible'", frontend)
         # O fluxo antigo de pagamento manual permanece disponivel.
         self.assertIn("function payModal(a)", frontend)
         self.assertIn("X-Receipt-Manual-Confirmed", frontend)
+
+    def _make_receipt_for_eligible_tests(self):
+        today = date.today().strftime("%d/%m/%Y")
+        return self._real_pdf(
+            "Comprovante Pix\n"
+            "Dados de quem recebeu\n"
+            "Nome: RECEITA FEDERAL\n"
+            "Valor: R$ 123,45\n"
+            "Vencimento: " + today + "\n"
+            "Data do débito: " + today + "\n"
+            "Identificador: 07012626564439319046470798"
+        )
+
+    def test_eligible_receipt_endpoint_lists_both_accounts_read_only(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        original = self._real_pdf("BOLETO ORIGINAL")
+        s.upload_pdf(1, original, "boleto.pdf")
+        previous = s.pdf_path(1).read_bytes()
+        receipt = self._make_receipt_for_eligible_tests()
+        report = s.eligible_receipt_accounts(receipt)
+        self.assertEqual(report["status"], "eligible")
+        self.assertEqual(report["candidate_ids"], [1, second])
+        self.assertIsNone(report["matched_account_id"])
+        self.assertEqual(s.pdf_path(1).read_bytes(), previous)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
+
+    def test_eligible_selection_requires_confirmation_and_pays_only_chosen(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        receipt = self._make_receipt_for_eligible_tests()
+        today = date.today().isoformat()
+        # Sem a confirmação explícita, a ambiguidade mantém o pagamento bloqueado.
+        with self.assertRaisesRegex(ValueError, "Confirme a associação"):
+            s.register_payment_with_receipt(second, today, receipt)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
+        saved = s.register_payment_with_receipt(
+            second, today, receipt, eligible_confirmed=True)
+        self.assertTrue(saved["paid"])
+        with s.connection() as conn:
+            rows = conn.execute("SELECT conta_id,resultado_conferencia "
+                                "FROM pagamentos").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["conta_id"], second)
+        self.assertEqual(rows[0]["resultado_conferencia"], "Confirmado pelo usuário")
+        by_id = {a["id"]: a for a in s.list_accounts()["accounts"]}
+        self.assertEqual(by_id[second]["status"], "Paga")
+        self.assertNotEqual(by_id[1]["status"], "Paga")
+
+    def test_eligible_selection_revalidates_account_before_merging(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        receipt = self._make_receipt_for_eligible_tests()
+        s.upload_pdf(second, self._real_pdf("BOLETO ORIGINAL"), "boleto.pdf")
+        path = s.pdf_path(second)
+        previous = path.read_bytes()
+        # Entre análise e confirmação, os dados da conta foram alterados.
+        with s.connection(write=True) as conn:
+            conn.execute("UPDATE contas SET valor=? WHERE id=?", (999, second))
+        with self.assertRaisesRegex(ValueError, "não é elegível"):
+            s.register_payment_with_receipt(second, date.today().isoformat(),
+                                            receipt, eligible_confirmed=True)
+        self.assertEqual(path.read_bytes(), previous)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
 
     def test_bradesco_receipt_automatically_registers_on_unique_identifier(self):
         code = "07012626564439319046470798"
