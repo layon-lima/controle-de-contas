@@ -786,6 +786,55 @@ class PortableDataTests(unittest.TestCase):
             total = conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0]
         self.assertEqual(total, 1)
 
+    def test_drop_receipt_global_identification_finds_other_account_without_writing(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        receipt = self._real_pdf(
+            "LINHA DIGITAVEL: 76543210987654321098765432109876543210987654321"
+        )
+        report = s.identify_receipt(receipt)
+        self.assertEqual(report["status"], "verified")
+        self.assertEqual(report["matched_account_id"], second)
+        self.assertEqual(s.list_accounts()["count"], 2)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
+
+    def test_drop_receipt_identify_route_does_not_register_or_merge(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        original = self._real_pdf("BOLETO ORIGINAL")
+        s.upload_pdf(1, original, "boleto.pdf")
+        path = s.pdf_path(1)
+        before = path.read_bytes()
+        proof = self._real_pdf(
+            "LINHA DIGITAVEL: 76543210987654321098765432109876543210987654321"
+        )
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        endpoint = "http://127.0.0.1:" + str(httpd.server_port) + "/api/receipts/identify"
+        req = Request(endpoint, data=proof, method="POST",
+                      headers={"X-Local-Token": s.TOKEN,
+                               "Content-Type": "application/pdf"})
+        with urlopen(req, timeout=5) as response:
+            report = json.load(response)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["matched_account_id"], second)
+        self.assertEqual(report["status"], "verified")
+        self.assertEqual(path.read_bytes(), before)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
+
+    def test_drag_and_drop_receipt_only_routes_by_filename_not_payment_identity(self):
+        frontend = (s.WEB_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn("function isReceiptFilename(name)", frontend)
+        self.assertIn("comprovante|pagamento", frontend)
+        self.assertIn("if(isReceiptFilename(files[0].name))importDroppedReceipt(files[0])", frontend)
+        self.assertIn("else importNewPDF(files[0])", frontend)
+        self.assertIn("/api/receipts/identify", frontend)
+        self.assertIn("id=\"receiptMatchedAccount\"", frontend)
+        self.assertIn("id=\"receiptDropConfirmed\"", frontend)
+        self.assertIn("X-Receipt-Manual-Confirmed", frontend)
+
     def test_receipt_verify_endpoint_is_read_only_and_reports_matching_account(self):
         second = self._clone_same_due_amount_for_receipt_check()
         proof = self._real_pdf(
