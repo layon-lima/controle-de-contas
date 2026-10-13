@@ -399,35 +399,48 @@ function isReceiptFilename(name){
   return /comprovante|pagamento/i.test(String(name||''));
 }
 let receiptImportBusy=false;
-function confirmMatchedReceipt(file, answer){
-  const id=answer.matched_account_id;
-  const account=accounts.find(a=>a.id===id);
-  if(!account||account.status==='Paga')
-    throw new Error('A conta identificada não está mais disponível para pagamento.');
-  const paymentDate=answer.payment_date;
-  if(!paymentDate||answer.receipt_value===null||answer.receipt_value===undefined)
-    throw new Error('O comprovante não informa data ou valor suficiente para registrar o pagamento.');
-  const summary=
-    '<div class="receipt-drop-status receipt-success">Conta identificada pelo código da cobrança.</div>'+
-    '<div class="receipt-confirm-summary">'+
-      '<div><small>Recebedor</small><strong>'+esc(account.fornecedor)+'</strong></div>'+
-      '<div><small>Valor</small><strong>'+esc(money(account.valor))+'</strong></div>'+
-      '<div><small>Vencimento</small><strong>'+esc(dateBR(account.vencimento))+'</strong></div>'+
-      '<div><small>Observações</small><strong>'+esc(account.observacoes||'—')+'</strong></div>'+
-    '</div>'+
-    '<p class="hint">Pagamento em '+esc(dateBR(paymentDate))+
-      '. Confirme para registrar e anexar o comprovante ao PDF desta conta.</p>';
-  // Até o clique em Confirmar, nenhuma conta ou PDF é alterado.
-  showModal('Confirmar comprovante','Conta #'+id+' encontrada para '+file.name,
-    summary,'Confirmar pagamento e anexar',async()=>{
-      // Conferência final no servidor, inclusive identificação única e dados do PDF.
+function confirmEligibleReceipt(file, report){
+  const ids=new Set((report.candidate_ids||[]).map(Number));
+  const eligible=accounts.filter(a=>ids.has(a.id)&&a.status!=='Paga')
+    .sort((a,b)=>a.id-b.id);
+  if(!eligible.length)throw new Error('Nenhuma conta em aberto elegível.');
+  const options=eligible.map(a=>
+    '<label class="receipt-eligible-option">'+
+      '<input type="radio" name="receiptEligible" value="'+a.id+'"'+
+        (eligible.length===1?' checked':'')+'>'+
+      '<span class="receipt-eligible-details">'+
+        '<strong>Conta #'+a.id+' — '+esc(a.fornecedor)+'</strong>'+
+        '<span>'+esc(money(a.valor))+' · vence '+esc(dateBR(a.vencimento))+'</span>'+
+        '<span>Observações: '+esc(a.observacoes||'—')+'</span>'+
+        (a.pagador?'<span>Pagador: '+esc(a.pagador)+'</span>':'')+
+      '</span></label>'
+  ).join('');
+  const date=report.payment_date||localToday();
+  const content=
+    '<div class="receipt-drop-status receipt-warning">'+
+      eligible.length+' conta(s) elegível(is) por recebedor, valor e vencimento. '+
+      'Confira e escolha a correta.</div>'+
+    '<div class="receipt-eligible-list">'+options+'</div>'+
+    '<label class="field" style="margin-top:12px">Data do pagamento'+
+      '<input type="date" id="eligiblePaidOn" value="'+esc(date)+'"></label>'+
+    '<p class="hint">Nenhuma conta será paga ou terá o PDF alterado até você confirmar.</p>';
+  showModal('Conferir comprovante',file.name,content,
+    'Confirmar pagamento e anexar',async()=>{
+      const chosen=document.querySelector('input[name="receiptEligible"]:checked');
+      const id=Number(chosen?.value||0);
+      if(!ids.has(id)||!eligible.some(a=>a.id===id))
+        throw new Error('Selecione uma das contas elegíveis.');
+      const paidOn=$('eligiblePaidOn').value;
+      if(!paidOn)throw new Error('Informe a data do pagamento.');
+      // O servidor reconfere recebedor, valor, vencimento e duplicidade
+      // antes de mesclar qualquer PDF ou criar o pagamento.
       const result=await fetch('/api/accounts/'+id+'/pay-with-receipt',{
-        method:'POST',headers:{
-          'X-Local-Token':token,'Content-Type':'application/pdf',
-          'X-Paid-Date':paymentDate,'X-Receipt-Auto-Verified':'yes'
-        },body:file
+        method:'POST',
+        headers:{'X-Local-Token':token,'Content-Type':'application/pdf',
+                 'X-Paid-Date':paidOn,'X-Receipt-Eligible-Confirmed':'yes'},
+        body:file
       });
-      const saved=await result.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
+      const saved=await result.json().catch(()=>({error:'Resposta inválida do pagamento.'}));
       if(!result.ok||!saved.ok)
         throw new Error(saved.error||'Não foi possível registrar o pagamento.');
       selected=id;
@@ -440,7 +453,7 @@ function confirmMatchedReceipt(file, answer){
 async function importDroppedReceipt(file){
   if(!file)return;
   if($('backdrop').classList.contains('show')){
-    notice('Conclua a ação atual antes de importar um comprovante.',true);return;
+    notice('Conclua a ação atual antes de importar outro PDF.',true);return;
   }
   if(importBusy||receiptImportBusy){
     notice('Já existe um PDF em processamento.',true);return;
@@ -452,22 +465,19 @@ async function importDroppedReceipt(file){
     notice('O comprovante PDF deve ter até 30 MB.',true);return;
   }
   receiptImportBusy=true;
-  notice('Identificando a conta do comprovante...',false,7000);
+  notice('Procurando contas elegíveis...',false,7000);
   try{
-    // Somente consulta: ainda não altera PDFs, contas ou pagamentos.
-    const response=await fetch('/api/receipts/identify',{
-      method:'POST',
-      headers:{'X-Local-Token':token,'Content-Type':'application/pdf'},
+    const response=await fetch('/api/receipts/eligible',{
+      method:'POST',headers:{'X-Local-Token':token,'Content-Type':'application/pdf'},
       body:file
     });
-    const answer=await response.json().catch(()=>({error:'Resposta inválida da conferência.'}));
-    if(!response.ok||!answer.ok)
-      throw new Error(answer.error||'Não foi possível ler o comprovante.');
-    if(answer.status!=='verified'||!Number.isInteger(answer.matched_account_id))
-      throw new Error('Nenhuma conta selecionada: '+(answer.reason||
-        'não foi possível identificar uma cobrança exclusiva.'));
+    const report=await response.json().catch(()=>({error:'Resposta inválida da conferência.'}));
+    if(!response.ok||!report.ok)
+      throw new Error(report.error||'Não foi possível ler o comprovante.');
+    if(report.status!=='eligible'||!report.candidate_ids?.length)
+      throw new Error('Nenhuma conta elegível: '+(report.reason||'não foi possível conferir os dados.'));
     await reload();
-    confirmMatchedReceipt(file,answer);
+    confirmEligibleReceipt(file,report);
   }catch(error){
     notice(error.message||String(error),true,10500);
   }finally{
