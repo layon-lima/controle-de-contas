@@ -831,9 +831,33 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("if(isReceiptFilename(files[0].name))importDroppedReceipt(files[0])", frontend)
         self.assertIn("else importNewPDF(files[0])", frontend)
         self.assertIn("/api/receipts/identify", frontend)
-        self.assertIn("id=\"receiptMatchedAccount\"", frontend)
-        self.assertIn("id=\"receiptDropConfirmed\"", frontend)
+        # Comprovante arrastado: anexacao totalmente automatica, sem modal.
+        self.assertNotIn("droppedReceiptModal", frontend)
+        self.assertIn("'X-Receipt-Auto-Verified':'yes'", frontend)
+        self.assertIn("'X-Paid-Date':answer.payment_date", frontend)
+        self.assertIn("if(answer.status!=='verified'", frontend)
+        # O fluxo antigo de pagamento manual permanece disponivel.
+        self.assertIn("function payModal(a)", frontend)
         self.assertIn("X-Receipt-Manual-Confirmed", frontend)
+
+    def test_bradesco_receipt_automatically_registers_on_unique_identifier(self):
+        code = "07012626564439319046470798"
+        sample = self._real_pdf(
+            "Identificador: " + code
+        )
+        with s.connection(write=True) as conn:
+            conn.execute("UPDATE contas SET fornecedor=?,valor=?,vencimento=?,"
+                         "codigo_pagamento=? WHERE id=1",
+                         ("RECEITA FEDERAL", 25, "2026-10-21", code))
+        identified = s.identify_receipt(sample)
+        self.assertEqual(identified["matched_account_id"], 1)
+        self.assertEqual(identified["status"], "verified")
+        # Sem data/valor: nunca registrar automaticamente.
+        with self.assertRaisesRegex(ValueError, "data de pagamento"):
+            s.register_payment_with_receipt(1, "2026-10-13", sample,
+                                            auto_verified=True)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
 
     def test_receipt_verify_endpoint_is_read_only_and_reports_matching_account(self):
         second = self._clone_same_due_amount_for_receipt_check()
