@@ -115,8 +115,8 @@ def _same_details(a: dict, b: dict) -> bool:
         return False
     return bool(amount_equal and
                 str(a.get("vencimento") or "")[:10] == str(b.get("vencimento") or "")[:10] and
-                _clean_text(a.get("fornecedor")).strip() ==
-                _clean_text(b.get("fornecedor")).strip())
+                " ".join(_clean_text(a.get("fornecedor")).split()) ==
+                " ".join(_clean_text(b.get("fornecedor")).split()))
 
 
 def verify_receipt(receipt: bytes, selected: dict,
