@@ -782,6 +782,28 @@ class PortableDataTests(unittest.TestCase):
             total = conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0]
         self.assertEqual(total, 1)
 
+    def test_receipt_verify_endpoint_is_read_only_and_reports_matching_account(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        proof = self._real_pdf(
+            "LINHA DIGITAVEL: 76543210987654321098765432109876543210987654321"
+        )
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        target = "http://127.0.0.1:" + str(httpd.server_port) + "/api/accounts/1/verify-receipt"
+        request = Request(target, data=proof, method="POST",
+                          headers={"X-Local-Token": s.TOKEN,
+                                   "Content-Type": "application/pdf"})
+        with urlopen(request, timeout=5) as response:
+            result = json.load(response)
+        self.assertEqual(result["status"], "conflict")
+        self.assertEqual(result["matched_account_id"], second)
+        self.assertNotIn("sha256", result)
+        self.assertEqual(s.list_accounts()["count"], 2)
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
+
     def test_payment_with_receipt_merges_pdf_and_disallows_second_payment(self):
         bill = self._real_pdf("BOLETO ORIGINAL")
         receipt = self._real_pdf("COMPROVANTE DE PAGAMENTO")
