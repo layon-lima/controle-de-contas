@@ -838,7 +838,8 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("confirmMatchedReceipt(file,answer)", frontend)
         self.assertIn("'X-Receipt-Auto-Verified':'yes'", frontend)
         self.assertIn("'X-Paid-Date':paymentDate", frontend)
-        self.assertIn("if(answer.status!=='verified'", frontend)
+        self.assertIn("!['verified','suggested'].includes(answer.status)", frontend)
+        self.assertIn("'X-Receipt-Suggestion-Confirmed':'yes'", frontend)
         self.assertNotIn("droppedReceiptModal", frontend)
         # O fluxo antigo de pagamento manual permanece disponivel.
         self.assertIn("function payModal(a)", frontend)

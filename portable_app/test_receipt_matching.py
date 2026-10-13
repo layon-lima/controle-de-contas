@@ -237,6 +237,54 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertIsNone(report["matched_account_id"])
         self.assertIn("identificador do comprovante foi lido", report["reason"])
 
+
+    def test_bradesco_dynamic_pix_id_differs_from_registered_qr_but_unique_account(self):
+        receipt = pdf("Comprovante Pix", "Dados de quem recebeu",
+                      "Nome: RECEITA FEDERAL", "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026",
+                      "Identificador: 07012626564439319046470798",
+                      "Data do debito: 13/10/2026")
+        record = account(55,
+                         "00020101021226900014br.gov.bcb.pix2568qrcodepix.bb.com.br/"
+                         "pix/v2/cobv/78def1eb-2249-49b6-9f9c-7b7205947d79",
+                         amount=25, due="2026-10-21")
+        result = rm.discover_receipt(receipt, [record], [])
+        self.assertEqual(result["status"], "suggested")
+        self.assertEqual(result["matched_account_id"], 55)
+        self.assertTrue(result["identifier_found"])
+        self.assertEqual(result["receipt_value"], 25)
+        self.assertEqual(result["receipt_due"], "2026-10-21")
+
+    def test_different_identifier_and_two_identical_accounts_stay_ambiguous(self):
+        receipt = pdf("Comprovante Pix", "Dados de quem recebeu",
+                      "Nome: RECEITA FEDERAL", "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026",
+                      "Identificador: 07012626564439319046470798")
+        first = account(1, "000201010212" + "X"*60, amount=25, due="2026-10-21")
+        second = account(2, "000201010212" + "Y"*60, amount=25, due="2026-10-21")
+        result = rm.discover_receipt(receipt, [first, second], [])
+        self.assertEqual(result["status"], "ambiguous")
+        self.assertIsNone(result["matched_account_id"])
+        self.assertEqual(result["candidate_ids"], [1, 2])
+
+    def test_metadata_requires_recipient_value_and_due_never_value_alone(self):
+        receipt = pdf("Comprovante Pix", "Dados de quem recebeu",
+                      "Nome: EMPRESA ESTRANHA", "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026")
+        known = account(2, "", amount=25, due="2026-10-21")
+        result = rm.discover_receipt(receipt, [known], [])
+        self.assertEqual(result["status"], "unverified")
+        self.assertIsNone(result["matched_account_id"])
+
+    def test_metadata_fallback_on_paid_account_is_blocked(self):
+        receipt = pdf("Comprovante Pix", "Dados de quem recebeu",
+                      "Nome: RECEITA FEDERAL", "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026",
+                      "Identificador: 07012626564439319046470798")
+        known = {**account(1, "", amount=25, due="2026-10-21"), "is_paid": 1}
+        result = rm.discover_receipt(receipt, [known], [])
+        self.assertEqual(result["status"], "conflict")
+
     def test_bradesco_same_identifier_but_different_due_must_not_match(self):
         identifier = "07012626564439319046470798"
         receipt = pdf("Comprovante Pix", "Valor: R$ 25,00",

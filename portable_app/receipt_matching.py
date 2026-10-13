@@ -275,6 +275,44 @@ def verify_receipt(receipt: bytes, selected: dict,
             "candidate_ids": candidates, "manual_required": len(candidates) > 1,
             "sha256": digest, "e2e": sorted(markers["e2e"])[0] if markers["e2e"] else ""}
 
+
+def _normalized_name(value: object) -> str:
+    """Normaliza acentos/pontuação sem confundir pessoas ou empresas distintas."""
+    return " ".join(re.sub(r"[^A-Z0-9]+", " ", _clean_text(value)).split())
+
+
+def _metadata_candidates(facts: dict, accounts: list[dict]) -> list[dict]:
+    """Candidatos após cruzar recebedor + valor + vencimento do próprio PDF.
+
+    Mesmo valor, isoladamente, NUNCA é suficiente. Contas pagas continuam
+    na busca para impedir que um comprovante antigo seja associado a outra.
+    """
+    amount = facts.get("receipt_value")
+    due = facts.get("receipt_due")
+    recipient = _normalized_name(facts.get("recipient"))
+    if amount is None or not due or not recipient:
+        return []
+    matched = []
+    for account in accounts:
+        try:
+            value = round(float(account.get("valor") or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        if (abs(value - amount) < .005 and
+                str(account.get("vencimento") or "")[:10] == due and
+                _normalized_name(account.get("fornecedor")) == recipient):
+            matched.append(account)
+    # Havendo vários boletos iguais, pagador compatível e cadastrado
+    # pode desempatar; sem ele, não escolher arbitrariamente.
+    if len(matched) > 1 and facts.get("payer"):
+        payer = _normalized_name(facts["payer"])
+        by_payer = [a for a in matched
+                    if _normalized_name(a.get("pagador")) == payer]
+        if len(by_payer) == 1:
+            return by_payer
+    return matched
+
+
 def discover_receipt(receipt: bytes, accounts: list[dict],
                      past_proofs: list[str]) -> dict:
     """Escolhe sozinho a conta SOMENTE com identificador único da cobrança."""
@@ -329,7 +367,29 @@ def discover_receipt(receipt: bytes, accounts: list[dict],
                 "reason": "O identificador aparece em mais de uma conta.",
                 "candidate_ids": ids}
 
+    # Em PIX com QR dinâmico, o ID mostrado pelo banco pode NÃO constar
+    # literalmente no código EMV do boleto. Não afirmar que a conta não existe:
+    # procurar uma cobrança exclusiva pelos três dados do próprio comprovante.
+    candidates = _metadata_candidates(facts, accounts)
+    if len(candidates) == 1:
+        possible = candidates[0]
+        if possible.get("is_paid"):
+            return {**base, "status": "conflict",
+                    "reason": "A única conta com recebedor, valor e vencimento iguais já está paga."}
+        return {**base, "status": "suggested",
+                "matched_account_id": int(possible["id"]),
+                "candidate_ids": [int(possible["id"])],
+                "reason": "Uma conta coincide em recebedor, valor e vencimento. "
+                          "O identificador bancário não foi confirmado no boleto; "
+                          "a associação depende da sua confirmação."}
+    if len(candidates) > 1:
+        return {**base, "status": "ambiguous",
+                "candidate_ids": sorted(int(a["id"]) for a in candidates),
+                "reason": "Mais de uma conta possui o mesmo recebedor, valor e vencimento. "
+                          "Não é seguro escolher automaticamente."}
     return {**base, "status": "unverified",
-            "reason": ("O identificador do comprovante foi lido, mas não existe "
-                       "correspondência nas cobranças cadastradas." if has_charge_id else
-                       "Não foi possível ler um identificador de cobrança neste PDF.")}
+            "reason": ("O identificador do comprovante foi lido, mas não há "
+                       "correspondência única de identificador ou de recebedor, "
+                       "valor e vencimento no cadastro." if has_charge_id else
+                       "Não foi encontrado identificador nem combinação suficiente "
+                       "de recebedor, valor e vencimento.")}

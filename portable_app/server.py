@@ -618,7 +618,7 @@ def identify_receipt(data: bytes) -> dict:
     pdf_workflows.check_pdf(data)
     with connection() as conn:
         records = [dict(row) for row in conn.execute(
-            "SELECT c.id,c.fornecedor,c.valor,c.vencimento,c.codigo_pagamento,"
+            "SELECT c.id,c.fornecedor,c.pagador,c.valor,c.vencimento,c.codigo_pagamento,"
             "c.pdf_conta, EXISTS(SELECT 1 FROM pagamentos p "
             "WHERE p.conta_id=c.id AND p.data_pagamento IS NOT NULL "
             "AND TRIM(p.data_pagamento)<>'') AS is_paid "
@@ -634,7 +634,7 @@ def identify_receipt(data: bytes) -> dict:
     return receipt_matching.discover_receipt(data, records, prior)
 
 
-def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False):
+def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False, confirmed_suggestion: bool = False):
     """Mescla comprovante ao PDF original, valida páginas e só então registra.
 
     O banco e os arquivos originais são restaurados se alguma etapa falhar.
@@ -655,13 +655,16 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             ).fetchone()
             if previously:
                 raise ValueError("Esta conta já está paga. Nenhum PDF foi alterado.")
-        if auto_verified:
+        if auto_verified and confirmed_suggestion:
+            raise ValueError("Modos de confirmação incompatíveis.")
+        if auto_verified or confirmed_suggestion:
             match = identify_receipt(data)
-            if (match["status"] != "verified"
+            expected = "verified" if auto_verified else "suggested"
+            if (match["status"] != expected
                     or match["matched_account_id"] != account_id):
                 raise ValueError(
-                    "Não existe correspondência única comprovada para esta conta. "
-                    "Nenhum PDF foi alterado."
+                    "A conta escolhida não corresponde à identificação atual "
+                    "do comprovante. Nenhum PDF foi alterado."
                 )
             if match.get("payment_date") != str(paid_on):
                 raise ValueError("A data de pagamento não coincide com o comprovante.")
@@ -672,7 +675,7 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             raise ValueError(verification["reason"] + " Nenhum PDF foi alterado.")
         if auto_verified and verification["status"] != "verified":
             raise ValueError("Identificador não confirmado no boleto. Nenhum PDF foi alterado.")
-        if verification["manual_required"] and not manual_confirmed and not auto_verified:
+        if verification["manual_required"] and not manual_confirmed and not auto_verified and not confirmed_suggestion:
             raise ValueError(verification["reason"] + " Confirme a associação antes de continuar.")
         raw = str(info.get("pdf_conta") or "").strip()
         existing = Path(raw) if raw else None
@@ -714,7 +717,7 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
                     "pdf_comprovante": str(target),
                     "resultado_conferencia": (
                         "Identificador confirmado" if verification["status"] == "verified" else
-                        "Confirmado pelo usuário" if verification["manual_required"] else "Não conferido"
+                        "Confirmado pelo usuário" if confirmed_suggestion or verification["manual_required"] else "Não conferido"
                     ),
                     "detalhes_conferencia": (
                         verification["reason"] + " SHA256:" + verification["sha256"] +
@@ -1209,7 +1212,8 @@ class Handler(BaseHTTPRequestHandler):
                         self._json({"ok": True, **register_payment_with_receipt(
                             account_id, paid_on, self.rfile.read(size),
                             manual_confirmed=self.headers.get("X-Receipt-Manual-Confirmed") == "yes",
-                            auto_verified=self.headers.get("X-Receipt-Auto-Verified") == "yes"
+                            auto_verified=self.headers.get("X-Receipt-Auto-Verified") == "yes",
+                            confirmed_suggestion=self.headers.get("X-Receipt-Suggestion-Confirmed") == "yes"
                         )})
                         return
                     if self.command == "POST" and op == "upload-pdf":
