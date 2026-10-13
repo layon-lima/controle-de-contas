@@ -275,6 +275,72 @@ def verify_receipt(receipt: bytes, selected: dict,
             "candidate_ids": candidates, "manual_required": len(candidates) > 1,
             "sha256": digest, "e2e": sorted(markers["e2e"])[0] if markers["e2e"] else ""}
 
+
+def _standard_name(value: object) -> str:
+    """Normalize nomes do recebedor sem comparar só partes do nome."""
+    return " ".join(re.sub(r"[^A-Z0-9]+", " ", _clean_text(value)).split())
+
+
+def eligible_receipt_accounts(receipt: bytes, accounts: list[dict],
+                              past_proofs: list[str]) -> dict:
+    """Retorna TODAS as contas em aberto com recebedor + valor + vencimento iguais.
+
+    A elegibilidade não é prova de identidade. Não seleciona nem quita conta.
+    """
+    text = pdf_text(receipt)
+    facts = _receipt_facts(text)
+    markers = _labels(text)
+    digest = hashlib.sha256(receipt).hexdigest()
+    e2es = sorted(markers["e2e"])
+    base = {**facts, "candidate_ids": [], "matched_account_id": None}
+
+    for historical in past_proofs:
+        old = str(historical or "")
+        if "SHA256:" + digest in old or any("E2E:" + e2e in old for e2e in e2es):
+            return {**base, "status": "conflict",
+                    "reason": "Este comprovante ou transação já foi registrado."}
+
+    recipient = _standard_name(facts.get("recipient"))
+    value = facts.get("receipt_value")
+    due = facts.get("receipt_due")
+    if not recipient or value is None or not due:
+        missing = []
+        if not recipient:
+            missing.append("recebedor")
+        if value is None:
+            missing.append("valor")
+        if not due:
+            missing.append("vencimento")
+        return {**base, "status": "unverified",
+                "reason": "Não foi possível ler: " + ", ".join(missing) + "."}
+
+    valid = []
+    paid = []
+    for account in accounts:
+        if _standard_name(account.get("fornecedor")) != recipient:
+            continue
+        if str(account.get("vencimento") or "")[:10] != due:
+            continue
+        try:
+            account_value = round(float(account.get("valor") or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        if abs(account_value - value) > .005:
+            continue
+        (paid if account.get("is_paid") else valid).append(int(account["id"]))
+
+    if valid:
+        return {**base, "status": "eligible", "candidate_ids": sorted(valid),
+                "reason": (str(len(valid)) +
+                           " conta(s) em aberto com recebedor, valor e vencimento iguais. "
+                           "A escolha e a confirmação são feitas pelo usuário.")}
+    if paid:
+        return {**base, "status": "conflict",
+                "reason": "Somente contas já pagas correspondem a estes dados."}
+    return {**base, "status": "unverified",
+            "reason": "Nenhuma conta em aberto corresponde a recebedor, valor e vencimento."}
+
+
 def discover_receipt(receipt: bytes, accounts: list[dict],
                      past_proofs: list[str]) -> dict:
     """Escolhe sozinho a conta SOMENTE com identificador único da cobrança."""
