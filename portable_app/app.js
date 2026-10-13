@@ -393,6 +393,108 @@ function payModal(a){
     }finally{checkingReceipt=false;}
   });
 }
+
+function isReceiptFilename(name){
+  // Apenas roteamento de importacao. O nome nao comprova a identidade da conta.
+  return /comprovante|pagamento/i.test(String(name||''));
+}
+let receiptImportBusy=false;
+function droppedReceiptModal(file, finding){
+  const foundId=Number(finding.matched_account_id||0);
+  const found=accounts.find(a=>a.id===foundId);
+  const exact=finding.status==='verified';
+  const conflict=finding.status==='conflict';
+  const candidates=new Set((finding.candidate_ids||[]).map(Number));
+  const open=accounts.filter(a=>a.status!=='Paga');
+  const choices=(exact ? (found&&found.status!=='Paga'?[found]:[]) :
+    finding.status==='ambiguous' ? open.filter(a=>candidates.has(a.id)) : open
+  ).sort((a,b)=>Number(candidates.has(b.id))-Number(candidates.has(a.id))||
+    a.fornecedor.localeCompare(b.fornecedor,'pt-BR')||a.id-b.id);
+  const statusText=conflict
+    ? 'Pagamento já registrado: '+finding.reason
+    : exact ? (found
+      ? 'Identificador encontrado na conta #'+found.id+
+        (found.status==='Paga'?' (já paga).':' (correspondência confirmada).')
+      : 'Identificador encontrado, mas a conta não está disponível na lista.')
+    : finding.reason;
+  const blocked=conflict||(exact&&(!found||found.status==='Paga'));
+  const idOptions=choices.map(a=>'<option value="'+a.id+'"'+
+    (exact&&a.id===foundId?' selected':'')+'>'+
+    esc('#'+a.id+' · '+a.fornecedor+' · '+money(a.valor)+
+      ' · '+dateBR(a.vencimento)+(a.observacoes?' · '+a.observacoes.slice(0,90):''))+
+    '</option>').join('');
+  const selector=blocked?'':(
+    '<label class="field wide">Conta que recebeu o pagamento'+
+    '<select id="receiptMatchedAccount"><option value="">Escolha a conta para conferir</option>'+
+    idOptions+'</select></label>'+
+    '<label class="field">Data do pagamento<input type="date" id="receiptPaidOn" value="'+localToday()+'"></label>'+
+    '<label class="receipt-manual"><input type="checkbox" id="receiptDropConfirmed"> '+
+    (exact?'Confirmo que quero registrar o pagamento nesta conta.':
+    'Conferi os documentos e confirmo manualmente a conta selecionada.')+
+    '</label>'
+  );
+  showModal('Identificar comprovante',file.name,
+    '<div class="receipt-drop-status '+(blocked?'receipt-error':exact?'receipt-success':'receipt-warning')+
+    '">'+esc(statusText)+'</div>'+
+    (finding.receipt_value!==null&&finding.receipt_value!==undefined&&!exact
+      ?'<p class="hint">Valor encontrado no comprovante: '+esc(money(finding.receipt_value))+
+       '. Valor igual é apenas uma sugestão, não confirma a cobrança.</p>':'')+
+    (!exact&&!blocked
+      ?'<p class="hint">'+(choices.length?'Contas possíveis em destaque;':'Nenhuma conta sugerida pelo identificador;')+
+       ' você escolhe qual conta realmente foi paga.</p>':'')+
+    selector,
+    blocked?'Pagamento não disponível':'Registrar pagamento e anexar',async()=>{
+      if(blocked)throw new Error(statusText);
+      const accountId=Number($('receiptMatchedAccount').value);
+      const target=accounts.find(a=>a.id===accountId);
+      if(!target||target.status==='Paga')throw new Error('Selecione uma conta em aberto.');
+      if(exact&&accountId!==foundId)
+        throw new Error('Este comprovante corresponde a outra conta.');
+      if(!$('receiptDropConfirmed').checked)
+        throw new Error('Confira a conta e marque a confirmação antes de registrar.');
+      const paidOn=$('receiptPaidOn').value;
+      if(!paidOn)throw new Error('Informe a data do pagamento.');
+      // O servidor confere NOVAMENTE o comprovante antes de gravar.
+      const response=await fetch('/api/accounts/'+accountId+'/pay-with-receipt',{
+        method:'POST',headers:{'X-Local-Token':token,
+          'Content-Type':'application/pdf','X-Paid-Date':paidOn,
+          'X-Receipt-Manual-Confirmed':'yes'},body:file
+      });
+      const result=await response.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
+      if(!response.ok||!result.ok)throw new Error(result.error||'Pagamento não registrado.');
+      selected=accountId;
+      setAccountView('paid');
+      await reload();
+      notice('Comprovante associado à conta #'+accountId+
+        ' e mesclado ao PDF ('+result.pages+' páginas).');
+      return true;
+    });
+  if(blocked)$('save').disabled=true;
+  if(exact&&!blocked)$('receiptMatchedAccount').value=String(foundId);
+}
+async function importDroppedReceipt(file){
+  if(!file)return;
+  if($('backdrop').classList.contains('show')){
+    notice('Conclua ou cancele a janela atual antes de arrastar um comprovante.',true);return;
+  }
+  if(importBusy||receiptImportBusy){notice('Já existe uma leitura de PDF em andamento.',true);return;}
+  if(!/\.pdf$/i.test(file.name||'')){notice('O comprovante deve ser um PDF.',true);return;}
+  if(file.size>30*1024*1024){notice('Comprovante PDF maior que 30 MB.',true);return;}
+  receiptImportBusy=true;
+  notice('Procurando a conta correspondente ao comprovante...',false,7500);
+  try{
+    const response=await fetch('/api/receipts/identify',{
+      method:'POST',headers:{'X-Local-Token':token,
+        'Content-Type':'application/pdf'},body:file
+    });
+    const result=await response.json().catch(()=>({error:'Resposta inválida da conferência.'}));
+    if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível conferir o comprovante.');
+    await reload();
+    droppedReceiptModal(file,result);
+  }catch(err){notice(err.message||String(err),true,9000)}
+  finally{receiptImportBusy=false}
+}
+
 async function deleteAccount(a){
   if(!window.confirm('Excluir a conta de '+a.fornecedor+'?\nA exclusão é definitiva no cadastro. PDFs originais não serão apagados.'))return;
   await api('/api/accounts/'+a.id+'/delete','POST',{});
@@ -664,7 +766,7 @@ $('importFile').addEventListener('change',e=>{
   const file=e.target.files[0];e.target.value='';
   if(file)importNewPDF(file);
 });
-// Soltar PDF sempre cria nova conta; não altera o PDF da linha selecionada.
+// O nome define somente o fluxo: comprovante procura conta; boleto continua cadastro.
 let dragDepth=0;
 function fileDrag(e){return Array.from(e.dataTransfer?.types||[]).includes('Files');}
 function hideDropZone(){dragDepth=0;$('dropZone').classList.remove('visible');}
@@ -686,7 +788,8 @@ document.addEventListener('drop',e=>{
   e.preventDefault();const files=Array.from(e.dataTransfer?.files||[]);
   hideDropZone();
   if(files.length!==1){notice('Arraste apenas um PDF de cada vez.',true);return;}
-  importNewPDF(files[0]);
+  if(isReceiptFilename(files[0].name))importDroppedReceipt(files[0]);
+  else importNewPDF(files[0]);
 });
 window.addEventListener('blur',hideDropZone);
 $('uploadFile').addEventListener('change',async e=>{
