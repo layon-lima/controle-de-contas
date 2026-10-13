@@ -639,7 +639,7 @@ def eligible_receipt_accounts(data: bytes) -> dict:
     pdf_workflows.check_pdf(data)
     with connection() as conn:
         rows = [dict(row) for row in conn.execute(
-            "SELECT c.id,c.fornecedor,c.valor,c.vencimento,"
+            "SELECT c.id,c.fornecedor,c.valor,c.vencimento,c.codigo_pagamento,c.pdf_conta,"
             "EXISTS(SELECT 1 FROM pagamentos p WHERE p.conta_id=c.id "
             "AND p.data_pagamento IS NOT NULL AND TRIM(p.data_pagamento)<>'') "
             "AS is_paid FROM contas c"
@@ -755,6 +755,8 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
                          if eligible_confirmed else verification["reason"] + " ") +
                         "SHA256:" + verification["sha256"] +
                         (" E2E:" + verification["e2e"] if verification["e2e"] else "") +
+                        (" DARFCTRL:" + eligible["payment_control"]
+                         if eligible_confirmed and eligible.get("payment_control") else "") +
                         " Comprovante mesclado e páginas confirmadas."
                     ),
                     "criado_em": stamp(),
