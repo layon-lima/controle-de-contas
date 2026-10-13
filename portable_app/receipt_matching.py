@@ -187,9 +187,14 @@ def _account_codes(info: dict, *, include_pdf: bool = False) -> dict[str, set[st
         filename = str(info.get("pdf_conta") or "").strip()
         if filename:
             try:
-                additional = _labels(pdf_text(Path(filename)))
+                raw_pdf = pdf_text(Path(filename))
+                additional = _labels(raw_pdf)
                 for key in codes:
                     codes[key].update(additional[key])
+                # Encontrar IDs longos também sem rotulo, quando o texto
+                # da guia traz o numero isolado no meio do documento.
+                for number in re.findall(r"(?<!\d)\d{20,35}(?!\d)", raw_pdf):
+                    codes["identifier"].add(number)
             except (OSError, ValueError, RuntimeError):
                 pass
     return codes
@@ -232,12 +237,14 @@ def verify_receipt(receipt: bytes, selected: dict,
     for aid, account in by_id.items():
         codes = _account_codes(account, include_pdf=(
             aid == selected_id or
-            (any(markers[k] for k in ("nosso_numero", "txid")) and
+            (any(markers[k] for k in ("nosso_numero", "txid", "identifier")) and
              (_same_details(account, selected) or
               _clean_text(account.get("fornecedor")) == _clean_text(selected.get("fornecedor"))))
         ))
-        common = [(k, code) for k in ("boleto", "pix", "nosso_numero", "txid")
-                  for code in (codes[k] & markers[k]) if code]
+        common = [(k, code) for k in ("boleto", "pix", "nosso_numero", "txid", "identifier")
+                  for code in (codes[k] & (markers[k] | (
+                      markers["identifier"] if k == "txid" else set()
+                  ))) if code]
         if common:
             matches.append((aid, common))
     ids = sorted(aid for aid, _ in matches)
@@ -270,59 +277,59 @@ def verify_receipt(receipt: bytes, selected: dict,
 
 def discover_receipt(receipt: bytes, accounts: list[dict],
                      past_proofs: list[str]) -> dict:
-    """Descobre a conta SEM modificar nada e sem presumir identidade por valor."""
+    """Escolhe sozinho a conta SOMENTE com identificador único da cobrança."""
     text = pdf_text(receipt)
-    identifiers = _labels(text)
+    markers = _labels(text)
+    facts = _receipt_facts(text)
     digest = hashlib.sha256(receipt).hexdigest()
-    e2e_ids = sorted(identifiers["e2e"])
-    for previous in past_proofs:
-        if "SHA256:" + digest in str(previous or ""):
-            return {"status": "conflict", "reason": "Este comprovante já foi utilizado em um pagamento.",
-                    "matched_account_id": None, "candidate_ids": [], "receipt_value": None}
-        if any("E2E:" + e2e in str(previous or "") for e2e in e2e_ids):
-            return {"status": "conflict", "reason": "Esta transação PIX já foi registrada anteriormente.",
-                    "matched_account_id": None, "candidate_ids": [], "receipt_value": None}
+    e2e_ids = sorted(markers["e2e"])
+    has_charge_id = any(markers[k] for k in
+                        ("identifier", "txid", "boleto", "nosso_numero", "pix"))
+    base = {**facts, "identifier_found": bool(has_charge_id),
+            "matched_account_id": None, "candidate_ids": []}
+    for record in past_proofs:
+        if ("SHA256:" + digest in str(record or "")
+                or any("E2E:" + e2e in str(record or "") for e2e in e2e_ids)):
+            return {**base, "status": "conflict",
+                    "reason": "Este comprovante ou transação já foi registrado."}
 
-    unpaid = [a for a in accounts if not a.get("is_paid")]
-    matched = []
-    for a in accounts:
-        codes = _account_codes(a, include_pdf=bool(
-            identifiers["nosso_numero"] or identifiers["txid"]))
-        if any(codes[key] & identifiers[key] for key in
-               ("boleto", "pix", "nosso_numero", "txid")):
-            matched.append(int(a["id"]))
-    matched = sorted(set(matched))
-    if len(matched) == 1:
-        return {"status": "verified",
-                "reason": "Identificador de cobrança encontrado em uma conta cadastrada.",
-                "matched_account_id": matched[0],
-                "candidate_ids": matched, "receipt_value": None}
-    if len(matched) > 1:
-        return {"status": "ambiguous",
-                "reason": "O identificador apareceu em várias contas. Selecione a correta após conferir os PDFs.",
-                "matched_account_id": None,
-                "candidate_ids": matched, "receipt_value": None}
+    matches = []
+    for account in accounts:
+        codes = _account_codes(account, include_pdf=bool(
+            markers["nosso_numero"] or markers["identifier"] or markers["txid"]
+        ))
+        common = any(codes[k] & markers[k] for k in
+                     ("boleto", "pix", "nosso_numero", "txid", "identifier"))
+        # O recibo chama TXID de "Identificador"; o boleto pode usar "TXID".
+        common = common or bool(codes["txid"] & markers["identifier"])
+        if common:
+            matches.append(account)
+    ids = sorted({int(a["id"]) for a in matches})
+    if len(ids) == 1:
+        found = next(a for a in matches if int(a["id"]) == ids[0])
+        if found.get("is_paid"):
+            return {**base, "status": "conflict",
+                    "reason": "O identificador aponta para uma conta já paga."}
+        if facts["receipt_value"] is not None:
+            try:
+                amount = round(float(found.get("valor") or 0), 2)
+            except (TypeError, ValueError):
+                amount = None
+            if amount != facts["receipt_value"]:
+                return {**base, "status": "conflict",
+                        "reason": "Identificador coincidente, mas o valor da cobrança é diferente."}
+        if facts["receipt_due"] and str(found.get("vencimento") or "")[:10] != facts["receipt_due"]:
+            return {**base, "status": "conflict",
+                    "reason": "Identificador coincidente, mas o vencimento é diferente."}
+        return {**base, "status": "verified",
+                "reason": "Correspondência exclusiva pelo identificador da cobrança.",
+                "matched_account_id": ids[0], "candidate_ids": ids}
+    if len(ids) > 1:
+        return {**base, "status": "ambiguous",
+                "reason": "O identificador aparece em mais de uma conta.",
+                "candidate_ids": ids}
 
-    # Somente SUGESTAO visual por valor, nunca identidade confirmada.
-    amounts = set()
-    for value in re.findall(r"R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})", text,
-                            flags=re.IGNORECASE):
-        try:
-            amounts.add(round(float(value.replace(".", "").replace(",", ".")), 2))
-        except ValueError:
-            continue
-    receipt_value = next(iter(amounts)) if len(amounts) == 1 else None
-    candidates = []
-    if receipt_value is not None:
-        candidates = [int(a["id"]) for a in unpaid
-                      if abs(float(a.get("valor") or 0) - receipt_value) < .005]
-    if candidates:
-        reason = ("Nenhum identificador exclusivo encontrado. Estas contas têm o "
-                  "mesmo valor exibido no comprovante; confira antes de escolher.")
-    else:
-        reason = ("Não foi possível identificar a cobrança com segurança. "
-                  "Escolha a conta manualmente e confira os dados.")
-    return {"status": "unverified", "reason": reason,
-            "matched_account_id": None,
-            "candidate_ids": sorted(candidates),
-            "receipt_value": receipt_value}
+    return {**base, "status": "unverified",
+            "reason": ("O identificador do comprovante foi lido, mas não existe "
+                       "correspondência nas cobranças cadastradas." if has_charge_id else
+                       "Não foi possível ler um identificador de cobrança neste PDF.")}
