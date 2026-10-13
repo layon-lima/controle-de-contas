@@ -107,5 +107,60 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertEqual(result["matched_account_id"], 2)
 
 
+    def test_drop_receipt_finds_one_account_from_exclusive_code(self):
+        receipt = pdf("COMPROVANTE DE PAGAMENTO",
+                      "LINHA DIGITAVEL: " + self.two["codigo_pagamento"])
+        result = rm.discover_receipt(receipt, [self.one, self.two], [])
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["matched_account_id"], 2)
+        self.assertEqual(result["candidate_ids"], [2])
+
+    def test_drop_receipt_never_confirms_based_only_on_matching_amount(self):
+        receipt = pdf("COMPROVANTE", "VALOR PAGO: R$ 270,35")
+        result = rm.discover_receipt(receipt, [self.one, self.two], [])
+        self.assertEqual(result["status"], "unverified")
+        self.assertIsNone(result["matched_account_id"])
+        self.assertEqual(result["candidate_ids"], [1, 2])
+        self.assertEqual(result["receipt_value"], 270.35)
+
+    def test_drop_receipt_without_any_comparable_data_requires_manual_choice(self):
+        receipt = pdf("COMPROVANTE BANCARIO SEM NUMEROS")
+        result = rm.discover_receipt(receipt, [self.one, self.two], [])
+        self.assertEqual(result["status"], "unverified")
+        self.assertIsNone(result["matched_account_id"])
+        self.assertEqual(result["candidate_ids"], [])
+
+    def test_drop_receipt_paid_account_is_identified_not_rerouted(self):
+        paid = {**self.two, "is_paid": 1}
+        receipt = pdf("COMPROVANTE", "LINHA DIGITAVEL: " + paid["codigo_pagamento"])
+        result = rm.discover_receipt(receipt, [self.one, paid], [])
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["matched_account_id"], 2)
+
+    def test_drop_receipt_duplicate_hash_is_blocked_before_any_choice(self):
+        receipt = pdf("COMPROVANTE DE PAGAMENTO", "R$ 270,35")
+        digest = hashlib.sha256(receipt).hexdigest()
+        result = rm.discover_receipt(receipt, [self.one, self.two],
+                                     ["SHA256:" + digest])
+        self.assertEqual(result["status"], "conflict")
+        self.assertIsNone(result["matched_account_id"])
+
+    def test_drop_receipt_duplicate_e2e_is_blocked(self):
+        e2e = "E12345678" + "A" * 23
+        receipt = pdf("COMPROVANTE PIX", "E2E: " + e2e)
+        result = rm.discover_receipt(receipt, [self.one, self.two],
+                                     ["E2E:" + e2e])
+        self.assertEqual(result["status"], "conflict")
+
+    def test_drop_receipt_without_unique_code_does_not_guess_from_pix_static_key(self):
+        code = ("000201010211" + "0" * 100)
+        a = account(1, code)
+        b = account(2, code)
+        receipt = pdf("COMPROVANTE PIX", code)
+        result = rm.discover_receipt(receipt, [a, b], [])
+        self.assertEqual(result["status"], "unverified")
+        self.assertIsNone(result["matched_account_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
