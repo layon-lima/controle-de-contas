@@ -1135,6 +1135,19 @@ class Handler(BaseHTTPRequestHandler):
                         content = path.read_bytes()
                         self._send(content, mime="application/pdf")
                         return
+                    if self.command == "POST" and op == "verify-receipt":
+                        try:
+                            size = int(self.headers.get("Content-Length") or 0)
+                        except ValueError as exc:
+                            raise ApiError(400, "Tamanho inválido.") from exc
+                        if size < 5 or size > pdf_workflows.MAX_PDF:
+                            raise ApiError(413, "Comprovante deve ter até 30 MB.")
+                        checked = check_receipt_for_account(account_id, self.rfile.read(size))
+                        self._json({"ok": True, **{
+                            key: value for key, value in checked.items()
+                            if key not in ("sha256", "e2e")
+                        }})
+                        return
                     if self.command == "POST" and op == "pay-with-receipt":
                         try:
                             size = int(self.headers.get("Content-Length") or 0)
@@ -1144,7 +1157,8 @@ class Handler(BaseHTTPRequestHandler):
                             raise ApiError(413, "Comprovante deve ter até 30 MB.")
                         paid_on = self.headers.get("X-Paid-Date") or ""
                         self._json({"ok": True, **register_payment_with_receipt(
-                            account_id, paid_on, self.rfile.read(size)
+                            account_id, paid_on, self.rfile.read(size),
+                            manual_confirmed=self.headers.get("X-Receipt-Manual-Confirmed") == "yes"
                         )})
                         return
                     if self.command == "POST" and op == "upload-pdf":
