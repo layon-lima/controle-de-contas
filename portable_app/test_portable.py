@@ -710,6 +710,78 @@ class PortableDataTests(unittest.TestCase):
         self.assertEqual(report["accounts"], 1)
         self.assertTrue(report["no_database_changes"])
 
+    def _clone_same_due_amount_for_receipt_check(self, other_code=""):
+        with s.connection(write=True) as conn:
+            conn.execute("UPDATE contas SET fornecedor=?,codigo_pagamento=? WHERE id=1",
+                         ("RECEITA FEDERAL", "12345678901234567890123456789012345678901234567"))
+            cursor = conn.execute(
+                "INSERT INTO contas(fornecedor,valor,vencimento,codigo_pagamento,"
+                "observacoes,criado_em,atualizado_em) VALUES(?,?,?,?,?,?,?)",
+                ("RECEITA FEDERAL",123.45,date.today().isoformat(),
+                 other_code or "76543210987654321098765432109876543210987654321",
+                 "Outra cobranca",s.stamp(),s.stamp())
+            )
+            return cursor.lastrowid
+
+    def test_wrong_account_receipt_identifier_blocks_before_pdf_merge(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        original = self._real_pdf("BOLETO ORIGINAL")
+        s.upload_pdf(1, original, "BOLETO.pdf")
+        path = s.pdf_path(1)
+        before = path.read_bytes()
+        proof = self._real_pdf(
+            "LINHA DIGITAVEL: 76543210987654321098765432109876543210987654321"
+        )
+        verified = s.check_receipt_for_account(1, proof)
+        self.assertEqual(verified["status"], "conflict")
+        self.assertEqual(verified["matched_account_id"], second)
+        with self.assertRaisesRegex(ValueError, "corresponde à conta"):
+            s.register_payment_with_receipt(1, date.today().isoformat(), proof,
+                                            manual_confirmed=True)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(s.list_accounts()["count"], 2)
+        self.assertNotEqual(s.list_accounts()["accounts"][0]["status"], "Paga")
+
+    def test_identical_accounts_force_explicit_confirmation_before_merge(self):
+        second = self._clone_same_due_amount_for_receipt_check()
+        original = self._real_pdf("BOLETO ORIGINAL")
+        s.upload_pdf(1, original, "BOLETO.pdf")
+        path = s.pdf_path(1)
+        before = path.read_bytes()
+        proof = self._real_pdf("COMPROVANTE SEM NUMERO")
+        check = s.check_receipt_for_account(1, proof)
+        self.assertEqual(check["status"], "ambiguous")
+        self.assertTrue(check["manual_required"])
+        with self.assertRaisesRegex(ValueError, "Confirme a associação"):
+            s.register_payment_with_receipt(1, date.today().isoformat(), proof)
+        self.assertEqual(path.read_bytes(), before)
+        saved = s.register_payment_with_receipt(
+            1, date.today().isoformat(), proof, manual_confirmed=True
+        )
+        self.assertTrue(saved["merged"])
+        with s.connection() as conn:
+            row = conn.execute(
+                "SELECT resultado_conferencia,detalhes_conferencia "
+                "FROM pagamentos WHERE conta_id=1"
+            ).fetchone()
+        self.assertEqual(row["resultado_conferencia"], "Confirmado pelo usuário")
+        self.assertIn("SHA256:", row["detalhes_conferencia"])
+        self.assertEqual(s.list_accounts()["accounts"][0]["status"], "Paga")
+
+    def test_receipt_hash_reuse_blocked_even_when_user_confirms(self):
+        self._clone_same_due_amount_for_receipt_check()
+        proof = self._real_pdf("COMPROVANTE DUPLICADO")
+        s.register_payment_with_receipt(
+            1, date.today().isoformat(), proof, manual_confirmed=True
+        )
+        with self.assertRaisesRegex(ValueError, "já foi usado"):
+            s.register_payment_with_receipt(
+                2, date.today().isoformat(), proof, manual_confirmed=True
+            )
+        with s.connection() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0]
+        self.assertEqual(total, 1)
+
     def test_payment_with_receipt_merges_pdf_and_disallows_second_payment(self):
         bill = self._real_pdf("BOLETO ORIGINAL")
         receipt = self._real_pdf("COMPROVANTE DE PAGAMENTO")
