@@ -7,9 +7,9 @@ EndToEndId identifica uma TRANSACAO, nao e o TXID da cobranca.
 from __future__ import annotations
 
 import hashlib
-import io
 import re
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 MAX_SCAN_PAGES = 3
@@ -47,6 +47,66 @@ def _strong_pix(value: object) -> str:
     if raw.startswith("000201010212") and len(raw) >= 60:
         return raw
     return ""
+
+
+def _pix_txid(payload: str) -> str:
+    """Lê o TXID PIX do campo 62.05 apenas quando o EMV é bem formado."""
+    raw = re.sub(r"\s+", "", str(payload or "")).upper()
+    if not raw.startswith("000201"):
+        return ""
+
+    def decode_tlv(value: str) -> dict[str, list[str]]:
+        fields: dict[str, list[str]] = {}
+        pos = 0
+        while pos + 4 <= len(value):
+            tag, size = value[pos:pos+2], value[pos+2:pos+4]
+            if not (tag.isdigit() and size.isdigit()):
+                break
+            pos += 4
+            length = int(size)
+            if pos + length > len(value):
+                break
+            fields.setdefault(tag, []).append(value[pos:pos+length])
+            pos += length
+        return fields
+
+    fields = decode_tlv(raw)
+    additional = fields.get("62", [""])[0]
+    txid = decode_tlv(additional).get("05", [""])[0]
+    clean = re.sub(r"[^A-Z0-9]", "", txid)
+    return clean if 8 <= len(clean) <= 35 and clean not in ("NAOINFORMADO", "SEMID") else ""
+
+
+def _receipt_facts(text: str) -> dict:
+    """Extrai dados do comprovante em português, sem confundir data e vencimento."""
+    normalized = _clean_text(text)
+
+    def first(expression: str) -> str:
+        found = re.search(expression, normalized, re.MULTILINE)
+        return found.group(1) if found else ""
+
+    def date_br(raw: str) -> str:
+        if not raw:
+            return ""
+        try:
+            return datetime.strptime(raw, "%d/%m/%Y").date().isoformat()
+        except ValueError:
+            return ""
+
+    numbers = re.findall(
+        r"\bVALOR(?:\s+(?:PAGO|DA TRANSACAO))?\s*:\s*R\$\s*"
+        r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})", normalized
+    )
+    amounts = {round(float(x.replace(".", "").replace(",", ".")), 2) for x in numbers}
+    paid_value = next(iter(amounts)) if len(amounts) == 1 else None
+    return {
+        "receipt_value": paid_value,
+        "receipt_due": date_br(first(r"\bVENCIMENTO\s*:\s*(\d{2}/\d{2}/\d{4})")),
+        "payment_date": date_br(first(r"\bDATA DO DEBITO\s*:\s*(\d{2}/\d{2}/\d{4})"))
+                        or date_br(first(r"^\s*(\d{2}/\d{2}/\d{4})\s*-")),
+        "recipient": first(r"\bDADOS DE QUEM RECEBEU\s*\n\s*NOME\s*:\s*([^\n]+)"),
+        "payer": first(r"\bDADOS DE QUEM PAGOU\s*\n\s*NOME\s*:\s*([^\n]+)"),
+    }
 
 
 def _labels(text: str) -> dict[str, set[str]]:
