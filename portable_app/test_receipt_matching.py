@@ -162,5 +162,87 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertIsNone(result["matched_account_id"])
 
 
+    def test_bradesco_receipt_reads_identifier_e2e_and_dates(self):
+        """Mesmo formato do comprovante Pix Bradesco: campos reais e separados."""
+        identifier = "07012626564439319046470798"
+        e2e = "E60746948202610131104A57930LY8IS"
+        proof = pdf("Comprovante de pagamento Pix",
+                    "13/10/2026 - 08:04:20",
+                    "Valor: R$ 25,00",
+                    "Dados de quem recebeu",
+                    "Nome: RECEITA FEDERAL",
+                    "Dados do pagamento",
+                    "Valor: R$ 25,00",
+                    "Vencimento: 21/10/2026",
+                    "Identificador: " + identifier,
+                    "Data do débito: 13/10/2026 - 08:04:17",
+                    "Número de controle: " + e2e,
+                    "Dados de quem pagou",
+                    "Nome: PAGADOR TESTE")
+        text = rm.pdf_text(proof)
+        ids = rm._labels(text)
+        data = rm._receipt_facts(text)
+        self.assertIn(identifier, ids["identifier"])
+        self.assertIn(e2e, ids["e2e"])
+        self.assertEqual(data["receipt_value"], 25.0)
+        self.assertEqual(data["receipt_due"], "2026-10-21")
+        self.assertEqual(data["payment_date"], "2026-10-13")
+        self.assertIn("RECEITA FEDERAL", data["recipient"])
+        self.assertIn("PAGADOR TESTE", data["payer"])
+
+    def test_bradesco_receipt_selects_unique_bill_not_an_equal_value_bill(self):
+        identifier = "07012626564439319046470798"
+        other = "88445577669911223344556677"
+        receipt = pdf("Comprovante de pagamento Pix",
+                      "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026",
+                      "Identificador: " + identifier,
+                      "Data do débito: 13/10/2026")
+        one = account(1, other, amount=25, due="2026-10-21")
+        two = account(2, identifier, amount=25, due="2026-10-21")
+        result = rm.discover_receipt(receipt, [one, two], [])
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["matched_account_id"], 2)
+        self.assertTrue(result["identifier_found"])
+        verification = rm.verify_receipt(receipt, two, [one, two], [])
+        self.assertEqual(verification["status"], "verified")
+
+    def test_bradesco_identifier_present_only_in_bill_pdf_can_match(self):
+        identifier = "07012626564439319046470798"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "cobranca.pdf"
+            path.write_bytes(pdf("Receita Federal", "Identificador: " + identifier))
+            target = account(17, "", amount=25, due="2026-10-21",
+                             doc=str(path))
+            unrelated = account(22, "", amount=25, due="2026-10-21")
+            receipt = pdf("Comprovante Pix", "Valor: R$ 25,00",
+                          "Vencimento: 21/10/2026",
+                          "Identificador: " + identifier)
+            report = rm.discover_receipt(receipt, [unrelated, target], [])
+        self.assertEqual(report["status"], "verified")
+        self.assertEqual(report["matched_account_id"], 17)
+
+    def test_bradesco_identifier_present_but_not_cadastrado_is_not_missing(self):
+        receipt = pdf("Comprovante Pix",
+                      "Valor: R$ 25,00",
+                      "Identificador: 07012626564439319046470798")
+        report = rm.discover_receipt(receipt, [self.one, self.two], [])
+        self.assertTrue(report["identifier_found"])
+        self.assertEqual(report["status"], "unverified")
+        self.assertIsNone(report["matched_account_id"])
+        self.assertIn("identificador do comprovante foi lido", report["reason"])
+
+    def test_bradesco_same_identifier_but_different_due_must_not_match(self):
+        identifier = "07012626564439319046470798"
+        receipt = pdf("Comprovante Pix", "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026",
+                      "Identificador: " + identifier)
+        account_wrong_due = account(1, identifier, amount=25,
+                                    due="2026-10-23")
+        result = rm.discover_receipt(receipt, [account_wrong_due], [])
+        self.assertEqual(result["status"], "conflict")
+        self.assertIsNone(result["matched_account_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
