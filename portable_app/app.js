@@ -407,13 +407,8 @@ function confirmMatchedReceipt(file, answer){
   const paymentDate=answer.payment_date;
   if(!paymentDate||answer.receipt_value===null||answer.receipt_value===undefined)
     throw new Error('O comprovante não informa data ou valor suficiente para registrar o pagamento.');
-  const isSuggested=answer.status==='suggested';
   const summary=
-    '<div class="receipt-drop-status '+(isSuggested?'receipt-warning':'receipt-success')+'">'+
-      (isSuggested
-        ?'Esta é a única conta com recebedor, valor e vencimento iguais. Confira antes de confirmar.'
-        :'Conta identificada pelo código da cobrança.')+
-    '</div>'+
+    '<div class="receipt-drop-status receipt-success">Conta identificada pelo código da cobrança.</div>'+
     '<div class="receipt-confirm-summary">'+
       '<div><small>Recebedor</small><strong>'+esc(account.fornecedor)+'</strong></div>'+
       '<div><small>Valor</small><strong>'+esc(money(account.valor))+'</strong></div>'+
@@ -429,9 +424,7 @@ function confirmMatchedReceipt(file, answer){
       const result=await fetch('/api/accounts/'+id+'/pay-with-receipt',{
         method:'POST',headers:{
           'X-Local-Token':token,'Content-Type':'application/pdf',
-          'X-Paid-Date':paymentDate,
-          ...(isSuggested?{'X-Receipt-Suggestion-Confirmed':'yes'}:
-                         {'X-Receipt-Auto-Verified':'yes'})
+          'X-Paid-Date':paymentDate,'X-Receipt-Auto-Verified':'yes'
         },body:file
       });
       const saved=await result.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
@@ -470,8 +463,7 @@ async function importDroppedReceipt(file){
     const answer=await response.json().catch(()=>({error:'Resposta inválida da conferência.'}));
     if(!response.ok||!answer.ok)
       throw new Error(answer.error||'Não foi possível ler o comprovante.');
-    if(!['verified','suggested'].includes(answer.status)||
-       !Number.isInteger(answer.matched_account_id))
+    if(answer.status!=='verified'||!Number.isInteger(answer.matched_account_id))
       throw new Error('Nenhuma conta selecionada: '+(answer.reason||
         'não foi possível identificar uma cobrança exclusiva.'));
     await reload();
