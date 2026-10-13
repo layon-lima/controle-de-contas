@@ -11,12 +11,13 @@ import tempfile
 import threading
 import time
 import webbrowser
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-CONTROLLER_VERSION = "0.5.0"
+CONTROLLER_VERSION = "0.5.1"
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOCALAPPDATA = Path(
@@ -336,7 +337,7 @@ def _status_payload() -> dict:
         "update_available": bool(
             installed and latest and _version_tuple(latest) > _version_tuple(installed)
         ),
-        "app_running": _process_running("Controle de Contas.exe"),
+        "app_running": _portable_online(),
         "sync_running": _sync_running(),
         "app_executable": str(exe) if exe else "",
         "cloud_log_path": str(SYNC_LOG_PATH),
@@ -347,28 +348,70 @@ def _status_payload() -> dict:
     }
 
 
+PORTABLE_URL = "http://127.0.0.1:8767/"
+
+
+def _portable_online() -> bool:
+    """Somente localhost; nao consultar banco, rede externa ou arquivos do usuario."""
+    try:
+        with urllib.request.urlopen(PORTABLE_URL + "health", timeout=0.75) as response:
+            payload = json.load(response)
+        return bool(payload.get("online"))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _portable_command() -> list[str] | None:
+    """Priorizar Python 3.13 instalado; nao depender do antigo EXE."""
+    python313 = LOCALAPPDATA / "Programs" / "Python" / "Python313" / "python.exe"
+    if python313.is_file():
+        return [str(python313), "-u"]
+    py = shutil.which("py")
+    if py:
+        return [py, "-3.13", "-u"]
+    if sys.version_info[:2] == (3, 13) and sys.executable:
+        return [sys.executable, "-u"]
+    return None
+
+
 def _start_app() -> tuple[bool, str]:
-    cfg = _load_config()
-    exe = _find_app_executable(cfg)
-    if not exe:
-        return False, "Executável do Controle de Contas não encontrado."
-    if _process_running(exe.name):
-        return True, "O Controle de Contas já está aberto."
+    """Abrir a versao web principal, mesmo se o atualizador falhou nos testes."""
+    if _portable_online():
+        webbrowser.open(PORTABLE_URL)
+        return True, "Controle de Contas web aberto."
+
+    launcher = ROOT / "portable_app" / "launcher.py"
+    if not launcher.is_file():
+        return False, "Iniciador web nao encontrado. Sincronize os arquivos do projeto."
+    command = _portable_command()
+    if not command:
+        return False, "Python 3.13 nao encontrado. Verifique a instalacao do Python."
 
     try:
-        subprocess.Popen(
-            [str(exe)],
-            cwd=str(exe.parent),
-            creationflags=(
-                getattr(subprocess, "DETACHED_PROCESS", 0)
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            ),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True, "Controle de Contas iniciado."
-    except Exception as exc:
-        return False, f"Falha ao iniciar: {exc}"
+        APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = APP_DATA_DIR / "panel_open_portable.log"
+        with log_path.open("a", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                [*command, str(launcher)],
+                cwd=str(ROOT), stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT,
+                creationflags=(
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                ),
+            )
+        # A interface web e aberta pelo proprio launcher quando esta pronta.
+        # Nao executar Git pull, suite de testes, atualizador nem EXE antigo.
+        for _ in range(16):
+            if _portable_online():
+                return True, "Controle de Contas web iniciado."
+            if process.poll() is not None:
+                return False, ("O aplicativo web encerrou na inicializacao. "
+                               "Verifique o log " + str(log_path))
+            time.sleep(0.4)
+        return True, "Controle de Contas web iniciando; aguarde alguns segundos."
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, "Falha ao iniciar a versao web: " + str(exc)
 
 
 def _stop_app() -> tuple[bool, str]:

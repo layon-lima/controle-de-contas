@@ -14,6 +14,35 @@ from controller import server
 
 
 class OneClickDesktopUpdateTests(unittest.TestCase):
+    def test_panel_opens_web_portable_not_retired_desktop_exe(self):
+        with patch.object(server, "_portable_online", side_effect=[False, True]), \
+             patch.object(server, "_portable_command", return_value=["python", "-u"]), \
+             patch.object(server.subprocess, "Popen") as process, \
+             patch.object(server, "_find_app_executable") as legacy:
+            process.return_value.poll.return_value = None
+            ok, message = server._start_app()
+        self.assertTrue(ok)
+        self.assertIn("web", message)
+        legacy.assert_not_called()
+        args = process.call_args.args[0]
+        self.assertIn("portable_app", args[-1])
+        self.assertTrue(args[-1].endswith("launcher.py"))
+
+    def test_panel_opens_browser_without_starting_another_server(self):
+        with patch.object(server, "_portable_online", return_value=True), \
+             patch.object(server.webbrowser, "open") as browser, \
+             patch.object(server.subprocess, "Popen") as start:
+            ok, _ = server._start_app()
+        self.assertTrue(ok)
+        browser.assert_called_once_with("http://127.0.0.1:8767/")
+        start.assert_not_called()
+
+    def test_panel_frontend_has_independent_open_button(self):
+        page = (server.ROOT / "controller" / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="openAppBtn"', page)
+        self.assertIn("request('/api/app/start'", page)
+
+
     def test_sync_before_build_confirms_exact_commit(self):
         sha = "a" * 40
         commands = []

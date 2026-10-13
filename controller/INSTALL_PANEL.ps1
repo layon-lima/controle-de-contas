@@ -107,7 +107,7 @@ if (-not $ready) {
     throw "O backend do painel não iniciou corretamente na porta 8766."
 }
 
-if ($reportedVersion -ne "0.3.2") {
+if ($reportedVersion -ne "0.5.1") {
     Stop-OldPanel
     throw "O backend iniciado ainda é antigo ($reportedVersion). Execute novamente a atualização do painel."
 }

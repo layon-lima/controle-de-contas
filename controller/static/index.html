@@ -27,6 +27,10 @@ h1{font-size:23px;line-height:1.15;margin:0;font-weight:750;letter-spacing:-.5px
 .healthstatus{font-size:18px;font-weight:700}
 .healthdetail{font-size:13px;color:var(--sub);margin-left:auto}
 .explain{color:var(--sub);font-size:13px;margin:0 0 20px}
+#openAppBtn{width:100%;min-height:54px;border:1px solid #b7d2e8;border-radius:11px;background:#edf6ff;color:#145b91;font:750 16px "Segoe UI",system-ui;cursor:pointer}
+#openAppBtn:hover:not(:disabled){background:#e1f0fc;border-color:#86b8d9}
+#openAppBtn:disabled{opacity:.65;cursor:wait}
+#openAppStatus{margin-top:10px;font-size:12px;color:var(--sub);min-height:18px}
 #runBtn{width:100%;min-height:62px;border:none;border-radius:11px;background:var(--green);color:#fff;font:700 17px "Segoe UI",system-ui;cursor:pointer;transition:background .15s,transform .15s}
 #runBtn:hover:not(:disabled){background:var(--green-dark);transform:translateY(-1px)}
 #runBtn:active:not(:disabled){transform:translateY(0)}
@@ -73,6 +77,13 @@ footer{text-align:center;color:#91a0ae;font-size:12px;margin-top:20px}
       <span class="healthstatus" id="serverStatus">Verificando conexão…</span>
       <span class="healthdetail" id="serverDetail">Servidor local e sincronização</span>
     </div>
+  </section>
+
+  <section class="panel">
+    <div class="paneltitle">Aplicativo</div>
+    <p class="explain">Abrir o Controle de Contas web já instalado, sem atualizar e sem modificar nenhum dado.</p>
+    <button id="openAppBtn" type="button">Abrir Controle de Contas</button>
+    <div id="openAppStatus" role="status" aria-live="polite"></div>
   </section>
 
   <section class="panel">
@@ -313,6 +324,16 @@ async function copyLog(){
   }catch(err){feedback.textContent='Não foi possível copiar: '+String(err.message||err)}
   finally{button.disabled=false}
 }
+byId('openAppBtn').addEventListener('click',async()=>{
+  const button=byId('openAppBtn'),status=byId('openAppStatus');
+  button.disabled=true;status.textContent='Abrindo a versão web...';
+  try{
+    const result=await request('/api/app/start',{method:'POST'});
+    status.textContent=result.message||'Controle de Contas iniciado.';
+  }catch(err){
+    status.textContent='Não foi possível abrir: '+String(err.message||err);
+  }finally{button.disabled=false}
+});
 btn.addEventListener('click',runAll);
 byId('copyBtn').addEventListener('click',copyLog);
 pollServer();pollJob();
