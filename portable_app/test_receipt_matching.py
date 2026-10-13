@@ -380,6 +380,24 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertEqual(result["status"], "unverified")
         self.assertEqual(result["candidate_ids"], [])
 
+    def test_darf_two_identical_matching_charges_are_all_offered(self):
+        barcode = "85820000000 25000385262 95070126266 88452619708"
+        receipt = self._darf_receipt(barcode)
+        one = account(7, barcode, amount=25)
+        two = account(8, barcode, amount=25)
+        other = account(9, "85880000000 25000385262 95070126266 88452619708",
+                        amount=25)
+        result = rm.eligible_receipt_accounts(receipt, [one, two, other], [])
+        self.assertEqual(result["status"], "eligible")
+        self.assertEqual(result["candidate_ids"], [7, 8])
+        self.assertIsNone(result["matched_account_id"])
+
+    def test_darf_original_line48_with_trailing_cpf_is_parsed(self):
+        line = ("85880000000 8 25000385262 7 94070126265 2 "
+                "64439319780 8   CPF: 973.100.263-49")
+        expected = "85880000000250003852629407012626564439319780"
+        self.assertIn(expected, rm._darf_barcodes(line))
+
     def test_darf_receipt_blocks_reused_control_even_after_pdf_reexport(self):
         receipt = self._darf_receipt("85820000000 25000385262 95070126266 88452619708")
         candidate = account(2, "85820000000 25000385262 95070126266 88452619708",
