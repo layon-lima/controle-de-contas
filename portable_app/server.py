@@ -613,6 +613,27 @@ def check_receipt_for_account(account_id: int, data: bytes) -> dict:
     return receipt_matching.verify_receipt(data, selected, rows, prior)
 
 
+def identify_receipt(data: bytes) -> dict:
+    """Localiza candidatas na base inteira; leitura sem gravacao nem mesclagem."""
+    pdf_workflows.check_pdf(data)
+    with connection() as conn:
+        records = [dict(row) for row in conn.execute(
+            "SELECT c.id,c.fornecedor,c.valor,c.vencimento,c.codigo_pagamento,"
+            "c.pdf_conta, EXISTS(SELECT 1 FROM pagamentos p "
+            "WHERE p.conta_id=c.id AND p.data_pagamento IS NOT NULL "
+            "AND TRIM(p.data_pagamento)<>'') AS is_paid "
+            "FROM contas c"
+        )]
+        columns = {row["name"] for row in conn.execute(
+            "PRAGMA table_info(pagamentos)"
+        )}
+        prior = ([str(row[0] or "") for row in conn.execute(
+            "SELECT detalhes_conferencia FROM pagamentos "
+            "WHERE detalhes_conferencia IS NOT NULL"
+        )] if "detalhes_conferencia" in columns else [])
+    return receipt_matching.discover_receipt(data, records, prior)
+
+
 def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False):
     """Mescla comprovante ao PDF original, valida páginas e só então registra.
 
@@ -1060,6 +1081,16 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if self.command == "POST" and route == "/api/batch/suggest":
                     self._json({"ok": True, **batch_suggest(self._body())})
+                    return
+                if self.command == "POST" and route == "/api/receipts/identify":
+                    try:
+                        size = int(self.headers.get("Content-Length") or 0)
+                    except ValueError as exc:
+                        raise ApiError(400, "Tamanho inválido.") from exc
+                    if size < 5 or size > pdf_workflows.MAX_PDF:
+                        raise ApiError(413, "Comprovante deve ter até 30 MB.")
+                    result = identify_receipt(self.rfile.read(size))
+                    self._json({"ok": True, **result})
                     return
                 if self.command == "POST" and route == "/api/import/preview":
                     try:
