@@ -281,6 +281,122 @@ def verify_receipt(receipt: bytes, selected: dict,
             "sha256": digest, "e2e": sorted(markers["e2e"])[0] if markers["e2e"] else ""}
 
 
+def _darf_barcodes(text: str) -> set[str]:
+    """Normaliza linha de arrecadação de 48 dígitos e código de barras de 44."""
+    values: set[str] = set()
+    for original in _clean_text(text).splitlines():
+        line = original.strip()
+        if not (line.startswith("8") or "CODIGO DE BARRAS" in line or
+                "LINHA DIGITAVEL" in line):
+            continue
+        if ":" in line:
+            line = line.split(":", 1)[1]
+        pieces = re.findall(r"\d+", line)
+        for start, fragment in enumerate(pieces):
+            if not fragment.startswith("8") or len(fragment) < 10:
+                continue
+            digits = ""
+            for part in pieces[start:]:
+                digits += part
+                if len(digits) == 44:
+                    values.add(digits)
+                if len(digits) == 48:
+                    values.add("".join(digits[k:k+11] for k in (0, 12, 24, 36)))
+                if len(digits) >= 48:
+                    break
+            break
+    return values
+
+
+def _darf_documents(text: str) -> set[str]:
+    return {_digits(number) for number in re.findall(
+        r"(?<!\d)\d{2}\.\d{2}\.\d{5}\.\d{7}-\d(?!\d)", _clean_text(text))}
+
+
+def _darf_receipt_facts(text: str) -> dict:
+    """Formato Bradesco: DARF numerado não contém recebedor nem vencimento."""
+    norm = _clean_text(text)
+    value = re.search(
+        r"\bVALOR\s+TOTAL\s*:\s*(?:R\$\s*)?"
+        r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})", norm)
+    date_match = re.search(
+        r"\bDATA DO PAGAMENTO\s*:\s*(\d{2}/\d{2}/\d{4})", norm)
+    bank_id = re.search(
+        r"(?m)^\s*NUMERO DE CONTROLE\s*:\s*(\d{8,25})\b", norm)
+    payment_date = ""
+    if date_match:
+        try:
+            payment_date = datetime.strptime(date_match.group(1), "%d/%m/%Y").date().isoformat()
+        except ValueError:
+            pass
+    amount = (round(float(value.group(1).replace(".", "").replace(",", ".")), 2)
+              if value else None)
+    return {
+        "receipt_type": "darf", "receipt_value": amount,
+        "receipt_due": "", "payment_date": payment_date,
+        "recipient": "", "payer": "",
+        "payment_control": bank_id.group(1) if bank_id else "",
+    }
+
+
+def _eligible_darf(text: str, accounts: list[dict],
+                   previous_proofs: list[str], digest: str) -> dict:
+    """Seleciona todas as contas com o mesmo documento/código, sem quitar nenhuma."""
+    facts = _darf_receipt_facts(text)
+    base = {**facts, "matched_account_id": None, "candidate_ids": []}
+    bank_id = facts["payment_control"]
+    if any(("SHA256:" + digest in str(row or "") or
+            (bank_id and "DARFCTRL:" + bank_id in str(row or "")))
+           for row in previous_proofs):
+        return {**base, "status": "conflict",
+                "reason": "Este comprovante DARF já foi utilizado."}
+    barcodes = _darf_barcodes(text)
+    documents = _darf_documents(text)
+    if facts["receipt_value"] is None or not (barcodes or documents):
+        return {**base, "status": "unverified",
+                "reason": "Não foi possível ler o valor e o código de barras "
+                          "ou número de documento do DARF."}
+
+    unpaid, paid = [], []
+    for account in accounts:
+        try:
+            if abs(float(account.get("valor") or 0) - facts["receipt_value"]) >= .005:
+                continue
+        except (TypeError, ValueError):
+            continue
+        raw = str(account.get("codigo_pagamento") or "")
+        account_barcodes = _darf_barcodes(raw)
+        account_documents = _darf_documents(raw)
+        if len(_digits(raw)) == 17 and not account_documents:
+            account_documents.add(_digits(raw))
+        pdf_name = str(account.get("pdf_conta") or "").strip()
+        if pdf_name:
+            try:
+                account_text = pdf_text(Path(pdf_name))
+                account_barcodes.update(_darf_barcodes(account_text))
+                account_documents.update(_darf_documents(account_text))
+            except (OSError, ValueError, RuntimeError):
+                pass
+        same_barcode = bool(barcodes & account_barcodes)
+        same_document = bool(documents & account_documents)
+        if ((barcodes and account_barcodes and not same_barcode) or
+            (documents and account_documents and not same_document)):
+            continue
+        if same_barcode or same_document:
+            (paid if account.get("is_paid") else unpaid).append(int(account["id"]))
+    if unpaid:
+        ids = sorted(set(unpaid))
+        return {**base, "status": "eligible", "candidate_ids": ids,
+                "reason": (str(len(ids)) + " conta(s) com número do DARF "
+                           "ou código de barras correspondente. Confirme a escolhida.")}
+    if paid:
+        return {**base, "status": "conflict",
+                "reason": "Somente contas já pagas correspondem a este DARF."}
+    return {**base, "status": "unverified",
+            "reason": "Nenhuma conta corresponde ao código de barras ou "
+                      "número deste DARF. Nenhum PDF foi alterado."}
+
+
 def _standard_name(value: object) -> str:
     """Normalize nomes do recebedor sem comparar só partes do nome."""
     return " ".join(re.sub(r"[^A-Z0-9]+", " ", _clean_text(value)).split())
@@ -293,9 +409,12 @@ def eligible_receipt_accounts(receipt: bytes, accounts: list[dict],
     A elegibilidade não é prova de identidade. Não seleciona nem quita conta.
     """
     text = pdf_text(receipt)
+    digest = hashlib.sha256(receipt).hexdigest()
+    if re.search(r"COMPROVANTE\s+DE\s+PAGAMENTO\s+DARF\b",
+                 _clean_text(text)):
+        return _eligible_darf(text, accounts, past_proofs, digest)
     facts = _receipt_facts(text)
     markers = _labels(text)
-    digest = hashlib.sha256(receipt).hexdigest()
     e2es = sorted(markers["e2e"])
     base = {**facts, "candidate_ids": [], "matched_account_id": None}
 
