@@ -410,14 +410,17 @@ function droppedReceiptModal(file, finding){
     finding.status==='ambiguous' ? open.filter(a=>candidates.has(a.id)) : open
   ).sort((a,b)=>Number(candidates.has(b.id))-Number(candidates.has(a.id))||
     a.fornecedor.localeCompare(b.fornecedor,'pt-BR')||a.id-b.id);
+  const unavailableMatches=finding.status==='ambiguous'&&!choices.length;
   const statusText=conflict
     ? 'Pagamento já registrado: '+finding.reason
+    : unavailableMatches
+      ? 'Os identificadores encontrados pertencem somente a contas já pagas ou indisponíveis.'
     : exact ? (found
       ? 'Identificador encontrado na conta #'+found.id+
         (found.status==='Paga'?' (já paga).':' (correspondência confirmada).')
       : 'Identificador encontrado, mas a conta não está disponível na lista.')
     : finding.reason;
-  const blocked=conflict||(exact&&(!found||found.status==='Paga'));
+  const blocked=conflict||unavailableMatches||(exact&&(!found||found.status==='Paga'));
   const idOptions=choices.map(a=>'<option value="'+a.id+'"'+
     (exact&&a.id===foundId?' selected':'')+'>'+
     esc('#'+a.id+' · '+a.fornecedor+' · '+money(a.valor)+
