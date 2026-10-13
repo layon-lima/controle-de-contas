@@ -47,12 +47,13 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching
 else:
     import pdf_intelligence
     import pdf_workflows
     import sync_runtime
     import ai_assist
+    import receipt_matching
 AI_ASSIST = ai_assist.ChatGPTAssist(
     APP_DIR, callback=f"http://{HOST}:{PORT}/auth/callback"
 )
@@ -593,7 +594,21 @@ def register_payment(account_id, data):
             raise RuntimeError("Pagamento não foi confirmado.")
 
 
-def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes):
+def check_receipt_for_account(account_id: int, data: bytes) -> dict:
+    """Conferir sem gravar e antes de alterar qualquer PDF."""
+    pdf_workflows.check_pdf(data)
+    with connection() as conn:
+        selected = dict(account(conn, account_id))
+        rows = [dict(row) for row in conn.execute(
+            "SELECT id,fornecedor,valor,vencimento,codigo_pagamento,pdf_conta FROM contas"
+        )]
+        prior = [str(row[0] or "") for row in conn.execute(
+            "SELECT detalhes_conferencia FROM pagamentos WHERE detalhes_conferencia IS NOT NULL"
+        )]
+    return receipt_matching.verify_receipt(data, selected, rows, prior)
+
+
+def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False):
     """Mescla comprovante ao PDF original, valida páginas e só então registra.
 
     O banco e os arquivos originais são restaurados se alguma etapa falhar.
@@ -614,6 +629,11 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes):
             ).fetchone()
             if previously:
                 raise ValueError("Esta conta já está paga. Nenhum PDF foi alterado.")
+        verification = check_receipt_for_account(account_id, data)
+        if verification["status"] == "conflict":
+            raise ValueError(verification["reason"] + " Nenhum PDF foi alterado.")
+        if verification["manual_required"] and not manual_confirmed:
+            raise ValueError(verification["reason"] + " Confirme a associação antes de continuar.")
         raw = str(info.get("pdf_conta") or "").strip()
         existing = Path(raw) if raw else None
         if existing and not existing.is_file():
@@ -652,8 +672,15 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes):
                     "beneficiario": str(info.get("fornecedor") or ""),
                     "documento_beneficiario": str(info.get("documento") or ""),
                     "pdf_comprovante": str(target),
-                    "resultado_conferencia": "Não conferido",
-                    "detalhes_conferencia": "Comprovante mesclado e páginas confirmadas; conferência automática desativada.",
+                    "resultado_conferencia": (
+                        "Identificador confirmado" if verification["status"] == "verified" else
+                        "Confirmado pelo usuário" if verification["manual_required"] else "Não conferido"
+                    ),
+                    "detalhes_conferencia": (
+                        verification["reason"] + " SHA256:" + verification["sha256"] +
+                        (" E2E:" + verification["e2e"] if verification["e2e"] else "") +
+                        " Comprovante mesclado e páginas confirmadas."
+                    ),
                     "criado_em": stamp(),
                     "atualizado_em": stamp(),
                 }
