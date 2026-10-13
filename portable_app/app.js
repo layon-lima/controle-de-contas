@@ -399,6 +399,44 @@ function isReceiptFilename(name){
   return /comprovante|pagamento/i.test(String(name||''));
 }
 let receiptImportBusy=false;
+function confirmMatchedReceipt(file, answer){
+  const id=answer.matched_account_id;
+  const account=accounts.find(a=>a.id===id);
+  if(!account||account.status==='Paga')
+    throw new Error('A conta identificada não está mais disponível para pagamento.');
+  const paymentDate=answer.payment_date;
+  if(!paymentDate||answer.receipt_value===null||answer.receipt_value===undefined)
+    throw new Error('O comprovante não informa data ou valor suficiente para registrar o pagamento.');
+  const summary=
+    '<div class="receipt-drop-status receipt-success">Conta identificada pelo código da cobrança.</div>'+
+    '<div class="receipt-confirm-summary">'+
+      '<div><small>Recebedor</small><strong>'+esc(account.fornecedor)+'</strong></div>'+
+      '<div><small>Valor</small><strong>'+esc(money(account.valor))+'</strong></div>'+
+      '<div><small>Vencimento</small><strong>'+esc(dateBR(account.vencimento))+'</strong></div>'+
+      '<div><small>Observações</small><strong>'+esc(account.observacoes||'—')+'</strong></div>'+
+    '</div>'+
+    '<p class="hint">Pagamento em '+esc(dateBR(paymentDate))+
+      '. Confirme para registrar e anexar o comprovante ao PDF desta conta.</p>';
+  // Até o clique em Confirmar, nenhuma conta ou PDF é alterado.
+  showModal('Confirmar comprovante','Conta #'+id+' encontrada para '+file.name,
+    summary,'Confirmar pagamento e anexar',async()=>{
+      // Conferência final no servidor, inclusive identificação única e dados do PDF.
+      const result=await fetch('/api/accounts/'+id+'/pay-with-receipt',{
+        method:'POST',headers:{
+          'X-Local-Token':token,'Content-Type':'application/pdf',
+          'X-Paid-Date':paymentDate,'X-Receipt-Auto-Verified':'yes'
+        },body:file
+      });
+      const saved=await result.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
+      if(!result.ok||!saved.ok)
+        throw new Error(saved.error||'Não foi possível registrar o pagamento.');
+      selected=id;
+      setAccountView('paid');
+      await reload();
+      notice('Comprovante anexado à conta #'+id+'. Pagamento registrado.');
+      return true;
+    });
+}
 async function importDroppedReceipt(file){
   if(!file)return;
   if($('backdrop').classList.contains('show')){
@@ -407,47 +445,29 @@ async function importDroppedReceipt(file){
   if(importBusy||receiptImportBusy){
     notice('Já existe um PDF em processamento.',true);return;
   }
-  if(!/\.pdf$/i.test(file.name||'')){
+  if(!/\\.pdf$/i.test(file.name||'')){
     notice('Arraste um comprovante em PDF.',true);return;
   }
   if(file.size>30*1024*1024){
     notice('O comprovante PDF deve ter até 30 MB.',true);return;
   }
   receiptImportBusy=true;
-  notice('Identificando a cobrança e conferindo o pagamento...',false,7000);
+  notice('Identificando a conta do comprovante...',false,7000);
   try{
-    // PRIMEIRA verificação: procurar a cobrança em todo o banco,
-    // sem criar cadastro, anexo ou pagamento.
-    const verify=await fetch('/api/receipts/identify',{
+    // Somente consulta: ainda não altera PDFs, contas ou pagamentos.
+    const response=await fetch('/api/receipts/identify',{
       method:'POST',
       headers:{'X-Local-Token':token,'Content-Type':'application/pdf'},
       body:file
     });
-    const answer=await verify.json().catch(()=>({error:'Resposta inválida da conferência.'}));
-    if(!verify.ok||!answer.ok)
+    const answer=await response.json().catch(()=>({error:'Resposta inválida da conferência.'}));
+    if(!response.ok||!answer.ok)
       throw new Error(answer.error||'Não foi possível ler o comprovante.');
-    if(answer.status!=='verified'||!Number.isInteger(answer.matched_account_id)){
-      // Não escolher pelo valor, fornecedor ou vencimento iguais.
-      throw new Error('Comprovante não anexado: '+(answer.reason||
-        'não foi possível encontrar uma cobrança única.'));
-    }
-    if(!answer.payment_date||answer.receipt_value===null||answer.receipt_value===undefined)
-      throw new Error('Comprovante sem data ou valor confirmado. Nenhuma conta foi alterada.');
-    const id=answer.matched_account_id;
-    // SEGUNDA verificação: o servidor compara NOVAMENTE antes de mesclar,
-    // e confirma que o identificador pertence à conta selecionada.
-    const save=await fetch('/api/accounts/'+id+'/pay-with-receipt',{
-      method:'POST',
-      headers:{'X-Local-Token':token,'Content-Type':'application/pdf',
-        'X-Paid-Date':answer.payment_date,
-        'X-Receipt-Auto-Verified':'yes'},body:file
-    });
-    const result=await save.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
-    if(!save.ok||!result.ok)throw new Error(result.error||'Comprovante não anexado.');
-    selected=id;
-    setAccountView('paid');
+    if(answer.status!=='verified'||!Number.isInteger(answer.matched_account_id))
+      throw new Error('Nenhuma conta selecionada: '+(answer.reason||
+        'não foi possível identificar uma cobrança exclusiva.'));
     await reload();
-    notice('Comprovante identificado e anexado à conta #'+id+'. Pagamento registrado.');
+    confirmMatchedReceipt(file,answer);
   }catch(error){
     notice(error.message||String(error),true,10500);
   }finally{
