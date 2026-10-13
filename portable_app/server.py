@@ -602,9 +602,14 @@ def check_receipt_for_account(account_id: int, data: bytes) -> dict:
         rows = [dict(row) for row in conn.execute(
             "SELECT id,fornecedor,valor,vencimento,codigo_pagamento,pdf_conta FROM contas"
         )]
-        prior = [str(row[0] or "") for row in conn.execute(
+        payment_columns = {row["name"] for row in conn.execute(
+            "PRAGMA table_info(pagamentos)"
+        )}
+        # Compatibilidade com bancos instalados antigos: a coluna de
+        # historico de conferencia pode nao existir nessa versao.
+        prior = ([str(row[0] or "") for row in conn.execute(
             "SELECT detalhes_conferencia FROM pagamentos WHERE detalhes_conferencia IS NOT NULL"
-        )]
+        )] if "detalhes_conferencia" in payment_columns else [])
     return receipt_matching.verify_receipt(data, selected, rows, prior)
 
 
