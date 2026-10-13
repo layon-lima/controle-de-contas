@@ -634,7 +634,7 @@ def identify_receipt(data: bytes) -> dict:
     return receipt_matching.discover_receipt(data, records, prior)
 
 
-def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False):
+def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False):
     """Mescla comprovante ao PDF original, valida páginas e só então registra.
 
     O banco e os arquivos originais são restaurados se alguma etapa falhar.
@@ -655,10 +655,24 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             ).fetchone()
             if previously:
                 raise ValueError("Esta conta já está paga. Nenhum PDF foi alterado.")
+        if auto_verified:
+            match = identify_receipt(data)
+            if (match["status"] != "verified"
+                    or match["matched_account_id"] != account_id):
+                raise ValueError(
+                    "Não existe correspondência única comprovada para esta conta. "
+                    "Nenhum PDF foi alterado."
+                )
+            if match.get("payment_date") != str(paid_on):
+                raise ValueError("A data de pagamento não coincide com o comprovante.")
+            if match.get("receipt_value") is None:
+                raise ValueError("Valor pago não encontrado no comprovante.")
         verification = check_receipt_for_account(account_id, data)
         if verification["status"] == "conflict":
             raise ValueError(verification["reason"] + " Nenhum PDF foi alterado.")
-        if verification["manual_required"] and not manual_confirmed:
+        if auto_verified and verification["status"] != "verified":
+            raise ValueError("Identificador não confirmado no boleto. Nenhum PDF foi alterado.")
+        if verification["manual_required"] and not manual_confirmed and not auto_verified:
             raise ValueError(verification["reason"] + " Confirme a associação antes de continuar.")
         raw = str(info.get("pdf_conta") or "").strip()
         existing = Path(raw) if raw else None
@@ -1194,7 +1208,8 @@ class Handler(BaseHTTPRequestHandler):
                         paid_on = self.headers.get("X-Paid-Date") or ""
                         self._json({"ok": True, **register_payment_with_receipt(
                             account_id, paid_on, self.rfile.read(size),
-                            manual_confirmed=self.headers.get("X-Receipt-Manual-Confirmed") == "yes"
+                            manual_confirmed=self.headers.get("X-Receipt-Manual-Confirmed") == "yes",
+                            auto_verified=self.headers.get("X-Receipt-Auto-Verified") == "yes"
                         )})
                         return
                     if self.command == "POST" and op == "upload-pdf":
