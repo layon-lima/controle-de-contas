@@ -908,6 +908,44 @@ class PortableDataTests(unittest.TestCase):
         with s.connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
 
+    def test_darf_receipt_uses_specific_codes_not_missing_recipient_and_due(self):
+        pieces = ["85820000000", "25000385262", "95070126266", "88452619708"]
+        original_code = " ".join(piece + "8" for piece in pieces)
+        receipt_code = " ".join(pieces)
+        with s.connection(write=True) as conn:
+            conn.execute("UPDATE contas SET fornecedor=?, valor=?, vencimento=?, "
+                         "codigo_pagamento=? WHERE id=1",
+                         ("RECEITA FEDERAL", 25, "2026-10-21", original_code))
+        content = (
+            "Comprovante de pagamento DARF Numerado\n"
+            "Numero de controle: 887766554433221100\n"
+            "Codigo de barras: " + receipt_code + "\n"
+            "Data do pagamento: 13/10/2026\n"
+            "Numero do documento: 07.01.11111.2222222-3\n"
+            "Valor total: R$ 25,00"
+        )
+        proof = self._real_pdf(content)
+        found = s.eligible_receipt_accounts(proof)
+        self.assertEqual(found["status"], "eligible")
+        self.assertEqual(found["candidate_ids"], [1])
+        self.assertEqual(found["receipt_type"], "darf")
+        # A busca somente leitura nao pode cadastrar ou pagar.
+        with s.connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
+        paid = s.register_payment_with_receipt(
+            1, "2026-10-13", proof, eligible_confirmed=True
+        )
+        self.assertTrue(paid["paid"])
+        with s.connection() as conn:
+            payment = conn.execute(
+                "SELECT conta_id, detalhes_conferencia FROM pagamentos"
+            ).fetchone()
+        self.assertEqual(payment["conta_id"], 1)
+        self.assertIn("DARFCTRL:887766554433221100", payment["detalhes_conferencia"])
+        # Mesmo numero de controle bancario em outro PDF segue bloqueado.
+        changed_receipt = self._real_pdf(content + "\nSegunda via do comprovante")
+        self.assertEqual(s.eligible_receipt_accounts(changed_receipt)["status"], "conflict")
+
     def test_bradesco_receipt_automatically_registers_on_unique_identifier(self):
         code = "07012626564439319046470798"
         sample = self._real_pdf(
