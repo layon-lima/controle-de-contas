@@ -249,5 +249,69 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertIsNone(result["matched_account_id"])
 
 
+    def test_eligible_receipt_shows_all_identical_bills_without_choosing(self):
+        receipt = pdf("Comprovante de pagamento Pix",
+                      "Dados de quem recebeu",
+                      "Nome: RECEITA FEDERAL",
+                      "Valor: R$ 25,00",
+                      "Vencimento: 21/10/2026",
+                      "Data do débito: 13/10/2026",
+                      "Identificador: 07012626564439319046470798")
+        first = account(7, "INCOMPATIBLE PIX ID A", amount=25, due="2026-10-21")
+        second = account(9, "INCOMPATIBLE PIX ID B", amount=25, due="2026-10-21")
+        result = rm.eligible_receipt_accounts(receipt, [first, second], [])
+        self.assertEqual(result["status"], "eligible")
+        self.assertEqual(result["candidate_ids"], [7, 9])
+        self.assertIsNone(result["matched_account_id"])
+        self.assertEqual(result["payment_date"], "2026-10-13")
+
+    def test_eligible_receipt_filters_recipient_amount_due_and_paid_status(self):
+        receipt = pdf("Comprovante Pix",
+                      "Dados de quem recebeu", "Nome: RECEITA FEDERAL",
+                      "Valor: R$ 25,00", "Vencimento: 21/10/2026")
+        correct = account(1, amount=25, due="2026-10-21")
+        bad_vendor = account(2, supplier="RECEITA ESTADUAL", amount=25, due="2026-10-21")
+        bad_value = account(3, amount=26, due="2026-10-21")
+        bad_due = account(4, amount=25, due="2026-10-22")
+        paid = {**account(5, amount=25, due="2026-10-21"), "is_paid": 1}
+        result = rm.eligible_receipt_accounts(
+            receipt, [correct, bad_vendor, bad_value, bad_due, paid], [])
+        self.assertEqual(result["status"], "eligible")
+        self.assertEqual(result["candidate_ids"], [1])
+
+    def test_eligible_receipt_missing_one_field_cannot_suggest_from_only_two(self):
+        receipt = pdf("Comprovante Pix", "Dados de quem recebeu",
+                      "Nome: RECEITA FEDERAL", "Valor: R$ 25,00")
+        result = rm.eligible_receipt_accounts(
+            receipt, [account(1, amount=25, due="2026-10-21")], [])
+        self.assertEqual(result["status"], "unverified")
+        self.assertEqual(result["candidate_ids"], [])
+        self.assertIn("vencimento", result["reason"])
+
+    def test_eligible_receipt_duplicate_hash_and_e2e_still_block(self):
+        e2e = "E12345678" + "A" * 23
+        receipt = pdf("Comprovante Pix",
+                      "Dados de quem recebeu", "Nome: RECEITA FEDERAL",
+                      "Valor: R$ 25,00", "Vencimento: 21/10/2026",
+                      "Número de controle: " + e2e)
+        item = account(1, amount=25, due="2026-10-21")
+        digest = hashlib.sha256(receipt).hexdigest()
+        by_hash = rm.eligible_receipt_accounts(receipt, [item], ["SHA256:" + digest])
+        by_e2e = rm.eligible_receipt_accounts(receipt, [item], ["E2E:" + e2e])
+        self.assertEqual(by_hash["status"], "conflict")
+        self.assertEqual(by_e2e["status"], "conflict")
+        self.assertEqual(by_hash["candidate_ids"], [])
+        self.assertEqual(by_e2e["candidate_ids"], [])
+
+    def test_eligible_receipt_does_not_consider_only_paid_bills(self):
+        receipt = pdf("Comprovante Pix",
+                      "Dados de quem recebeu", "Nome: RECEITA FEDERAL",
+                      "Valor: R$ 25,00", "Vencimento: 21/10/2026")
+        already_paid = {**account(1, amount=25, due="2026-10-21"), "is_paid": 1}
+        result = rm.eligible_receipt_accounts(receipt, [already_paid], [])
+        self.assertEqual(result["status"], "conflict")
+        self.assertEqual(result["candidate_ids"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
