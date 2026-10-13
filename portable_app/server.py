@@ -634,7 +634,25 @@ def identify_receipt(data: bytes) -> dict:
     return receipt_matching.discover_receipt(data, records, prior)
 
 
-def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False):
+def eligible_receipt_accounts(data: bytes) -> dict:
+    """Consulta somente leitura; nunca anexa PDF nem registra pagamento."""
+    pdf_workflows.check_pdf(data)
+    with connection() as conn:
+        rows = [dict(row) for row in conn.execute(
+            "SELECT c.id,c.fornecedor,c.valor,c.vencimento,"
+            "EXISTS(SELECT 1 FROM pagamentos p WHERE p.conta_id=c.id "
+            "AND p.data_pagamento IS NOT NULL AND TRIM(p.data_pagamento)<>'') "
+            "AS is_paid FROM contas c"
+        )]
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(pagamentos)")}
+        prior = ([str(r[0] or "") for r in conn.execute(
+            "SELECT detalhes_conferencia FROM pagamentos "
+            "WHERE detalhes_conferencia IS NOT NULL"
+        )] if "detalhes_conferencia" in columns else [])
+    return receipt_matching.eligible_receipt_accounts(data, rows, prior)
+
+
+def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False, eligible_confirmed: bool = False):
     """Mescla comprovante ao PDF original, valida páginas e só então registra.
 
     O banco e os arquivos originais são restaurados se alguma etapa falhar.
@@ -655,6 +673,19 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             ).fetchone()
             if previously:
                 raise ValueError("Esta conta já está paga. Nenhum PDF foi alterado.")
+        if auto_verified and eligible_confirmed:
+            raise ValueError("Modos de pagamento incompatíveis.")
+        if eligible_confirmed:
+            # Mesmo após o clique, recalcule os elegíveis no banco atual.
+            # Identificação por ID de cobrança NÃO é exigida neste fluxo.
+            eligible = eligible_receipt_accounts(data)
+            if (eligible["status"] != "eligible" or
+                    account_id not in eligible["candidate_ids"]):
+                raise ValueError("Esta conta não é elegível para o comprovante. "
+                                 "Nenhum PDF foi alterado.")
+            actual_paid = eligible.get("payment_date")
+            if actual_paid and actual_paid != str(paid_on):
+                raise ValueError("A data informada difere da data no comprovante.")
         if auto_verified:
             match = identify_receipt(data)
             if (match["status"] != "verified"
@@ -668,11 +699,13 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             if match.get("receipt_value") is None:
                 raise ValueError("Valor pago não encontrado no comprovante.")
         verification = check_receipt_for_account(account_id, data)
-        if verification["status"] == "conflict":
+        # Para a seleção explícita de elegíveis, o identificador antigo pode
+        # não estar no comprovante. A duplicidade já é bloqueada acima.
+        if verification["status"] == "conflict" and not eligible_confirmed:
             raise ValueError(verification["reason"] + " Nenhum PDF foi alterado.")
         if auto_verified and verification["status"] != "verified":
             raise ValueError("Identificador não confirmado no boleto. Nenhum PDF foi alterado.")
-        if verification["manual_required"] and not manual_confirmed and not auto_verified:
+        if verification["manual_required"] and not manual_confirmed and not auto_verified and not eligible_confirmed:
             raise ValueError(verification["reason"] + " Confirme a associação antes de continuar.")
         raw = str(info.get("pdf_conta") or "").strip()
         existing = Path(raw) if raw else None
@@ -713,11 +746,14 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
                     "documento_beneficiario": str(info.get("documento") or ""),
                     "pdf_comprovante": str(target),
                     "resultado_conferencia": (
+                        "Confirmado pelo usuário" if eligible_confirmed else
                         "Identificador confirmado" if verification["status"] == "verified" else
                         "Confirmado pelo usuário" if verification["manual_required"] else "Não conferido"
                     ),
                     "detalhes_conferencia": (
-                        verification["reason"] + " SHA256:" + verification["sha256"] +
+                        ("Selecionado entre contas elegíveis e confirmado pelo usuário. "
+                         if eligible_confirmed else verification["reason"] + " ") +
+                        "SHA256:" + verification["sha256"] +
                         (" E2E:" + verification["e2e"] if verification["e2e"] else "") +
                         " Comprovante mesclado e páginas confirmadas."
                     ),
@@ -1096,6 +1132,15 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "POST" and route == "/api/batch/suggest":
                     self._json({"ok": True, **batch_suggest(self._body())})
                     return
+                if self.command == "POST" and route == "/api/receipts/eligible":
+                    try:
+                        size = int(self.headers.get("Content-Length") or 0)
+                    except ValueError as exc:
+                        raise ApiError(400, "Tamanho inválido.") from exc
+                    if size < 5 or size > pdf_workflows.MAX_PDF:
+                        raise ApiError(413, "Comprovante deve ter até 30 MB.")
+                    self._json({"ok": True, **eligible_receipt_accounts(self.rfile.read(size))})
+                    return
                 if self.command == "POST" and route == "/api/receipts/identify":
                     try:
                         size = int(self.headers.get("Content-Length") or 0)
@@ -1209,7 +1254,8 @@ class Handler(BaseHTTPRequestHandler):
                         self._json({"ok": True, **register_payment_with_receipt(
                             account_id, paid_on, self.rfile.read(size),
                             manual_confirmed=self.headers.get("X-Receipt-Manual-Confirmed") == "yes",
-                            auto_verified=self.headers.get("X-Receipt-Auto-Verified") == "yes"
+                            auto_verified=self.headers.get("X-Receipt-Auto-Verified") == "yes",
+                            eligible_confirmed=self.headers.get("X-Receipt-Eligible-Confirmed") == "yes"
                         )})
                         return
                     if self.command == "POST" and op == "upload-pdf":
