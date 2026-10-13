@@ -311,19 +311,28 @@ function accountModal(a,preview=null,rerun=null){
 function payModal(a){
   if(a.status==='Paga'){notice('Conta já paga.',true);return}
   const now=localToday();
+  let checkingReceipt=false,receiptResult=null;
   showModal('Registrar pagamento',a.fornecedor+' · '+money(a.valor),
     '<label class="field">Data do pagamento<input type="date" id="paidDate" value="'+now+'"></label>'
     +'<label class="field" style="margin-top:15px">Comprovante PDF (opcional)<input type="file" id="receiptFile" accept=".pdf,application/pdf"></label>'
-    +'<p class="hint">Com comprovante: o PDF será mesclado ao boleto, conferido pelo número de páginas e salvo na pasta da conta. Sem comprovante: registro manual.</p>',
+    +'<div class="receipt-check" id="receiptCheck" aria-live="polite"></div>'
+    +'<p class="hint">O aplicativo confere os identificadores antes de mesclar o comprovante. Se existirem contas idênticas sem prova exclusiva, será necessária confirmação manual. Sem comprovante: registro manual.</p>',
     'Confirmar pagamento',async()=>{
       const paidOn=$('paidDate').value;
       if(!paidOn)throw new Error('Escolha a data.');
       const proof=$('receiptFile').files[0];
       if(proof){
+        if(checkingReceipt)throw new Error('Aguarde a conferência do comprovante.');
         if(proof.size>30*1024*1024)throw new Error('Comprovante acima de 30 MB.');
+        if(receiptResult?.status==='conflict')
+          throw new Error(receiptResult.reason||'Comprovante identificado como pertencente a outra conta.');
+        const checked=Boolean($('receiptManualConfirm')?.checked);
+        if(receiptResult?.manual_required&&!checked)
+          throw new Error('Confira a conta e marque a confirmação manual antes de registrar.');
         const response=await fetch('/api/accounts/'+a.id+'/pay-with-receipt',{
           method:'POST',headers:{'X-Local-Token':token,
-            'Content-Type':'application/pdf','X-Paid-Date':paidOn},body:proof
+            'Content-Type':'application/pdf','X-Paid-Date':paidOn,
+            'X-Receipt-Manual-Confirmed':checked?'yes':'no'},body:proof
         });
         const result=await response.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
         if(!response.ok||!result.ok)throw new Error(result.error||'Pagamento não registrado.');
@@ -334,6 +343,55 @@ function payModal(a){
       }
       setAccountView('paid');await reload();return true;
     });
+  $('receiptFile').addEventListener('change',async()=>{
+    const proof=$('receiptFile').files?.[0],status=$('receiptCheck');
+    receiptResult=null;
+    status.replaceChildren();
+    if(!proof)return;
+    if(proof.size>30*1024*1024){status.textContent='Comprovante acima de 30 MB.';return;}
+    checkingReceipt=true;
+    status.textContent='Conferindo identificadores do comprovante...';
+    try{
+      const response=await fetch('/api/accounts/'+a.id+'/verify-receipt',{
+        method:'POST',headers:{'X-Local-Token':token,
+          'Content-Type':'application/pdf'},body:proof
+      });
+      const answer=await response.json().catch(()=>({error:'Falha na leitura da conferência.'}));
+      if($('receiptFile').files?.[0]!==proof||!$('backdrop').classList.contains('show'))return;
+      if(!response.ok||!answer.ok)throw new Error(answer.error||'Não foi possível conferir o PDF.');
+      receiptResult=answer;
+      status.replaceChildren();
+      const message=document.createElement('p');
+      message.textContent=answer.status==='verified'
+        ? 'Identificador confirmado: o comprovante corresponde a esta conta.'
+        : answer.reason;
+      message.className=answer.status==='verified'?'receipt-success':
+        answer.status==='conflict'?'receipt-error':'receipt-warning';
+      status.appendChild(message);
+      if(answer.manual_required){
+        const detail=document.createElement('small');
+        detail.textContent='Contas semelhantes: '+(answer.candidate_ids||[]).join(', ')+'.';
+        status.appendChild(detail);
+        const label=document.createElement('label');
+        label.className='receipt-manual';
+        const box=document.createElement('input');
+        box.id='receiptManualConfirm';box.type='checkbox';
+        label.appendChild(box);
+        label.appendChild(document.createTextNode(
+          ' Conferi o comprovante e confirmo que pertence à conta '+a.id+'.'
+        ));
+        status.appendChild(label);
+      }
+    }catch(e){
+      if($('receiptFile').files?.[0]===proof){
+        status.replaceChildren();
+        const msg=document.createElement('p');
+        msg.className='receipt-error';
+        msg.textContent=e.message||String(e);
+        status.appendChild(msg);
+      }
+    }finally{checkingReceipt=false;}
+  });
 }
 async function deleteAccount(a){
   if(!window.confirm('Excluir a conta de '+a.fornecedor+'?\nA exclusão é definitiva no cadastro. PDFs originais não serão apagados.'))return;
