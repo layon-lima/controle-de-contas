@@ -115,12 +115,14 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertEqual(result["matched_account_id"], 2)
         self.assertEqual(result["candidate_ids"], [2])
 
-    def test_drop_receipt_never_confirms_based_only_on_matching_amount(self):
+    def test_drop_receipt_never_confirms_or_selects_based_only_on_matching_amount(self):
         receipt = pdf("COMPROVANTE", "VALOR PAGO: R$ 270,35")
         result = rm.discover_receipt(receipt, [self.one, self.two], [])
         self.assertEqual(result["status"], "unverified")
         self.assertIsNone(result["matched_account_id"])
-        self.assertEqual(result["candidate_ids"], [1, 2])
+        # Mesmo duas contas com valor igual, nenhuma pode ser eleita sem ID exclusivo.
+        self.assertEqual(result["candidate_ids"], [])
+        self.assertFalse(result["identifier_found"])
         self.assertEqual(result["receipt_value"], 270.35)
 
     def test_drop_receipt_without_any_comparable_data_requires_manual_choice(self):
@@ -130,12 +132,15 @@ class ReceiptMatchTests(unittest.TestCase):
         self.assertIsNone(result["matched_account_id"])
         self.assertEqual(result["candidate_ids"], [])
 
-    def test_drop_receipt_paid_account_is_identified_not_rerouted(self):
+    def test_drop_receipt_paid_account_is_blocked_and_never_rerouted(self):
         paid = {**self.two, "is_paid": 1}
         receipt = pdf("COMPROVANTE", "LINHA DIGITAVEL: " + paid["codigo_pagamento"])
         result = rm.discover_receipt(receipt, [self.one, paid], [])
-        self.assertEqual(result["status"], "verified")
-        self.assertEqual(result["matched_account_id"], 2)
+        # A cobrança foi localizada em uma conta já paga: bloquear, sem anexar de novo.
+        self.assertEqual(result["status"], "conflict")
+        self.assertIsNone(result["matched_account_id"])
+        self.assertEqual(result["candidate_ids"], [])
+        self.assertIn("já paga", result["reason"])
 
     def test_drop_receipt_duplicate_hash_is_blocked_before_any_choice(self):
         receipt = pdf("COMPROVANTE DE PAGAMENTO", "R$ 270,35")
