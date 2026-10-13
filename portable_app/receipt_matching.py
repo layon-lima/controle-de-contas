@@ -180,3 +180,62 @@ def verify_receipt(receipt: bytes, selected: dict,
             "reason": warning, "matched_account_id": None,
             "candidate_ids": candidates, "manual_required": len(candidates) > 1,
             "sha256": digest, "e2e": sorted(markers["e2e"])[0] if markers["e2e"] else ""}
+
+def discover_receipt(receipt: bytes, accounts: list[dict],
+                     past_proofs: list[str]) -> dict:
+    """Descobre a conta SEM modificar nada e sem presumir identidade por valor."""
+    text = pdf_text(receipt)
+    identifiers = _labels(text)
+    digest = hashlib.sha256(receipt).hexdigest()
+    e2e_ids = sorted(identifiers["e2e"])
+    for previous in past_proofs:
+        if "SHA256:" + digest in str(previous or ""):
+            return {"status": "conflict", "reason": "Este comprovante já foi utilizado em um pagamento.",
+                    "matched_account_id": None, "candidate_ids": [], "receipt_value": None}
+        if any("E2E:" + e2e in str(previous or "") for e2e in e2e_ids):
+            return {"status": "conflict", "reason": "Esta transação PIX já foi registrada anteriormente.",
+                    "matched_account_id": None, "candidate_ids": [], "receipt_value": None}
+
+    unpaid = [a for a in accounts if not a.get("is_paid")]
+    matched = []
+    for a in accounts:
+        codes = _account_codes(a, include_pdf=bool(
+            identifiers["nosso_numero"] or identifiers["txid"]))
+        if any(codes[key] & identifiers[key] for key in
+               ("boleto", "pix", "nosso_numero", "txid")):
+            matched.append(int(a["id"]))
+    matched = sorted(set(matched))
+    if len(matched) == 1:
+        return {"status": "verified",
+                "reason": "Identificador de cobrança encontrado em uma conta cadastrada.",
+                "matched_account_id": matched[0],
+                "candidate_ids": matched, "receipt_value": None}
+    if len(matched) > 1:
+        return {"status": "ambiguous",
+                "reason": "O identificador apareceu em várias contas. Selecione a correta após conferir os PDFs.",
+                "matched_account_id": None,
+                "candidate_ids": matched, "receipt_value": None}
+
+    # Somente SUGESTAO visual por valor, nunca identidade confirmada.
+    amounts = set()
+    for value in re.findall(r"R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})", text,
+                            flags=re.IGNORECASE):
+        try:
+            amounts.add(round(float(value.replace(".", "").replace(",", ".")), 2))
+        except ValueError:
+            continue
+    receipt_value = next(iter(amounts)) if len(amounts) == 1 else None
+    candidates = []
+    if receipt_value is not None:
+        candidates = [int(a["id"]) for a in unpaid
+                      if abs(float(a.get("valor") or 0) - receipt_value) < .005]
+    if candidates:
+        reason = ("Nenhum identificador exclusivo encontrado. Estas contas têm o "
+                  "mesmo valor exibido no comprovante; confira antes de escolher.")
+    else:
+        reason = ("Não foi possível identificar a cobrança com segurança. "
+                  "Escolha a conta manualmente e confira os dados.")
+    return {"status": "unverified", "reason": reason,
+            "matched_account_id": None,
+            "candidate_ids": sorted(candidates),
+            "receipt_value": receipt_value}
