@@ -101,10 +101,15 @@ def _receipt_facts(text: str) -> dict:
     paid_value = next(iter(amounts)) if len(amounts) == 1 else None
     return {
         "receipt_value": paid_value,
-        "receipt_due": date_br(first(r"\bVENCIMENTO\s*:\s*(\d{2}/\d{2}/\d{4})")),
+        "receipt_due": date_br(first(
+            r"\b(?:VENCIMENTO|DATA DE VENCIMENTO|DATA DO VENCIMENTO)"
+            r"\s*:\s*(\d{2}/\d{2}/\d{4})")),
         "payment_date": date_br(first(r"\bDATA DO DEBITO\s*:\s*(\d{2}/\d{2}/\d{4})"))
                         or date_br(first(r"^\s*(\d{2}/\d{2}/\d{4})\s*-")),
-        "recipient": first(r"\bDADOS DE QUEM RECEBEU\s*\n\s*NOME\s*:\s*([^\n]+)"),
+        "recipient": (first(r"\bDADOS DE QUEM RECEBEU\s*\n\s*NOME\s*:\s*([^\n]+)")
+                      or first(r"^\s*(?:RECEBEDOR|BENEFICIARIO|FAVORECIDO|"
+                               r"DESTINATARIO|NOME DO RECEBEDOR|NOME DO FAVORECIDO)"
+                               r"\s*:\s*([^\n]+)")),
         "payer": first(r"\bDADOS DE QUEM PAGOU\s*\n\s*NOME\s*:\s*([^\n]+)"),
     }
 
