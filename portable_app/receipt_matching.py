@@ -289,7 +289,7 @@ def _darf_barcodes(text: str) -> set[str]:
         if not (line.startswith("8") or "CODIGO DE BARRAS" in line or
                 "LINHA DIGITAVEL" in line):
             continue
-        if ":" in line:
+        if ":" in line and not line.startswith("8"):
             line = line.split(":", 1)[1]
         pieces = re.findall(r"\d+", line)
         for start, fragment in enumerate(pieces):
