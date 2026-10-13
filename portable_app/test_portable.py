@@ -766,7 +766,11 @@ class PortableDataTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["resultado_conferencia"], "Confirmado pelo usuário")
         self.assertIn("SHA256:", row["detalhes_conferencia"])
-        self.assertEqual(s.list_accounts()["accounts"][0]["status"], "Paga")
+        # A lista exibe contas em aberto primeiro; nao presumir que a
+        # primeira linha e a conta que recebeu o comprovante.
+        by_id = {item["id"]: item for item in s.list_accounts()["accounts"]}
+        self.assertEqual(by_id[1]["status"], "Paga")
+        self.assertNotEqual(by_id[second]["status"], "Paga")
 
     def test_receipt_hash_reuse_blocked_even_when_user_confirms(self):
         self._clone_same_due_amount_for_receipt_check()
