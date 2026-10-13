@@ -831,11 +831,15 @@ class PortableDataTests(unittest.TestCase):
         self.assertIn("if(isReceiptFilename(files[0].name))importDroppedReceipt(files[0])", frontend)
         self.assertIn("else importNewPDF(files[0])", frontend)
         self.assertIn("/api/receipts/identify", frontend)
-        # Comprovante arrastado: anexacao totalmente automatica, sem modal.
-        self.assertNotIn("droppedReceiptModal", frontend)
+        # Localizar automaticamente nao da permissao para PAGAR automaticamente.
+        # So o callback de confirmacao pode invocar /pay-with-receipt.
+        self.assertIn("function confirmMatchedReceipt(file, answer)", frontend)
+        self.assertIn("showModal('Confirmar comprovante'", frontend)
+        self.assertIn("confirmMatchedReceipt(file,answer)", frontend)
         self.assertIn("'X-Receipt-Auto-Verified':'yes'", frontend)
-        self.assertIn("'X-Paid-Date':answer.payment_date", frontend)
+        self.assertIn("'X-Paid-Date':paymentDate", frontend)
         self.assertIn("if(answer.status!=='verified'", frontend)
+        self.assertNotIn("droppedReceiptModal", frontend)
         # O fluxo antigo de pagamento manual permanece disponivel.
         self.assertIn("function payModal(a)", frontend)
         self.assertIn("X-Receipt-Manual-Confirmed", frontend)
