@@ -1348,7 +1348,8 @@ def main():
     except (OSError, RuntimeError) as exc:
         print("AVISO: sincronizador mobile não iniciou:", exc)
     print("Controle de Contas web:", url)
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    if os.environ.get("CONTAS_PORTABLE_NO_BROWSER") != "1":
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
         httpd.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
