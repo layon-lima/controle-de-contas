@@ -39,7 +39,7 @@ $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -Wor
 $boot = New-ScheduledTaskTrigger -AtStartup
 $login = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
 # Rodar usando a conta do usuario, mesmo antes do login, sem mudar LOCALAPPDATA.
-$principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType S4U -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType S4U -RunLevel Highest
 # Sem limite de duracao; Windows reinicia a tarefa caso ela morra.
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartInterval (New-TimeSpan -Minutes 1) -RestartCount 20 -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 

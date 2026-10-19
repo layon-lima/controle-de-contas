@@ -53,6 +53,17 @@ function DonosDaPorta {
         return @()
     }
 }
+function PortaOcupada {
+    $tcp = New-Object Net.Sockets.TcpClient
+    try {
+        $tcp.Connect('127.0.0.1', 8767)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $tcp.Dispose()
+    }
+}
 
 $mutex = New-Object System.Threading.Mutex($false, 'Global\ControleContasSupervisorPermanente')
 $temTrava = $false
@@ -98,7 +109,7 @@ try {
 
             $processos = @(ProcessosDoServidor)
             $donos = @(DonosDaPorta)
-            $portaOcupada = ($donos.Count -gt 0)
+            $portaOcupada = ($donos.Count -gt 0) -or (PortaOcupada)
 
             if ($processos.Count -gt 0 -or $portaOcupada) {
                 if ($null -eq $semRespostaDesde) {
@@ -112,7 +123,7 @@ try {
                 if ($portaOcupada) {
                     $nossosPids = @($processos | ForEach-Object { [int]$_.ProcessId })
                     $alheios = @($donos | Where-Object { $nossosPids -notcontains [int]$_ })
-                    if ($alheios.Count -gt 0 -or $nossosPids.Count -eq 0) {
+                    if ($alheios.Count -gt 0 -or $nossosPids.Count -eq 0 -or $donos.Count -eq 0) {
                         if ((Get-Date).Subtract($ultimoAviso).TotalMinutes -ge 5) {
                             Registrar 'Porta 8767 ocupada por outro processo. Nada sera encerrado.'
                             $ultimoAviso = Get-Date
@@ -131,7 +142,7 @@ try {
                         }
                     }
                     Start-Sleep -Seconds 3
-                    if (@(DonosDaPorta).Count -gt 0) {
+                    if (PortaOcupada) {
                         Registrar 'Porta 8767 continua ocupada; tentativa adiada.'
                         Start-Sleep -Seconds 30
                         continue
