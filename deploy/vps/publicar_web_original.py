@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import subprocess
 import sys
 import time
@@ -20,7 +19,6 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "deploy/vps/compose.portable-web.yml"
 DATA = Path("/opt/apps/contas-runtime")
-SECRETS = Path("/opt/apps/contas-private/public-auth.json")
 SETTINGS = DATA / "public-site.env"
 DB = DATA / "data/controle_contas.db"
 CADDY = "pluv-https-caddy-1"
@@ -71,23 +69,6 @@ def pick_network(caddy: dict) -> str:
     return next((n for n in names if "pluv" in n.lower()), names[0])
 
 
-def username_password() -> tuple[str, str]:
-    SECRETS.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(SECRETS.parent, 0o700)
-    if SECRETS.is_file():
-        data = json.loads(SECRETS.read_text(encoding="utf-8"))
-        user, password = data.get("user"), data.get("password")
-        if user != "contas" or not isinstance(password, str) or len(password) < 20:
-            raise Abort("Credenciais de publicacao anteriores invalidas. Nao sobrescrevi.")
-        return user, password
-    user = "contas"
-    password = secrets.token_urlsafe(25)
-    fd = os.open(str(SECRETS), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({"user": user, "password": password}, handle)
-    return user, password
-
-
 def domain_name() -> str:
     explicit = os.environ.get("CONTAS_PUBLIC_HOST", "").strip().lower()
     if explicit:
@@ -133,12 +114,6 @@ def main() -> int:
         network = pick_network(caddy)
         domain = domain_name()
         origin = "https://" + domain
-        user, password = username_password()
-        hashed = cmd("docker", "exec", "-i", CADDY, "caddy", "hash-password",
-                     "--algorithm", "bcrypt", input_text=password + "\n")
-        if not re.fullmatch(r"\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}", hashed):
-            raise Abort("Caddy nao retornou um hash bcrypt reconhecido.")
-
         # O mesmo servidor web existente. Aplicar somente a origem HTTPS.
         env = dict(os.environ)
         env["CONTAS_PUBLIC_ORIGIN"] = origin
@@ -153,14 +128,11 @@ def main() -> int:
         if network not in web["NetworkSettings"]["Networks"]:
             cmd("docker", "network", "connect", "--alias", "contas3-backend", network, WEB)
 
-        # A protecao login/senha fica ANTES do token local do app original.
+        # Sem login adicional no Caddy, conforme preferencia do usuario.
         block = (
             f"{START}\n"
             f"{domain} {{\n"
             "    encode zstd gzip\n"
-            "    basic_auth {\n"
-            f"        {user} {hashed}\n"
-            "    }\n"
             "    reverse_proxy contas3-backend:8767 {\n"
             "        header_up -Authorization\n"
             "    }\n"
@@ -195,7 +167,7 @@ def main() -> int:
         os.chmod(temp, 0o600)
         os.replace(temp, SETTINGS)
         # Validar HTTPS de verdade sem precisar de DNS local ou credenciais.
-        # HTTP 401 confirma certificado funcional + gateway protegido.
+        # HTTP 200 confirma certificado funcional e interface web acessivel.
         https_ok = False
         for attempt in range(7):
             probe = subprocess.run(
@@ -205,19 +177,17 @@ def main() -> int:
                  "--max-time", "10", origin + "/"],
                 capture_output=True, text=True, timeout=13,
             )
-            if probe.returncode == 0 and probe.stdout.strip() == "401":
+            if probe.returncode == 0 and probe.stdout.strip() == "200":
                 https_ok = True
                 break
             time.sleep(4)
         if https_ok:
-            print("TESTE HTTPS: OK (login obrigatorio, HTTP 401 sem senha)")
+            print("TESTE HTTPS: OK (sem tela extra de usuario/senha)")
         else:
-            print("AVISO: HTTPS ainda nao confirmou HTTP 401. O Caddy pode estar emitindo certificado.")
+            print("AVISO: HTTPS ainda nao confirmou HTTP 200. O Caddy pode estar emitindo certificado.")
         print("\n===== CONTAS 3 — ACESSO HTTPS CONFIGURADO =====")
         print("ENDERECO:", origin)
-        print("USUARIO:", user)
-        print("SENHA:", password)
-        print("A senha acima so deve ser utilizada pelo titular. NAO a envie ao chat.")
+        print("ACESSO: sem tela extra de usuario/senha.")
         print("As contas e pagamentos permanecem no banco original transferido.")
         print("GFARM e PLUVIOMETROS: rotas preservadas; nenhum container deles foi reiniciado.")
         print("Aguarde ate 1 minuto para o certificado HTTPS ser emitido.")
