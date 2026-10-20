@@ -181,13 +181,22 @@ def restart_web(origin: str, network: str):
     if network not in c["NetworkSettings"]["Networks"]:
         run(["docker", "network", "connect", "--alias", "contas3-backend",
              network, WEB_CONTAINER])
-    for attempt in range(20):
+    last_problem = "Inicializacao ainda em andamento"
+    for attempt in range(30):
         try:
             check_web(origin)
             return
-        except RuntimeError:
+        except RuntimeError as exc:
+            last_problem = str(exc)
             time.sleep(3)
-    fail("Aplicativo nao retomou a saude no tempo esperado.")
+    state = old.docker_info(WEB_CONTAINER).get("State", {})
+    fail(
+        "Aplicativo nao retomou a saude; container="
+        + str(state.get("Status", "desconhecido"))
+        + ", exit=" + str(state.get("ExitCode", "desconhecido"))
+        + ", health=" + str((state.get("Health") or {}).get("Status", "indisponivel"))
+        + ", ultimo teste: " + last_problem
+    )
 
 
 def replace_settings(old_text: str, original: str, updated: str):
@@ -259,13 +268,22 @@ def main():
                 print("AVISO: falha ao restaurar Caddy; verificar manualmente.", file=sys.stderr)
         if changed_app:
             try:
-                replace_settings(
-                    SETTINGS.read_text(encoding="utf-8"),
-                    "https://" + DOMAIN, previous_origin
-                )
+                # Se a falha ocorreu antes de salvar o novo dominio, o arquivo
+                # AINDA esta no dominio antigo: nunca bloquear a recuperacao
+                # por causa disso. Reverter origem do app SEMPRE.
+                saved = SETTINGS.read_text(encoding="utf-8")
+                target = "CONTAS_PUBLIC_ORIGIN=https://" + DOMAIN
+                original = "CONTAS_PUBLIC_ORIGIN=" + previous_origin
+                if target in saved:
+                    replace_settings(saved, "https://" + DOMAIN, previous_origin)
+                elif original not in saved:
+                    print("AVISO: origem salva nao corresponde ao dominio anterior.", file=sys.stderr)
+                print("Restaurando container do Controle de Contas anterior...", file=sys.stderr)
                 restart_web(previous_origin, network)
-            except Exception:
-                print("AVISO: falha ao restaurar origem do app; verificar manualmente.", file=sys.stderr)
+                print("Container anterior restaurado.", file=sys.stderr)
+            except Exception as recover_exc:
+                print("AVISO: falha ao restaurar origem do app: "
+                      + str(recover_exc), file=sys.stderr)
         raise
 
     print("===== DOMINIO DEFINITIVO ATIVO =====")
