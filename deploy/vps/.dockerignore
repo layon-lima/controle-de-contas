@@ -1,0 +1,7 @@
+# Contexto de build da API: enviar SOMENTE codigo, nunca segredos.
+*
+!Dockerfile.central-api
+!requirements.central-api.txt
+!central_api.py
+!central_schema.sql
+!test_central_api.py
