@@ -26,12 +26,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = Path(os.environ.get("LOCALAPPDATA") or
-               str(Path.home() / "AppData" / "Local")) / "ControleContas"
+# VPS pode apontar para volume persistente; Windows mantém caminho original.
+APP_DIR = Path(os.environ.get("CONTAS_APP_DIR") or
+               (Path(os.environ.get("LOCALAPPDATA") or
+                     str(Path.home() / "AppData" / "Local")) / "ControleContas"))
 DB_PATH = APP_DIR / "data" / "controle_contas.db"
 WEB_DIR = Path(__file__).resolve().parent
 ICONS_DIR = ROOT / "source_current" / "assets" / "ui_icons"
-HOST = "127.0.0.1"
+HOST = os.environ.get("CONTAS_PORTABLE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CONTAS_PORTABLE_PORT", "8767"))
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
@@ -1001,7 +1003,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _check(self, writing=False):
         origin = self.headers.get("Origin", "")
-        expected = f"http://{HOST}:{PORT}"
+        expected = os.environ.get("CONTAS_PUBLIC_ORIGIN") or f"http://{HOST}:{PORT}"
         if origin and origin != expected:
             self._drain_rejected_post()
             raise ApiError(403, "Origem não autorizada.")
