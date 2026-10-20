@@ -42,3 +42,7 @@ contas/
 # IMPORTANTE: os .pyc recuperados fazem parte deste projeto
 
 atualizador/
+
+# Inventarios da migracao (caminhos privados)
+inventario_migracao*.json
+*.migration-inventory.json

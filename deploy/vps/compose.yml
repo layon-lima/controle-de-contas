@@ -1,0 +1,15 @@
+# Etapa preparatoria; nao publica portas nem hospeda documentos.
+services:
+  contas-preflight:
+    image: python:3.13-slim
+    profiles: ["preparacao"]
+    command: ["python", "/workspace/deploy/vps/preflight.py"]
+    working_dir: /workspace
+    read_only: true
+    network_mode: none
+    environment:
+      CONTAS_SOURCE_ROOT: /workspace
+    volumes:
+      - ../..:/workspace:ro
+    security_opt:
+      - no-new-privileges:true
