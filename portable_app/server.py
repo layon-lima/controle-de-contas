@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -58,6 +58,7 @@ else:
     import ai_assist
     import receipt_matching
     import mobile_vps
+    import r2_bridge
 AI_ASSIST = ai_assist.ChatGPTAssist(
     APP_DIR, callback=f"http://{HOST}:{PORT}/auth/callback"
 )
@@ -162,9 +163,13 @@ def list_accounts():
         item = dict(row)
         pdf = str(item.pop("pdf_conta") or "")
         receipt = str(item.pop("pdf_comprovante") or "")
-        item["has_pdf"] = bool(pdf and Path(pdf).is_file())
-        item["has_receipt"] = bool(receipt and Path(receipt).is_file())
         item["status"] = status(item["vencimento"], item["data_pagamento"])
+        local_available = bool(pdf and Path(pdf).is_file())
+        # Apenas contas abertas no R2; comprovantes pagos sao locais no Windows.
+        item["has_pdf"] = local_available or (
+            item["status"] != "Paga" and r2_bridge.available(int(item["id"]))
+        )
+        item["has_receipt"] = bool(receipt and Path(receipt).is_file())
         item["suggested_at"] = activities.get(item["id"], {}).get("suggested_at")
         output.append(item)
     return {"accounts": output, "db_available": True, "count": len(output)}
@@ -1149,6 +1154,72 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(404, "Ícone não encontrado.")
                 self._send(path.read_bytes(), mime="image/svg+xml")
                 return
+            if route.startswith("/api/agent/"):
+                # A sincronizacao PC -> VPS tem um token proprio. NUNCA usar
+                # o token do navegador para permitir envio de PDF ao R2.
+                if self.headers.get("Origin"):
+                    raise ApiError(403, "Agente nao aceita chamadas de navegador.")
+                if not r2_bridge.verify_agent_token(self.headers.get("X-Agent-Token", "")):
+                    raise ApiError(403, "Agente de PDFs nao autorizado.")
+                if self.command == "GET" and route == "/api/agent/pending":
+                    with connection() as conn:
+                        ids = conn.execute(
+                            """SELECT c.id FROM contas c
+                               WHERE NOT EXISTS (
+                                 SELECT 1 FROM pagamentos p
+                                 WHERE p.conta_id=c.id
+                                   AND p.data_pagamento IS NOT NULL
+                                   AND TRIM(p.data_pagamento)<>''
+                               ) ORDER BY c.id"""
+                        ).fetchall()
+                    result = []
+                    for row in ids:
+                        aid = int(row["id"])
+                        meta = r2_bridge.metadata(aid)
+                        result.append({"id": aid, "r2_hash": (meta or {}).get("hash", "")})
+                    self._json({"ok": True, "pending": result})
+                    return
+                agent_pdf = re.fullmatch(r"/api/agent/pdf/(\\d+)", route)
+                if agent_pdf and self.command == "POST":
+                    try:
+                        size = int(self.headers.get("Content-Length") or "0")
+                    except ValueError as exc:
+                        raise ApiError(400, "Tamanho invalido.") from exc
+                    if size < 5 or size > r2_bridge.MAX_PDF:
+                        raise ApiError(413, "PDF deve ter no maximo 30 MB.")
+                    account_id = int(agent_pdf.group(1))
+                    with connection() as conn:
+                        account(conn, account_id)
+                        paid = conn.execute(
+                            """SELECT 1 FROM pagamentos WHERE conta_id=?
+                               AND data_pagamento IS NOT NULL
+                               AND TRIM(data_pagamento)<>'' LIMIT 1""",
+                            (account_id,)
+                        ).fetchone()
+                    if paid:
+                        raise ApiError(409, "Conta paga: nunca enviar PDF ao R2.")
+                    content = self.rfile.read(size)
+                    if len(content) != size:
+                        raise ApiError(400, "PDF incompleto.")
+                    pdf_workflows.check_pdf(content)
+                    supplied_hash = self.headers.get("X-Pdf-Sha256", "")
+                    if supplied_hash and supplied_hash != hashlib.sha256(content).hexdigest():
+                        raise ApiError(400, "Hash do arquivo nao confere.")
+                    with LOCK:
+                        # Segunda validacao apos receber, para nao subir PDF
+                        # pago durante uma operacao concorrente.
+                        with connection() as conn:
+                            if conn.execute(
+                                """SELECT 1 FROM pagamentos WHERE conta_id=?
+                                   AND data_pagamento IS NOT NULL
+                                   AND TRIM(data_pagamento)<>'' LIMIT 1""",
+                                (account_id,)
+                            ).fetchone():
+                                raise ApiError(409, "Pagamento confirmado durante upload.")
+                        upload = r2_bridge.write_pdf(account_id, content)
+                    self._json({"ok": True, **upload})
+                    return
+                raise ApiError(404, "Endpoint do agente nao encontrado.")
             if route.startswith("/api/"):
                 # Copiar codigo no mobile e POST sem corpo (nao altera pagamento).
                 no_body_mobile_copy = (
@@ -1260,6 +1331,35 @@ class Handler(BaseHTTPRequestHandler):
                     with connection() as conn:
                         self._json(mobile_vps.listing(conn, status))
                     return
+                mobile_pdf = re.fullmatch(r"/api/pdf/(\\d+)/(meta|page/(\\d+))", route)
+                if self.command == "GET" and mobile_pdf:
+                    aid = int(mobile_pdf.group(1))
+                    with connection() as conn:
+                        account(conn, aid)
+                        paid = conn.execute(
+                            """SELECT 1 FROM pagamentos WHERE conta_id=?
+                               AND data_pagamento IS NOT NULL
+                               AND TRIM(data_pagamento)<>'' LIMIT 1""",
+                            (aid,)
+                        ).fetchone()
+                    if paid:
+                        raise ApiError(404, "PDF pago esta disponivel somente no PC.")
+                    original = r2_bridge.read_pdf(aid)
+                    import fitz
+                    with fitz.open(stream=original, filetype="pdf") as doc:
+                        if mobile_pdf.group(2) == "meta":
+                            self._json({"ok": True, "paginas": doc.page_count,
+                                        "nome": f"conta-{aid}.pdf"})
+                        else:
+                            index = int(mobile_pdf.group(3))
+                            if index < 1 or index > doc.page_count:
+                                raise ApiError(404, "Pagina inexistente.")
+                            pix = doc.load_page(index - 1).get_pixmap(
+                                matrix=fitz.Matrix(1.55, 1.55), alpha=False
+                            )
+                            self._send(pix.tobytes("jpeg", jpg_quality=80),
+                                       mime="image/jpeg")
+                    return
                 mobile_copy = re.fullmatch(r"/api/mobile/copied/([0-9]+)", route)
                 if self.command == "POST" and mobile_copy:
                     with connection() as conn:
@@ -1318,19 +1418,51 @@ class Handler(BaseHTTPRequestHandler):
                         raise ApiError(400, "ID inválido.") from exc
                     op = parts[3] if len(parts) == 4 else ""
                     if self.command == "GET" and op == "analyze":
-                        original = pdf_path(account_id)
                         mode = urlsplit(self.path).query
                         if mode not in ("", "mode=legacy", "mode=hybrid"):
                             raise ApiError(400, "Modo OCR não reconhecido.")
-                        analysis = pdf_intelligence.analyze_pdf(
-                            original, enhanced=mode != "mode=legacy"
-                        )
+                        with connection() as conn:
+                            rec = account(conn, account_id)
+                            paid = conn.execute(
+                                """SELECT 1 FROM pagamentos
+                                   WHERE conta_id=? AND data_pagamento IS NOT NULL
+                                     AND TRIM(data_pagamento)<>'' LIMIT 1""",
+                                (account_id,)
+                            ).fetchone()
+                        local_pdf = Path(str(rec.get("pdf_conta") or ""))
+                        if local_pdf.is_file():
+                            analysis = pdf_intelligence.analyze_pdf(
+                                local_pdf, enhanced=mode != "mode=legacy"
+                            )
+                        elif not paid and r2_bridge.available(account_id):
+                            with r2_bridge.temp_pdf(r2_bridge.read_pdf(account_id)) as tmp:
+                                analysis = pdf_intelligence.analyze_pdf(
+                                    tmp, enhanced=mode != "mode=legacy"
+                                )
+                        else:
+                            raise FileNotFoundError("PDF nao disponivel nesta conta.")
                         self._json({"ok": True, **analysis})
                         return
                     if self.command == "GET" and op == "pdf":
                         receipt = urlsplit(self.path).query == "receipt=1"
-                        path = pdf_path(account_id, receipt=receipt)
-                        content = path.read_bytes()
+                        if receipt:
+                            content = pdf_path(account_id, receipt=True).read_bytes()
+                        else:
+                            with connection() as conn:
+                                rec = account(conn, account_id)
+                                paid = conn.execute(
+                                    """SELECT 1 FROM pagamentos
+                                       WHERE conta_id=? AND data_pagamento IS NOT NULL
+                                         AND TRIM(data_pagamento)<>'' LIMIT 1""",
+                                    (account_id,)
+                                ).fetchone()
+                            local_pdf = Path(str(rec.get("pdf_conta") or ""))
+                            if local_pdf.is_file():
+                                content = local_pdf.read_bytes()
+                            elif not paid:
+                                content = r2_bridge.read_pdf(account_id)
+                            else:
+                                raise FileNotFoundError("PDF pago guardado apenas no Windows.")
                         self._send(content, mime="application/pdf")
                         return
                     if self.command == "POST" and op == "verify-receipt":
