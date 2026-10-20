@@ -1157,8 +1157,9 @@ class Handler(BaseHTTPRequestHandler):
             if route.startswith("/api/agent/"):
                 # A sincronizacao PC -> VPS tem um token proprio. NUNCA usar
                 # o token do navegador para permitir envio de PDF ao R2.
-                if self.headers.get("Origin"):
-                    raise ApiError(403, "Agente nao aceita chamadas de navegador.")
+                # O Caddy existente define Origin no proxy mesmo para
+                # agentes Windows. A autenticacao aqui e SOMENTE por token
+                # de agente exclusivo (nunca exposto ao navegador).
                 if not r2_bridge.verify_agent_token(self.headers.get("X-Agent-Token", "")):
                     raise ApiError(403, "Agente de PDFs nao autorizado.")
                 if self.command == "GET" and route == "/api/agent/pending":
