@@ -32,7 +32,7 @@ class DomainSwitchTests(unittest.TestCase):
     def test_preserve_other_sites(self):
         before, after, block = change.caddy_managed_block(self.old)
         replacement = change.replace_block(
-            before, after, change.protected_site(change.DOMAIN, "$2a$12$" + "x" * 53)
+            before, after, change.protected_site(change.DOMAIN)
         )
         self.assertIn("gfarm.exemplo.com", replacement)
         self.assertIn("pluv.exemplo.com", replacement)
@@ -58,11 +58,12 @@ class DomainSwitchTests(unittest.TestCase):
 
     def test_proxy_origin_matches_existing_app(self):
         block = change.protected_site(
-            change.DOMAIN, "$2a$12$" + "x" * 53,
+            change.DOMAIN,
             "https://" + change.OLD_DOMAIN
         )
         self.assertIn("header_up Origin https://" + change.OLD_DOMAIN, block)
         self.assertIn("header_up -Authorization", block)
+        self.assertNotIn("basic_auth", block)
 
     def test_redirect_points_only_to_new_origin(self):
         redirect = change.OLD_DOMAIN + " {\n" + "redir https://" + change.DOMAIN + "{uri} 302\n}"
