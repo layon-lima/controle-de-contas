@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""Migra URL do Controle de Contas para o dominio definitivo COM TESTE E REVERSAO.
+"""Troca HTTPS do Contas 3 SOMENTE no Caddy, SEM REINICIAR o aplicativo.
 
-Nao altera o banco, R2, Worker, containers GFARM/PLUV nem o aplicativo em codigo.
-Executa somente na VPS apos registro DNS A em modo 'DNS only' apontar para ela.
-
-Fase 1: adiciona dominio novo mantendo o SSLIP com funcionamento inalterado.
-Fase 2: confere HTTPS/TLS real do dominio novo com 401 protegido.
-Fase 3: atualiza apenas a origem HTTP do container do Controle de Contas.
-Fase 4: transforma o dominio antigo em redirect 302. Preserva outros sites.
+Preserva o app original, SQLite, PDFs, R2, Worker, GFARM e Pluviometros.
+Mantem HTTPS e autenticação. Testa listagem real antes de cortar o dominio.
+Se houver falha, reverte exclusivamente o bloco gerenciado do Caddy.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -19,7 +16,7 @@ import socket
 import subprocess
 import sys
 import time
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import publicar_web_original as old
 
@@ -108,7 +105,27 @@ def auth_hash() -> str:
     return hashed
 
 
-def protected_site(hostname: str, hashed: str) -> str:
+def active_app_origin() -> str:
+    """Consulta a origem esperada pelo processo ATUAL, sem reinicia-lo."""
+    envs = old.docker_info(WEB_CONTAINER).get("Config", {}).get("Env", [])
+    origins = [s.split("=", 1)[1] for s in envs if s.startswith("CONTAS_PUBLIC_ORIGIN=")]
+    if len(origins) != 1 or origins[0] not in {
+        "https://" + OLD_DOMAIN, "https://" + DOMAIN,
+        "http://127.0.0.1:18769",
+    }:
+        fail("Origem ativa desconhecida; nao vou mudar o proxy sem confirmacao.")
+    return origins[0]
+
+
+def protected_site(hostname: str, hashed: str, app_origin: str | None = None) -> str:
+    """Conserva a validacao Origin original mesmo sem mudar/reiniciar o app.
+
+    O Caddy ja exige login e o app continua exigindo X-Local-Token por sessao.
+    """
+    origin = app_origin or ("https://" + OLD_DOMAIN)
+    if origin not in {"https://" + OLD_DOMAIN, "https://" + DOMAIN,
+                      "http://127.0.0.1:18769"}:
+        fail("Origem proxy nao reconhecida.")
     return (
         hostname + " {\n" +
         "    encode zstd gzip\n"
@@ -117,9 +134,37 @@ def protected_site(hostname: str, hashed: str) -> str:
         "    }\n"
         "    reverse_proxy contas3-backend:8767 {\n"
         "        header_up -Authorization\n"
+        "        header_up Origin " + origin + "\n"
         "    }\n"
         "}\n"
     )
+
+
+def check_public_data() -> int:
+    """Conferir login + token de sessao e lista real pelo DOMINIO DEFINITIVO."""
+    auth = json.loads(AUTH.read_text(encoding="utf-8"))
+    basic = "Basic " + base64.b64encode(
+        ("contas:" + auth["password"]).encode("utf-8")
+    ).decode("ascii")
+    headers = {"Authorization": basic, "User-Agent": "ControleContas-VPS-DNS-Cutover"}
+    try:
+        req = Request("https://" + DOMAIN + "/", headers=headers)
+        with urlopen(req, timeout=15) as response:
+            html = response.read(250000).decode("utf-8")
+        token = re.search(r'window\.__CONTAS_TOKEN__=("[^"]+");', html)
+        if not token:
+            fail("A interface web abriu sem o token de sessao original.")
+        headers["X-Local-Token"] = json.loads(token.group(1))
+        req = Request("https://" + DOMAIN + "/api/accounts", headers=headers)
+        with urlopen(req, timeout=15) as response:
+            payload = json.load(response)
+        if not payload.get("ok") or not isinstance(payload.get("accounts"), list):
+            fail("API de contas ainda nao funciona pelo dominio novo.")
+        if not payload["accounts"]:
+            fail("API nao retornou as contas existentes: abortando troca.")
+        return len(payload["accounts"])
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        fail("Nova URL ainda nao carrega contas: " + type(exc).__name__)
 
 
 def replace_block(before: str, after: str, block: str) -> str:
@@ -215,83 +260,63 @@ def replace_settings(old_text: str, original: str, updated: str):
 
 
 def main():
-    db = ACTIVE_DB
-    if not db.is_file() or db.stat().st_size < 1024:
-        fail("Banco original da VPS ausente; operacao cancelada.")
-    if old.docker_info(WEB_CONTAINER).get("State", {}).get("Running") is not True:
-        fail("Aplicativo original nao esta rodando.")
+    if not ACTIVE_DB.is_file() or ACTIVE_DB.stat().st_size < 1024:
+        fail("Banco original ausente; nenhuma rota alterada.")
+    if not old.docker_info(WEB_CONTAINER).get("State", {}).get("Running"):
+        fail("App original nao esta rodando. Nao vou reinicia-lo.")
     dns_preflight()
-    previous_env, previous_origin, network = get_origin()
-    if not old.docker_info(CADDY_CONTAINER).get("State", {}).get("Running"):
+    _saved, _old_origin, network = get_origin()
+    app_origin = active_app_origin()
+    caddy = old.docker_info(CADDY_CONTAINER)
+    if not caddy.get("State", {}).get("Running"):
         fail("Caddy nao esta rodando.")
-    caddyfile = old.host_caddyfile(old.docker_info(CADDY_CONTAINER))
+    if network not in caddy["NetworkSettings"]["Networks"]:
+        fail("Rede salva do Caddy nao esta conectada.")
+    # Nao conectar redes ou recriar containers: o app pode estar funcional.
+    web = old.docker_info(WEB_CONTAINER)
+    if network not in web["NetworkSettings"]["Networks"]:
+        fail("Proxy Caddy sem acesso ao app na rede existente; revisar antes.")
+    caddyfile = old.host_caddyfile(caddy)
     previous_caddy = caddyfile.read_text(encoding="utf-8")
     before, after, previous_block = caddy_managed_block(previous_caddy)
     hashed = auth_hash()
-    first_block = protected_site(DOMAIN, hashed) + "\n" + protected_site(OLD_DOMAIN, hashed)
-    final_block = protected_site(DOMAIN, hashed) + (
-        "\n" + OLD_DOMAIN + " {\n" +
-        "    redir https://" + DOMAIN + "{uri} 302\n"
-        "}\n"
+    first_block = (
+        protected_site(DOMAIN, hashed, app_origin) + "\n"
+        + protected_site(OLD_DOMAIN, hashed, app_origin)
     )
-    if previous_origin == "https://" + DOMAIN:
-        print("Dominio definitivo ja registrado no aplicativo. Verificando HTTPS...")
-        if tls_probe()[0]:
-            print("DOMINIO DEFINITIVO: OK — https://" + DOMAIN + "/")
-            return
-    changed_caddy = False
-    changed_app = False
+    final_block = (
+        protected_site(DOMAIN, hashed, app_origin) + "\n"
+        + OLD_DOMAIN + " {\n"
+        + "    redir https://" + DOMAIN + "{uri} 302\n"
+        + "}\n"
+    )
+    change_started = False
     try:
-        print("1/4: Habilitando ambos os dominios, sem desligar o antigo...")
-        changed_caddy = True
+        print("1/3: Ativando HTTPS definitivo SEM REINICIAR o app...")
+        change_started = True
         set_caddy(caddyfile, replace_block(before, after, first_block))
-
-        print("2/4: Validando certificado HTTPS do dominio definitivo...")
+        print("2/3: Conferindo certificado, autenticacao e CONTAS REAIS...")
         await_tls()
-        print("HTTPS novo: OK, autenticação obrigatória.")
-
-        print("3/4: Atualizando apenas o endereco publico do app...")
-        changed_app = True
-        restart_web("https://" + DOMAIN, network)
-        replace_settings(previous_env, previous_origin, "https://" + DOMAIN)
-
-        print("4/4: Redirecionando temporariamente o endereco antigo...")
+        total = check_public_data()
+        print("OK:", total, "contas acessiveis no dominio definitivo.")
+        print("3/3: Redirecionando o endereco provisorio...")
         set_caddy(caddyfile, replace_block(before, after, final_block))
         if not tls_probe()[0]:
-            fail("A validacao HTTPS final falhou.")
+            fail("HTTPS final nao confirmou autenticacao obrigatoria.")
     except Exception:
-        print("Falha ao migrar: tentando restaurar o endereco anterior...", file=sys.stderr)
-        if changed_caddy:
+        if change_started:
+            print("Falha na troca do dominio: restaurando SOMENTE o Caddy antigo.", file=sys.stderr)
             try:
                 set_caddy(caddyfile, previous_caddy)
+                print("Rota antiga restaurada; app nunca foi reiniciado.", file=sys.stderr)
             except Exception:
-                print("AVISO: falha ao restaurar Caddy; verificar manualmente.", file=sys.stderr)
-        if changed_app:
-            try:
-                # Se a falha ocorreu antes de salvar o novo dominio, o arquivo
-                # AINDA esta no dominio antigo: nunca bloquear a recuperacao
-                # por causa disso. Reverter origem do app SEMPRE.
-                saved = SETTINGS.read_text(encoding="utf-8")
-                target = "CONTAS_PUBLIC_ORIGIN=https://" + DOMAIN
-                original = "CONTAS_PUBLIC_ORIGIN=" + previous_origin
-                if target in saved:
-                    replace_settings(saved, "https://" + DOMAIN, previous_origin)
-                elif original not in saved:
-                    print("AVISO: origem salva nao corresponde ao dominio anterior.", file=sys.stderr)
-                print("Restaurando container do Controle de Contas anterior...", file=sys.stderr)
-                restart_web(previous_origin, network)
-                print("Container anterior restaurado.", file=sys.stderr)
-            except Exception as recover_exc:
-                print("AVISO: falha ao restaurar origem do app: "
-                      + str(recover_exc), file=sys.stderr)
+                print("AVISO: nao consegui restaurar Caddy. App permanece intacto.", file=sys.stderr)
         raise
-
     print("===== DOMINIO DEFINITIVO ATIVO =====")
-    print("NOVO:", "https://" + DOMAIN + "/")
+    print("NOVO: https://" + DOMAIN + "/")
     print("ANTIGO: redireciona para o novo.")
+    print("BANCO, APLICATIVO, MOBILE, OCR, GFARM, PLUV, R2: NAO REINICIADOS.")
     print("USUARIO E SENHA: os mesmos da publicacao anterior.")
-    print("BANCO: inalterado. GFARM, PLUV e R2: inalterados.")
-
 
 if __name__ == "__main__":
     try:
