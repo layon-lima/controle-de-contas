@@ -3,6 +3,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.central-api.txt ./
 RUN pip install --no-cache-dir -r requirements.central-api.txt
-COPY central_api.py central_schema.sql ./
+COPY central_api.py central_schema.sql test_central_api.py ./
+# Se testes de autenticacao/saude falharem, a imagem nem sera publicada.
+RUN python -m unittest -v test_central_api
 USER 10001:10001
 CMD ["python", "-u", "central_api.py"]
