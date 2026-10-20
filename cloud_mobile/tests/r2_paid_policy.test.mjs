@@ -198,3 +198,21 @@ test("Worker recusa envio de PDF se a conta foi paga", async () => {
   assert.equal(result.status, 409);
   assert.equal(ctx.r2.objects.size, 0);
 });
+
+test("mobile lista apenas contas em aberto, inclusive vencidas, sem esconder cadastro pago em D1", async () => {
+  const ctx = fixture();
+  const pending = { ...ctx.open, id: 8, vencimento: "2026-01-01", pdf_hash: "" };
+  const paid = { ...ctx.open, id: 9, data_pagamento: "2026-10-20", local_pdf_confirmed: false };
+  const saved = await ctx.request("/api/sync/accounts", "POST", {
+    accounts: [ctx.open, pending, paid],
+    synced_at: "2026-10-20T12:00:00",
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(ctx.db.accounts.size, 3, "O D1 preserva a conta paga para reconciliação R2.");
+  const mobile = await ctx.request("/api/contas");
+  assert.equal(mobile.status, 200);
+  assert.equal(mobile.data.quantidade, 2);
+  assert.deepEqual(mobile.data.contas.map(c => c.id).sort((a,b) => a-b), [7, 8]);
+  assert.ok(mobile.data.contas.every(c => c.status !== "Paga"));
+  assert.ok(mobile.data.contas.some(c => c.status === "Vencida"));
+});

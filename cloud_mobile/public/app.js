@@ -78,11 +78,10 @@ function renderSummary(){
     Vencida: accounts.filter(a=>a.status==="Vencida"),
     Próxima: accounts.filter(a=>a.status==="Próxima"),
     "Em dia": accounts.filter(a=>a.status==="Em dia"),
-    Paga: accounts.filter(a=>a.status==="Paga"),
   };
 
   const sum = arr => arr.reduce((acc,a)=>acc+Number(a.valor || 0),0);
-  const open = accounts.filter(a=>a.status!=="Paga");
+  const open = accounts.filter(a=>!String(a.data_pagamento || "").trim() && a.status!=="Paga");
 
   el("openTotal").textContent = money(sum(open));
   el("openCount").textContent =
@@ -97,13 +96,12 @@ function renderSummary(){
   el("countOk").textContent = groups["Em dia"].length;
   el("valueOk").textContent = money(sum(groups["Em dia"]));
 
-  el("countPaid").textContent = groups.Paga.length;
-  el("valuePaid").textContent = money(sum(groups.Paga));
 }
 
 function filteredAccounts(){
   const query = el("searchInput").value;
   return accounts.filter(a => {
+    if (String(a.data_pagamento || "").trim() || a.status === "Paga") return false;
     const statusOk = activeFilter === "Todas" || a.status === activeFilter;
     return statusOk && matchesSearch(a,query);
   });
@@ -194,11 +192,10 @@ function renderList(){
   el("emptyState").classList.toggle("hidden",items.length>0);
 
   const titles = {
-    Todas:"Todas as contas",
+    Todas:"Contas em aberto",
     Vencida:"Contas vencidas",
     Próxima:"Próximas do vencimento",
-    "Em dia":"Contas em dia",
-    Paga:"Contas pagas"
+    "Em dia":"Contas em dia"
   };
   el("listTitle").textContent = titles[activeFilter];
 
@@ -491,7 +488,9 @@ async function loadAccounts(){
       throw new Error(payload.erro || "Falha ao ler as contas.");
     }
 
-    accounts = Array.isArray(payload.contas) ? payload.contas : [];
+    // Compatibilidade com cache/Worker antigo: jamais mostrar contas pagas.
+    accounts = (Array.isArray(payload.contas) ? payload.contas : [])
+      .filter(a => a && !String(a.data_pagamento || "").trim() && a.status !== "Paga");
 
     const sync = payload.meta?.ultima_atualizacao;
     if(sync){

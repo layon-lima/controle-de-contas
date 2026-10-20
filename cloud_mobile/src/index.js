@@ -386,6 +386,8 @@ async function completePdf(request, env, id) {
 
 async function listAccounts(request, env) {
   if (!await viewAuthorized(request, env)) return json({ok:false, erro:"Não autorizado."}, 401);
+  // O mobile so recebe contas nao pagas. Registros pagos permanecem
+  // internamente em D1 para completar a limpeza segura do R2 e auditoria.
   const result = await env.DB.prepare(`
     SELECT
       a.id,
@@ -398,12 +400,17 @@ async function listAccounts(request, env) {
       p.copy_count
     FROM accounts a
     LEFT JOIN payment_activity p ON p.account_id = a.id
+    WHERE CASE WHEN json_valid(a.payload) THEN
+      COALESCE(TRIM(CAST(json_extract(a.payload, '$.data_pagamento') AS TEXT)), '') = ''
+      ELSE 0 END
   `).all();
   const contas = [];
   const now = Date.now();
   for (const row of result.results || []) {
     try {
       const item = JSON.parse(row.payload);
+      // Segunda protecao: nao expor pagamentos mesmo com dados antigos.
+      if (isPaid(item)) continue;
       const suggestedUntilMs = Date.parse(String(row.suggested_until || ""));
       const copiedAtMs = Date.parse(String(row.copied_at || ""));
       const copiedMobileUntilMs = Number.isFinite(copiedAtMs)
@@ -426,9 +433,6 @@ async function listAccounts(request, env) {
     const sa = a.sugestao_pagamento ? 0 : 1;
     const sb = b.sugestao_pagamento ? 0 : 1;
     if (sa !== sb) return sa - sb;
-    const pa = a.status === "Paga" ? 1 : 0;
-    const pb = b.status === "Paga" ? 1 : 0;
-    if (pa !== pb) return pa - pb;
     const da = String(a.vencimento || "9999-12-31");
     const db = String(b.vencimento || "9999-12-31");
     if (da !== db) return da.localeCompare(db);
