@@ -422,6 +422,11 @@ function keepPersistentStartUrl(deviceToken){
 }
 
 function viewHeaders(){
+  // Quando servido pela VPS, usa sessao autenticada do MESMO web original.
+  // Cloudflare Worker existente continua usando token de dispositivo.
+  if(window.__CONTAS_VPS__ && window.__CONTAS_TOKEN__){
+    return {"X-Local-Token": window.__CONTAS_TOKEN__};
+  }
   const deviceToken = getDeviceToken();
   if(deviceToken) return {"X-Device-Token":deviceToken};
 
@@ -701,7 +706,7 @@ setInterval(loadAccounts, 30000);
 
 
 
-if("serviceWorker" in navigator){
+if(!window.__CONTAS_VPS__ && "serviceWorker" in navigator){
   window.addEventListener("load",()=>{
     navigator.serviceWorker.register("/sw.js?v=16").catch(()=>{});
   });
