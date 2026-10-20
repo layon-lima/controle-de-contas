@@ -165,30 +165,43 @@ def _snapshot() -> tuple[list[dict], dict[int, Path]]:
 
     accounts: list[dict] = []
     pdf_paths: dict[int, Path] = {}
+    # Pagamentos confirmados: o arquivo em disco e o original permanente.
+    # Nao autorizar exclusao no R2 caso ele esteja ausente ou fora de BOLETOS.
+    official_root = (Path.home() / "Documents" / "BOLETOS").resolve()
 
     for row in rows:
         item = dict(row)
         account_id = int(item["id"])
         raw_pdf = str(item.pop("pdf_conta", "") or "").strip()
+        paid = bool(str(item.get("data_pagamento") or "").strip())
         pdf_hash = ""
         pdf_name = ""
+        confirmed_local = False
         if raw_pdf:
             p = Path(raw_pdf)
             try:
                 p = p.resolve()
-            except OSError:
-                pass
-            if p.is_file() and p.suffix.lower() == ".pdf":
-                try:
+                is_pdf = p.is_file() and p.suffix.lower() == ".pdf"
+                if paid:
+                    # So liberar limpeza da copia R2 se o PDF original estiver
+                    # legivel, dentro da pasta oficial e preservado no PC.
+                    if is_pdf and p.is_relative_to(official_root) and p.stat().st_size > 10:
+                        with p.open("rb") as stream:
+                            confirmed_local = stream.read(5) == b"%PDF-"
+                elif is_pdf:
                     pdf_hash = _sha256(p)
                     pdf_name = p.name
                     pdf_paths[account_id] = p
-                except Exception as exc:
-                    _log(f"Falha ao calcular hash do PDF {account_id}: {exc}")
+            except (OSError, ValueError) as exc:
+                _log(f"Falha ao conferir PDF local da conta {account_id}: {type(exc).__name__}")
+            except Exception as exc:
+                _log(f"Falha ao processar PDF da conta {account_id}: {type(exc).__name__}")
 
         item["recebedor"] = str(item.get("fornecedor") or "")
         item["pdf_hash"] = pdf_hash
         item["pdf_name"] = pdf_name
+        # Este sinal e gerado APENAS pelo processo Windows, nao pelo navegador.
+        item["local_pdf_confirmed"] = bool(paid and confirmed_local)
         accounts.append(item)
 
     return accounts, pdf_paths
@@ -426,6 +439,12 @@ def sync_once() -> bool:
         timeout=90,
     )
 
+    pending = response.get("pending_pdf_deletions") or []
+    if pending:
+        _log(
+            "Exclusoes R2 pendentes para contas pagas: "
+            + ", ".join(str(x) for x in pending[:20])
+        )
     need = response.get("need_pdfs") or []
     for raw_id in need:
         account_id = int(raw_id)
