@@ -938,6 +938,11 @@ def upload_pdf(account_id, data: bytes, filename: str):
 
 
 def get_mobile_link():
+    # Na VPS, link mobile usa exatamente a mesma origem HTTPS e o mesmo banco.
+    # Windows antigo mantem seu fluxo legado ate redirecionamento para VPS.
+    central_origin = os.environ.get("CONTAS_PUBLIC_ORIGIN", "").strip()
+    if central_origin.startswith("https://"):
+        return central_origin.rstrip("/") + "/mobile/"
     sys.path.insert(0, str(ROOT / "source_current"))
     from controle_contas.cloud_sync import get_cloud_private_link
     link = get_cloud_private_link()
@@ -1267,8 +1272,17 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True, **list_accounts()})
                     return
                 if self.command == "GET" and route == "/api/health":
+                    # Nao mostrar "Cloudflare desconectado" no modo VPS:
+                    # o mobile agora le a MESMA base do desktop diretamente.
+                    if os.environ.get("CONTAS_PUBLIC_ORIGIN", "").startswith("https://"):
+                        mobile_state = {
+                            "configured": True, "running": True,
+                            "backend": "VPS central (mesmo banco)"
+                        }
+                    else:
+                        mobile_state = sync_runtime.status()
                     self._json({"ok": True, "db": DB_PATH.is_file(),
-                                "mobile": sync_runtime.status()})
+                                "mobile": mobile_state})
                     return
                 if self.command == "POST" and route == "/api/mobile/reconnect":
                     self._body()
