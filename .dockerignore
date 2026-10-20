@@ -1,0 +1,13 @@
+# Imagem original web: enviar apenas fontes indispensaveis.
+# NENHUM arquivo local de dados, token ou backup entra no build.
+**
+!portable_app/
+!portable_app/**
+!source_current/
+!source_current/**
+!releases/
+!releases/**
+!deploy/
+!deploy/vps/
+!deploy/vps/Dockerfile.portable-web
+!deploy/vps/requirements.portable-web.txt
