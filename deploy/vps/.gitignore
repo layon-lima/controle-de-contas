@@ -1,0 +1,4 @@
+# Credenciais SOMENTE na VPS. Jamais versionar.
+broker.env
+central.env
+.central-env-temp.*
