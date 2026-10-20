@@ -12,7 +12,7 @@ COPIED = {}
 LOCK = RLock()
 
 
-def listing(conn, status_fn):
+def listing(conn, status_fn, has_remote_pdf=None):
     rows = conn.execute(
         """
         SELECT c.id, c.fornecedor, c.documento, c.pagador, c.referencia,
@@ -50,9 +50,9 @@ def listing(conn, status_fn):
             item["status"] = status_fn(item.get("vencimento"), item.get("data_pagamento"))
             if item["status"] == "Paga":
                 continue
-            # Nunca anunciar PDF inacessivel: os caminhos Windows ainda
-            # precisam de integracao R2/agente para visualizacao na VPS.
-            item["tem_pdf"] = False
+            # Quando o R2 estiver configurado, o proprio VPS confirma
+            # a existencia do PDF da conta aberta.
+            item["tem_pdf"] = bool(has_remote_pdf(int(item["id"]))) if has_remote_pdf else False
             item["sugestao_pagamento"] = False
             item["sugerido_em"] = None
             item["sugestao_ate"] = None
