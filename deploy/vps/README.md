@@ -118,3 +118,60 @@ apenas apos testar autorizacoes e idempotencia da fila.
 
 A aplicacao antiga continua rodando no PC. O broker NAO e substituto de login,
 banco principal ou OCR na VPS. A migracao final depende das proximas etapas.
+
+
+## ETAPA 03 — Broker isolado e teste criptografado PC / VPS
+
+Estamos usando a mesma VPS Ubuntu de GFARM e PLUV. Nao alterar os
+servicos existentes. Nesta etapa NAO mudar o dominio atual
+https://contas-cloud.fazendanovohorizonte.com/ nem o Caddy/Cloudflare.
+
+O broker foi preparado para uma porta de loopback EXCLUSIVA na VPS:
+127.0.0.1:18767, contêiner contas-agent-broker. Os tokens sao armazenados
+somente em deploy/vps/broker.env (fora do Git, chmod 600).
+O broker grava apenas IDs/estado de jobs e resultados pequenos. Nao guarda PDF.
+
+Na VPS, apos clonar a branch main do repo privado para /opt/apps/contas:
+
+    cd /opt/apps/contas
+    bash deploy/vps/INSTALAR_BROKER.sh
+
+O script e repetivel. Ele nao atualiza/reinicia GFARM, PLUV ou Caddy,
+nao abre portas externas e NAO toca no dominio existente.
+
+No PC Windows original, estando na main atualizada:
+
+    .\tools\CONFIGURAR_AGENTE_VPS.ps1 -SshTarget root@187.127.63.29
+
+Troque root se o usuario SSH da VPS for diferente. O SSH pede autenticacao
+normalmente; nao compartilhe senha nem chaves na conversa. O script obtem
+APENAS a chave do agente por SSH, sem exibi-la, e salva no PC com ACL privada.
+Preserva C:\Users\User\Documents\BOLETOS e o SQLite original.
+
+Para validar SEM expor o broker na internet, em uma segunda janela do PC:
+
+    ssh -N -L 127.0.0.1:18767:127.0.0.1:18767 root@187.127.63.29
+
+Deixe o tunel aberto. A conexao PC-VPS e cifrada por SSH; HTTP interno
+funciona somente em localhost dos dois computadores.
+
+Na VPS, crie um pedido (escolha uma conta existente, por exemplo 1):
+
+    cd /opt/apps/contas
+    python3 deploy/vps/PEDIDO_TESTE_BROKER.py --conta 1
+
+No PC Windows, processe uma solicitacao:
+
+    python .\tools\CONTAS_AGENTE_VPS.py --once
+
+Na VPS, consulte o identificador retornado pela criacao:
+
+    python3 deploy/vps/PEDIDO_TESTE_BROKER.py --consultar ID_DO_JOB
+
+O resultado deve informar status done e metadados (available,
+within_official_root, size_bytes). Nenhuma parte do PDF atravessa a rede.
+O agente ainda nao inicia automaticamente; isso sera ativado apos os testes.
+
+**Aviso:** esse tunel SSH e somente a verificacao segura inicial. O acesso
+publico HTTPS por contas-cloud sera configurado depois, junto com autenticacao
+da aplicacao web. NUNCA publique /internal/jobs ou a porta 18767 na internet.
