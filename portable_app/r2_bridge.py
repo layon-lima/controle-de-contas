@@ -22,6 +22,7 @@ CONFIG = Path(os.environ.get("CONTAS_R2_CONFIG", "/data/ControleContas/r2-agent.
 BUCKET_DEFAULT = "controle-contas-pdfs"
 MAX_PDF = 30 * 1024 * 1024
 HEAD_CACHE = {}
+LIST_CACHE = {"when": 0, "ids": None}
 CACHE_LOCK = threading.Lock()
 
 
@@ -92,11 +93,41 @@ def _key(account_id: int):
 def invalidate(account_id: int):
     with CACHE_LOCK:
         HEAD_CACHE.pop(account_id, None)
+        LIST_CACHE["when"] = 0
+        LIST_CACHE["ids"] = None
+
+
+def existing_ids():
+    """Uma listagem de objetos evita uma chamada R2 por conta na interface."""
+    cfg = _config()
+    if cfg is None:
+        return set()
+    now = time.monotonic()
+    with CACHE_LOCK:
+        cached = LIST_CACHE["ids"]
+        if cached is not None and now - LIST_CACHE["when"] < 45:
+            return cached
+    items = set()
+    try:
+        client = _client(cfg)
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=cfg["bucket"], Prefix="accounts/"):
+            for obj in page.get("Contents", ()):
+                match = re.fullmatch(r"accounts/([0-9]+)/original[.]pdf", obj["Key"])
+                if match:
+                    items.add(int(match.group(1)))
+    except Exception as exc:
+        raise R2Unavailable("Nao foi possivel listar PDFs do R2.") from exc
+    with CACHE_LOCK:
+        LIST_CACHE.update({"when": now, "ids": items})
+    return items
 
 
 def metadata(account_id: int, *, fresh=False):
     cfg = _config()
     if cfg is None:
+        return None
+    if account_id not in existing_ids():
         return None
     now = time.monotonic()
     with CACHE_LOCK:
@@ -126,7 +157,7 @@ def metadata(account_id: int, *, fresh=False):
 
 def available(account_id: int) -> bool:
     try:
-        return bool(metadata(account_id))
+        return account_id in existing_ids()
     except R2Unavailable:
         return False
 
