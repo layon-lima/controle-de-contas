@@ -19,6 +19,6 @@ binding = "PDFS"
 bucket_name = "controle-contas-pdfs"
 
 
-[[routes]]
-pattern = "contas-cloud.fazendanovohorizonte.com"
-custom_domain = true
+# O dominio contas-cloud.fazendanovohorizonte.com passa a ser da VPS/Caddy.
+# Worker mobile legado e R2 continuam existentes, mas nenhum deploy futuro
+# deve tentar reassociar este dominio ao Worker.
