@@ -60,3 +60,61 @@ O relatorio e privado, guarda caminhos locais e NAO deve ir para GitHub.
 6. Cortar o endereco EXISTENTE somente apos aprovacao e testes completos.
 
 Nenhum servidor Windows nem servico Cloudflare e alterado nesta etapa.
+
+
+## ETAPA 02 — Broker de metadados + agente Windows (codigo implementado)
+
+Esta etapa adiciona um broker e o agente. NENHUM deles esta ligado ao
+dominio existente, e nem o GFARM nem o PLUV devem ser reiniciados.
+
+**Fluxo seguro para teste:** administrador cria pedido pdf_status no broker
+(sem caminhos Windows), Windows consulta a fila por HTTPS usando token de agente,
+Windows verifica seu SQLite local e retorna apenas:
+available, within_official_root e size_bytes. Nenhum arquivo, caminho absoluto,
+OCR ou nome de fornecedor e transmitido para a VPS. Jobs permanecem pendentes
+se o Windows estiver desligado. Uma lease de 120s com retry evita perder jobs.
+
+Os endpoints administrativos /internal/jobs estao reservados a chamadas
+locais autorizadas. Jamais publicar essa rota no proxy reverso da internet.
+A unica rota de agente a expor futuramente, apos configurar o Caddy e testar
+seguranca, e /agent/jobs/next e /agent/jobs/{id}/result, ambas com token e TLS.
+Nao criar regra Caddy, DNS ou tunel ainda.
+
+### Testes sem dados reais
+
+    python -m unittest tests.test_vps_broker_agent -v
+
+Os testes montam SQLite e PDF ficticios em pasta temporaria, criam um broker
+localhost, testam autenticação, duplicidade, indisponibilidade, selecao por ID
+e verificam que NENHUM PDF e enviado pela rede.
+
+### Implantacao somente depois de validar credenciais/rotas na VPS
+
+Arquivo: deploy/vps/compose.broker.yml.
+Crie deploy/vps/broker.env no servidor, com tokens aleatorios unicos gerados
+em canal seguro, protegidos com chmod 600. Nao comite nem compartilhe tokens.
+A implantacao futura usa:
+
+    docker compose -f deploy/vps/compose.broker.yml up -d --build
+
+A porta 18767 aceita conexoes apenas de 127.0.0.1 NA VPS. O volume
+broker_metadata guarda SOMENTE fila e resultados pequenos de metadados.
+
+No Windows, o arquivo privado (nao versionado)
+%LOCALAPPDATA%\ControleContas\agent_vps.json tera, quando ativado:
+
+    {
+      "broker_url": "https://contas-cloud.fazendanovohorizonte.com/__agente",
+      "agent_token": "CHAVE_PRIVADA_GERADA_NO_SERVIDOR",
+      "documents_root": "C:\\Users\\User\\Documents\\BOLETOS",
+      "database": "C:\\Users\\User\\AppData\\Local\\ControleContas\\data\\controle_contas.db"
+    }
+
+**Atencao:** esse exemplo indica o endereco planejado, NAO uma rota existente.
+Nao executar agente ate configurarmos o proxy de modo restrito. O token do agente
+deve ficar acessivel apenas ao usuario Windows. O agente nao recebe PDF,
+nao realiza mesclagens nem alteracoes nesta etapa. Isso sera desenvolvido
+apenas apos testar autorizacoes e idempotencia da fila.
+
+A aplicacao antiga continua rodando no PC. O broker NAO e substituto de login,
+banco principal ou OCR na VPS. A migracao final depende das proximas etapas.

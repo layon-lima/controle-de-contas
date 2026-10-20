@@ -1,0 +1,8 @@
+FROM python:3.13-slim
+RUN groupadd --system contas && useradd --system --gid contas --home-dir /app contas
+WORKDIR /app
+COPY deploy/vps/broker.py /app/broker.py
+RUN mkdir -p /var/lib/contas && chown -R contas:contas /var/lib/contas /app
+USER contas:contas
+EXPOSE 8769
+CMD ["python", "-u", "/app/broker.py"]

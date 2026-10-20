@@ -1,0 +1,32 @@
+# Opcional, isolado. NAO inicie antes de configurar tokens e HTTPS do agente.
+# Publica somente no loopback da VPS; Caddy, GFARM e PLUV nao sao alterados.
+services:
+  contas-agent-broker:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.broker
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - ./broker.env
+    environment:
+      CONTAS_BROKER_HOST: "0.0.0.0"
+      CONTAS_BROKER_PORT: "8769"
+      CONTAS_BROKER_DB: "/var/lib/contas/jobs.sqlite"
+    ports:
+      - "127.0.0.1:18767:8769"
+    volumes:
+      - broker_metadata:/var/lib/contas
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8769/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 4
+
+volumes:
+  broker_metadata:

@@ -46,3 +46,7 @@ atualizador/
 # Inventarios da migracao (caminhos privados)
 inventario_migracao*.json
 *.migration-inventory.json
+
+# Credenciais privadas da fila VPS/Windows
+deploy/vps/broker.env
+agent_vps.json
