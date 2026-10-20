@@ -1,0 +1,28 @@
+# App web ORIGINAL do Controle de Contas, sem reescrever frontend.
+# Porta exclusivamente local. NÃO configurar DNS / Caddy antes de autenticar.
+name: contas-web-original
+services:
+  contas-web:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.portable-web
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      CONTAS_APP_DIR: /data/ControleContas
+      CONTAS_PORTABLE_HOST: 0.0.0.0
+      CONTAS_PORTABLE_PORT: "8767"
+      CONTAS_PORTABLE_NO_BROWSER: "1"
+      QT_QPA_PLATFORM: offscreen
+    ports:
+      - "127.0.0.1:18769:8767"
+    volumes:
+      - /opt/apps/contas-runtime:/data/ControleContas
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8767/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
