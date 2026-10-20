@@ -31,7 +31,7 @@ if [[ -f "$SITE_ENV" ]]; then
 fi
 docker compose -f "$COMPOSE" up -d --no-deps contas-web
 if [[ -n "${PROXY_NETWORK:-}" ]] && docker network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
-  if ! docker inspect contas-web-original-contas-web-1 --format '{{json .NetworkSettings.Networks}}' | grep -Fq ""$PROXY_NETWORK""; then
+  if ! docker inspect contas-web-original-contas-web-1 --format '{{json .NetworkSettings.Networks}}' | grep -Fq "$PROXY_NETWORK"; then
     docker network connect --alias contas3-backend "$PROXY_NETWORK" contas-web-original-contas-web-1
   fi
 fi
@@ -39,8 +39,12 @@ printf 'Testando http://127.0.0.1:18769/health ...\n'
 for i in $(seq 1 30); do
   if curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:18769/health; then
     echo
-    echo "APP WEB ORIGINAL: ativo SOMENTE em localhost VPS:18769"
-    echo "Ainda NAO publicar externamente antes de proteger acesso e revisar PDFs/OCR."
+    echo "APP WEB ORIGINAL: ativo no servidor."
+    if [[ -n "${CONTAS_PUBLIC_ORIGIN:-}" ]]; then
+      echo "Acesso publico protegido configurado: $CONTAS_PUBLIC_ORIGIN"
+    else
+      echo "Ainda restrito ao localhost VPS:18769."
+    fi
     exit 0
   fi
   sleep 2
