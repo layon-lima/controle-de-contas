@@ -3,6 +3,9 @@
 **
 !portable_app/
 !portable_app/**
+!cloud_mobile/
+!cloud_mobile/public/
+!cloud_mobile/public/**
 !source_current/
 !source_current/**
 !releases/
