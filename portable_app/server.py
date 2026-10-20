@@ -1286,7 +1286,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if self.command == "POST" and route == "/api/mobile/reconnect":
                     self._body()
-                    self._json({"ok": True, "mobile": sync_runtime.ensure_running()})
+                    if os.environ.get("CONTAS_PUBLIC_ORIGIN", "").startswith("https://"):
+                        current_mobile = {
+                            "configured": True, "running": True,
+                            "backend": "VPS central (mesmo banco)"
+                        }
+                    else:
+                        current_mobile = sync_runtime.ensure_running()
+                    self._json({"ok": True, "mobile": current_mobile})
                     return
                 if self.command == "GET" and route == "/api/settings/folder":
                     self._json({"ok": True, **get_document_folder()})
