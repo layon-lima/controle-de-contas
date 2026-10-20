@@ -2,12 +2,11 @@
 """Troca HTTPS do Contas 3 SOMENTE no Caddy, SEM REINICIAR o aplicativo.
 
 Preserva o app original, SQLite, PDFs, R2, Worker, GFARM e Pluviometros.
-Mantem HTTPS e autenticação. Testa listagem real antes de cortar o dominio.
+Mantem HTTPS. Testa listagem real antes de cortar o dominio.
 Se houver falha, reverte exclusivamente o bloco gerenciado do Caddy.
 """
 from __future__ import annotations
 
-import base64
 import json
 import os
 from pathlib import Path
@@ -16,7 +15,7 @@ import socket
 import subprocess
 import sys
 import time
-from urllib.request import Request, ProxyHandler, build_opener, urlopen
+from urllib.request import Request, ProxyHandler, build_opener
 
 import publicar_web_original as old
 
@@ -24,7 +23,6 @@ DOMAIN = "contas-cloud.fazendanovohorizonte.com"
 IP_EXPECTED = "187.127.63.29"
 OLD_DOMAIN = "contas.187-127-63-29.sslip.io"
 SETTINGS = Path("/opt/apps/contas-runtime/public-site.env")
-AUTH = Path("/opt/apps/contas-private/public-auth.json")
 CADDY_CONTAINER = "pluv-https-caddy-1"
 WEB_CONTAINER = "contas-web-original-contas-web-1"
 COMPOSE = Path(__file__).with_name("compose.portable-web.yml")
@@ -91,20 +89,6 @@ def set_caddy(caddyfile: Path, content: str):
          "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"])
 
 
-def auth_hash() -> str:
-    if not AUTH.is_file():
-        fail("Credenciais da publicacao anterior nao encontradas; nada alterado.")
-    auth = json.loads(AUTH.read_text(encoding="utf-8"))
-    if auth.get("user") != "contas" or len(auth.get("password", "")) < 20:
-        fail("Credenciais HTTPS atuais invalidas; nada alterado.")
-    hashed = run(["docker", "exec", "-i", CADDY_CONTAINER, "caddy",
-                  "hash-password", "--algorithm", "bcrypt"],
-                 input_text=auth["password"] + "\n")
-    if not re.fullmatch(r"\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}", hashed):
-        fail("Falha ao criar hash HTTPS.")
-    return hashed
-
-
 def active_app_origin() -> str:
     """Consulta a origem esperada pelo processo ATUAL, sem reinicia-lo."""
     envs = old.docker_info(WEB_CONTAINER).get("Config", {}).get("Env", [])
@@ -117,10 +101,10 @@ def active_app_origin() -> str:
     return origins[0]
 
 
-def protected_site(hostname: str, hashed: str, app_origin: str | None = None) -> str:
+def protected_site(hostname: str, app_origin: str | None = None) -> str:
     """Conserva a validacao Origin original mesmo sem mudar/reiniciar o app.
 
-    O Caddy ja exige login e o app continua exigindo X-Local-Token por sessao.
+    O Caddy nao pede login; o app continua usando X-Local-Token por sessao.
     """
     origin = app_origin or ("https://" + OLD_DOMAIN)
     if origin not in {"https://" + OLD_DOMAIN, "https://" + DOMAIN,
@@ -129,9 +113,6 @@ def protected_site(hostname: str, hashed: str, app_origin: str | None = None) ->
     return (
         hostname + " {\n" +
         "    encode zstd gzip\n"
-        "    basic_auth {\n"
-        "        contas " + hashed + "\n"
-        "    }\n"
         "    reverse_proxy contas3-backend:8767 {\n"
         "        header_up -Authorization\n"
         "        header_up Origin " + origin + "\n"
@@ -141,12 +122,8 @@ def protected_site(hostname: str, hashed: str, app_origin: str | None = None) ->
 
 
 def check_public_data() -> int:
-    """Conferir login + token de sessao e lista real pelo DOMINIO DEFINITIVO."""
-    auth = json.loads(AUTH.read_text(encoding="utf-8"))
-    basic = "Basic " + base64.b64encode(
-        ("contas:" + auth["password"]).encode("utf-8")
-    ).decode("ascii")
-    headers = {"Authorization": basic, "User-Agent": "ControleContas-VPS-DNS-Cutover"}
+    """Conferir token de sessao e lista real pelo DOMINIO DEFINITIVO."""
+    headers = {"User-Agent": "ControleContas-VPS-DNS-Cutover"}
     try:
         opener = build_opener(ProxyHandler({}))
         req = Request("https://" + DOMAIN + "/", headers=headers)
@@ -180,7 +157,7 @@ def tls_probe() -> tuple[bool, str]:
          "-w", "%{http_code}", "https://" + DOMAIN + "/"],
         capture_output=True, text=True, timeout=13
     )
-    direct_ok = check.returncode == 0 and check.stdout.strip() == "401"
+    direct_ok = check.returncode == 0 and check.stdout.strip() == "200"
     if not direct_ok:
         return False, check.stdout.strip()
     # Validar tambem acesso DNS REAL (evita dominio ainda vinculado a Worker).
@@ -189,7 +166,7 @@ def tls_probe() -> tuple[bool, str]:
          "-o", "/dev/null", "-w", "%{http_code}", "https://" + DOMAIN + "/"],
         capture_output=True, text=True, timeout=13
     )
-    return public.returncode == 0 and public.stdout.strip() == "401", public.stdout.strip()
+    return public.returncode == 0 and public.stdout.strip() == "200", public.stdout.strip()
 
 
 def await_tls():
@@ -280,13 +257,12 @@ def main():
     caddyfile = old.host_caddyfile(caddy)
     previous_caddy = caddyfile.read_text(encoding="utf-8")
     before, after, previous_block = caddy_managed_block(previous_caddy)
-    hashed = auth_hash()
     first_block = (
-        protected_site(DOMAIN, hashed, app_origin) + "\n"
-        + protected_site(OLD_DOMAIN, hashed, app_origin)
+        protected_site(DOMAIN, app_origin) + "\n"
+        + protected_site(OLD_DOMAIN, app_origin)
     )
     final_block = (
-        protected_site(DOMAIN, hashed, app_origin) + "\n"
+        protected_site(DOMAIN, app_origin) + "\n"
         + OLD_DOMAIN + " {\n"
         + "    redir https://" + DOMAIN + "{uri} 302\n"
         + "}\n"
@@ -296,14 +272,14 @@ def main():
         print("1/3: Ativando HTTPS definitivo SEM REINICIAR o app...")
         change_started = True
         set_caddy(caddyfile, replace_block(before, after, first_block))
-        print("2/3: Conferindo certificado, autenticacao e CONTAS REAIS...")
+        print("2/3: Conferindo certificado e CONTAS REAIS...")
         await_tls()
         total = check_public_data()
         print("OK:", total, "contas acessiveis no dominio definitivo.")
         print("3/3: Redirecionando o endereco provisorio...")
         set_caddy(caddyfile, replace_block(before, after, final_block))
         if not tls_probe()[0]:
-            fail("HTTPS final nao confirmou autenticacao obrigatoria.")
+            fail("HTTPS final nao confirmou acesso 200.")
     except Exception:
         if change_started:
             print("Falha na troca do dominio: restaurando SOMENTE o Caddy antigo.", file=sys.stderr)
@@ -317,7 +293,7 @@ def main():
     print("NOVO: https://" + DOMAIN + "/")
     print("ANTIGO: redireciona para o novo.")
     print("BANCO, APLICATIVO, MOBILE, OCR, GFARM, PLUV, R2: NAO REINICIADOS.")
-    print("USUARIO E SENHA: os mesmos da publicacao anterior.")
+    print("ACESSO: sem tela adicional de usuario e senha.")
 
 if __name__ == "__main__":
     try:
