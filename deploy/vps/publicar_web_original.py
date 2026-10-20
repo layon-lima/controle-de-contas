@@ -93,7 +93,7 @@ def domain_name() -> str:
         try:
             with urllib.request.urlopen("https://api.ipify.org", timeout=12) as response:
                 ip = response.read(80).decode("ascii").strip()
-            if not re.fullmatch(r"(?:[0-9]{1,3}\\.){3}[0-9]{1,3}", ip):
+            if not re.fullmatch(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}", ip):
                 raise ValueError("IPv4 inesperado")
         except (OSError, ValueError) as exc:
             raise Abort("Nao consegui identificar o IP da VPS: " + type(exc).__name__)
@@ -110,7 +110,7 @@ def replacement(config: str, block: str, domain: str) -> str:
         a = config.index(START)
         b = config.index(END) + len(END)
         return config[:a] + block + config[b:]
-    if re.search(r"(?m)^\\s*" + re.escape(domain) + r"\\s*\\{", config):
+    if re.search(r"(?m)^\s*" + re.escape(domain) + r"\s*\{", config):
         raise Abort("Este dominio ja tem uma rota no Caddy. Nao sobrescrevi.")
     return config.rstrip() + "\n\n" + block + "\n"
 
@@ -133,7 +133,7 @@ def main() -> int:
         user, password = username_password()
         hashed = cmd("docker", "exec", "-i", CADDY, "caddy", "hash-password",
                      "--algorithm", "bcrypt", input_text=password + "\n")
-        if not re.fullmatch(r"\\$2[aby]\\$[0-9]{2}\\$[./A-Za-z0-9]{53}", hashed):
+        if not re.fullmatch(r"\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}", hashed):
             raise Abort("Caddy nao retornou um hash bcrypt reconhecido.")
 
         # O mesmo servidor web existente. Aplicar somente a origem HTTPS.
