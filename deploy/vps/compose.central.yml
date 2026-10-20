@@ -42,10 +42,12 @@ services:
       CONTAS_DB_USER: contas
       CONTAS_DB_PASSWORD: "${CONTAS_DB_PASSWORD:?Senha do banco obrigatoria}"
       CONTAS_API_TOKEN: "${CONTAS_API_TOKEN:?Token da API obrigatorio}"
+    # Exposicao SOMENTE no loopback da VPS. Sem rede publica para o banco.
     ports:
       - "127.0.0.1:18768:8768"
     networks:
       - contas_private
+      - contas_loopback
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     healthcheck:
@@ -62,3 +64,7 @@ networks:
   contas_private:
     driver: bridge
     internal: true
+  # Rede de saida exclusiva da API. Docker nao publica portas de container
+  # conectado SOMENTE a redes internal:true. O banco NAO entra nesta rede.
+  contas_loopback:
+    driver: bridge
