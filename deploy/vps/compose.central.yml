@@ -1,5 +1,5 @@
-# Banco PRINCIPAL destinado ao Controle de Contas. Nenhuma porta publica.
-# Somente preparar infraestrutura: dados reais continuam no Windows ate migracao validada.
+# Banco principal + API PRIVADA do CONTAS 3. Nenhuma rota publica.
+# Banco Windows continua fonte dos dados ate migracao validada.
 name: contas-central
 services:
   contas-db:
@@ -22,6 +22,38 @@ services:
       start_period: 20s
     security_opt:
       - no-new-privileges:true
+
+  contas-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.central-api
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      contas-db:
+        condition: service_healthy
+    environment:
+      CONTAS_DB_HOST: contas-db
+      CONTAS_DB_PORT: "5432"
+      CONTAS_DB_NAME: contas_central
+      CONTAS_DB_USER: contas
+      CONTAS_DB_PASSWORD: "${CONTAS_DB_PASSWORD:?Senha do banco obrigatoria}"
+      CONTAS_API_TOKEN: "${CONTAS_API_TOKEN:?Token da API obrigatorio}"
+    ports:
+      - "127.0.0.1:18768:8768"
+    networks:
+      - contas_private
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8768/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
 
 volumes:
   contas_db_data:
