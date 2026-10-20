@@ -18,7 +18,23 @@ with sqlite3.connect(f"file:{p}?mode=ro", uri=True) as db:
     print("BANCO ORIGINAL NA VPS: contas=",db.execute("SELECT count(*) FROM contas").fetchone()[0],
           " pagamentos=",db.execute("SELECT count(*) FROM pagamentos").fetchone()[0])
 PY
+# Preserva a origem HTTPS salva pela publicacao em futuras atualizacoes.
+SITE_ENV=/opt/apps/contas-runtime/public-site.env
+if [[ -f "$SITE_ENV" ]]; then
+  PUBLIC_ORIGIN="$(sed -n 's/^CONTAS_PUBLIC_ORIGIN=//p' "$SITE_ENV" | head -1)"
+  PROXY_NETWORK="$(sed -n 's/^CONTAS_CADDY_NETWORK=//p' "$SITE_ENV" | head -1)"
+  if [[ "$PUBLIC_ORIGIN" =~ ^https://[a-z0-9.-]+$ ]]; then
+    export CONTAS_PUBLIC_ORIGIN="$PUBLIC_ORIGIN"
+  else
+    echo "ERRO: origem HTTPS salva invalida; nao recriarei o app."; exit 1
+  fi
+fi
 docker compose -f "$COMPOSE" up -d --no-deps contas-web
+if [[ -n "${PROXY_NETWORK:-}" ]] && docker network inspect "$PROXY_NETWORK" >/dev/null 2>&1; then
+  if ! docker inspect contas-web-original-contas-web-1 --format '{{json .NetworkSettings.Networks}}' | grep -Fq ""$PROXY_NETWORK""; then
+    docker network connect --alias contas3-backend "$PROXY_NETWORK" contas-web-original-contas-web-1
+  fi
+fi
 printf 'Testando http://127.0.0.1:18769/health ...\n'
 for i in $(seq 1 30); do
   if curl -fsS --noproxy '*' --max-time 3 http://127.0.0.1:18769/health; then
