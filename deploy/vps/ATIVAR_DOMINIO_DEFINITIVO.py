@@ -134,7 +134,16 @@ def tls_probe() -> tuple[bool, str]:
          "-w", "%{http_code}", "https://" + DOMAIN + "/"],
         capture_output=True, text=True, timeout=13
     )
-    return check.returncode == 0 and check.stdout.strip() == "401", check.stdout.strip()
+    direct_ok = check.returncode == 0 and check.stdout.strip() == "401"
+    if not direct_ok:
+        return False, check.stdout.strip()
+    # Validar tambem acesso DNS REAL (evita dominio ainda vinculado a Worker).
+    public = subprocess.run(
+        ["curl", "--noproxy", "*", "--max-time", "10", "-sS",
+         "-o", "/dev/null", "-w", "%{http_code}", "https://" + DOMAIN + "/"],
+        capture_output=True, text=True, timeout=13
+    )
+    return public.returncode == 0 and public.stdout.strip() == "401", public.stdout.strip()
 
 
 def await_tls():
@@ -147,10 +156,13 @@ def await_tls():
          "O endereco provisório sera preservado.")
 
 
-def check_web():
+def check_web(expected_origin: str):
     c = old.docker_info(WEB_CONTAINER)
     if not c.get("State", {}).get("Running"):
         fail("App do Controle de Contas nao iniciou.")
+    active_env = c.get("Config", {}).get("Env", [])
+    if "CONTAS_PUBLIC_ORIGIN=" + expected_origin not in active_env:
+        fail("Origem HTTPS ativa do aplicativo nao foi atualizada corretamente.")
     try:
         with urlopen("http://127.0.0.1:18769/health", timeout=5) as response:
             obj = json.load(response)
@@ -171,7 +183,7 @@ def restart_web(origin: str, network: str):
              network, WEB_CONTAINER])
     for attempt in range(20):
         try:
-            check_web()
+            check_web(origin)
             return
         except RuntimeError:
             time.sleep(3)
@@ -222,16 +234,16 @@ def main():
     changed_app = False
     try:
         print("1/4: Habilitando ambos os dominios, sem desligar o antigo...")
-        set_caddy(caddyfile, replace_block(before, after, first_block))
         changed_caddy = True
+        set_caddy(caddyfile, replace_block(before, after, first_block))
 
         print("2/4: Validando certificado HTTPS do dominio definitivo...")
         await_tls()
         print("HTTPS novo: OK, autenticação obrigatória.")
 
         print("3/4: Atualizando apenas o endereco publico do app...")
-        restart_web("https://" + DOMAIN, network)
         changed_app = True
+        restart_web("https://" + DOMAIN, network)
         replace_settings(previous_env, previous_origin, "https://" + DOMAIN)
 
         print("4/4: Redirecionando temporariamente o endereco antigo...")
