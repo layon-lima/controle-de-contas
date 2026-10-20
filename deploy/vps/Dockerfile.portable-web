@@ -12,6 +12,7 @@ WORKDIR /app
 COPY deploy/vps/requirements.portable-web.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY portable_app/ /app/portable_app/
+COPY cloud_mobile/public/ /app/cloud_mobile/public/
 COPY source_current/ /app/source_current/
 COPY releases/ /app/releases/
 CMD ["python", "-u", "portable_app/server.py"]
