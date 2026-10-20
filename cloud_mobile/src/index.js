@@ -189,6 +189,23 @@ async function mobileManifest(request, env) {
   });
 }
 
+function isPaid(record) {
+  return Boolean(String(record?.data_pagamento || "").trim());
+}
+
+// Remover todo o prefixo: PDF original, paginas JPG e uploads incompletos.
+// Repetir a listagem da primeira pagina, pois as chaves estao sendo excluidas.
+async function purgeR2Copies(env, id) {
+  const prefix = `accounts/${id}/`;
+  for (let batch = 0; batch < 16; batch++) {
+    const entries = await env.PDFS.list({prefix, limit: 500});
+    const keys = (entries.objects || []).map(entry => entry.key);
+    if (!keys.length) return;
+    await env.PDFS.delete(keys);
+  }
+  throw new Error("Limpeza R2 incompleta: tentar na proxima sincronizacao.");
+}
+
 function statusConta(vencimento, dataPagamento) {
   if (String(dataPagamento || "").trim()) return "Paga";
   const text = String(vencimento || "").slice(0, 10);
@@ -224,10 +241,11 @@ async function syncAccounts(request, env) {
   const syncedAt = String(body?.synced_at || new Date().toISOString());
   if (accounts.length > 10000) return json({ok:false, erro:"Quantidade de contas inválida."}, 400);
 
-  const existingResult = await env.DB.prepare("SELECT id,pdf_hash,pdf_pages FROM accounts").all();
+  const existingResult = await env.DB.prepare("SELECT id,pdf_hash,pdf_name,pdf_pages,payload FROM accounts").all();
   const existing = new Map((existingResult.results || []).map(r => [Number(r.id), r]));
   const incomingIds = new Set();
   const needPdfs = [];
+  const toPurge = [];
   const statements = [];
 
   for (const raw of accounts) {
@@ -235,15 +253,39 @@ async function syncAccounts(request, env) {
     if (!Number.isInteger(id) || id <= 0) continue;
     incomingIds.add(id);
 
-    const pdfHash = String(raw?.pdf_hash || "");
-    const pdfName = String(raw?.pdf_name || "").slice(0, 300);
     const old = existing.get(id);
-    const keepPages = old && String(old.pdf_hash || "") === pdfHash ? Number(old.pdf_pages || 0) : 0;
-    if (pdfHash && (!old || String(old.pdf_hash || "") !== pdfHash || keepPages < 1)) needPdfs.push(id);
+    const paid = isPaid(raw);
+    // Confirmacao vinda somente do sincronizador Windows autenticado.
+    const pcHasPdf = raw?.local_pdf_confirmed === true;
+    let wasPaid = false;
+    if (old?.payload) {
+      try { wasPaid = isPaid(JSON.parse(old.payload)); } catch {}
+    }
+    let pdfHash, pdfName, keepPages;
+    if (paid) {
+      // Guardar marcadores ate a exclusao remota realmente concluir.
+      // Falha de rede => repetir na proxima sincronizacao.
+      const hasCloudState = Boolean(old?.pdf_hash || Number(old?.pdf_pages || 0));
+      const cleanupRequired = pcHasPdf && (hasCloudState || !old || !wasPaid);
+      pdfHash = String(old?.pdf_hash || (cleanupRequired ? "pending-r2-delete" : ""));
+      pdfName = String(old?.pdf_name || "");
+      keepPages = Number(old?.pdf_pages || 0);
+      if (cleanupRequired) toPurge.push(id);
+    } else {
+      pdfHash = String(raw?.pdf_hash || "");
+      pdfName = String(raw?.pdf_name || "").slice(0, 300);
+      // Reversao de pagamento: copiar novamente, mesmo que o hash seja igual.
+      keepPages = old && !wasPaid && String(old.pdf_hash || "") === pdfHash
+        ? Number(old.pdf_pages || 0) : 0;
+      if (pdfHash && (!old || wasPaid || String(old.pdf_hash || "") !== pdfHash || keepPages < 1)) {
+        needPdfs.push(id);
+      }
+    }
 
     const payload = {...raw};
     delete payload.pdf_hash;
     delete payload.pdf_name;
+    delete payload.local_pdf_confirmed;
 
     statements.push(env.DB.prepare(`
       INSERT INTO accounts(id,payload,pdf_hash,pdf_name,pdf_pages,updated_at)
@@ -252,7 +294,7 @@ async function syncAccounts(request, env) {
         payload=excluded.payload,
         pdf_hash=excluded.pdf_hash,
         pdf_name=excluded.pdf_name,
-        pdf_pages=CASE WHEN accounts.pdf_hash=excluded.pdf_hash THEN accounts.pdf_pages ELSE 0 END,
+        pdf_pages=excluded.pdf_pages,
         updated_at=excluded.updated_at
     `).bind(id, JSON.stringify(payload), pdfHash, pdfName, keepPages, syncedAt));
   }
@@ -271,14 +313,33 @@ async function syncAccounts(request, env) {
   if (statements.length) {
     for (let i = 0; i < statements.length; i += 80) await env.DB.batch(statements.slice(i, i + 80));
   }
+  const pendingPdfDeletions = [];
+  for (const id of toPurge) {
+    try {
+      await purgeR2Copies(env, id);
+      await env.DB.prepare(`
+        UPDATE accounts SET pdf_hash='',pdf_name='',pdf_pages=0
+        WHERE id=? AND TRIM(COALESCE(json_extract(payload,'$.data_pagamento'),'')) <> ''
+      `).bind(id).run();
+    } catch {
+      // Marcador/hash anterior permanece salvo para retry automatico.
+      pendingPdfDeletions.push(id);
+    }
+  }
   await setMeta(env, "last_synced", syncedAt);
-  return json({ok:true, quantidade:incomingIds.size, need_pdfs:needPdfs});
+  return json({
+    ok:true, quantidade:incomingIds.size, need_pdfs:needPdfs,
+    pending_pdf_deletions:pendingPdfDeletions,
+  });
 }
 
 async function uploadPdf(request, env, id) {
   if (!authorized(request, env.SYNC_TOKEN, "X-Sync-Token")) return json({ok:false, erro:"Não autorizado."}, 401);
-  const row = await env.DB.prepare("SELECT pdf_pages FROM accounts WHERE id = ?").bind(id).first();
+  const row = await env.DB.prepare("SELECT pdf_pages,payload FROM accounts WHERE id = ?").bind(id).first();
   if (!row) return json({ok:false, erro:"Conta não encontrada."}, 404);
+  try {
+    if (isPaid(JSON.parse(row.payload))) return json({ok:false, erro:"Nao enviar PDF de conta paga ao R2."}, 409);
+  } catch { return json({ok:false, erro:"Cadastro invalido."}, 409); }
 
   const hash = String(request.headers.get("X-Pdf-Hash") || "");
   const name = String(request.headers.get("X-Pdf-Name") || `conta-${id}.pdf`).slice(0, 300);
@@ -295,8 +356,11 @@ async function uploadPdf(request, env, id) {
 async function uploadPage(request, env, id, page) {
   if (!authorized(request, env.SYNC_TOKEN, "X-Sync-Token")) return json({ok:false, erro:"Não autorizado."}, 401);
   if (!Number.isInteger(page) || page < 1 || page > 5000) return json({ok:false, erro:"Página inválida."}, 400);
-  const row = await env.DB.prepare("SELECT id FROM accounts WHERE id = ?").bind(id).first();
+  const row = await env.DB.prepare("SELECT payload FROM accounts WHERE id = ?").bind(id).first();
   if (!row) return json({ok:false, erro:"Conta não encontrada."}, 404);
+  try {
+    if (isPaid(JSON.parse(row.payload))) return json({ok:false, erro:"Nao enviar PDF de conta paga ao R2."}, 409);
+  } catch { return json({ok:false, erro:"Cadastro invalido."}, 409); }
   await env.PDFS.put(`accounts/${id}/pages/${page}.jpg`, request.body, {
     httpMetadata: {contentType: "image/jpeg"},
   });
@@ -307,6 +371,11 @@ async function completePdf(request, env, id) {
   if (!authorized(request, env.SYNC_TOKEN, "X-Sync-Token")) return json({ok:false, erro:"Não autorizado."}, 401);
   let body;
   try { body = await request.json(); } catch { return json({ok:false, erro:"JSON inválido."}, 400); }
+  const row = await env.DB.prepare("SELECT payload FROM accounts WHERE id = ?").bind(id).first();
+  if (!row) return json({ok:false, erro:"Conta não encontrada."}, 404);
+  try {
+    if (isPaid(JSON.parse(row.payload))) return json({ok:false, erro:"Nao enviar PDF de conta paga ao R2."}, 409);
+  } catch { return json({ok:false, erro:"Cadastro invalido."}, 409); }
   const pages = Math.max(0, Math.min(5000, Number(body?.pages || 0)));
   const hash = String(body?.hash || "");
   const name = String(body?.name || "").slice(0, 300);
@@ -340,8 +409,8 @@ async function listAccounts(request, env) {
       const copiedMobileUntilMs = Number.isFinite(copiedAtMs)
         ? copiedAtMs + 15 * 60 * 1000
         : NaN;
-      item.tem_pdf = Number(row.pdf_pages || 0) > 0;
       item.status = statusConta(item.vencimento, item.data_pagamento);
+      item.tem_pdf = item.status !== "Paga" && Number(row.pdf_pages || 0) > 0;
       item.sugestao_pagamento = item.status !== "Paga" && Number.isFinite(suggestedUntilMs) && suggestedUntilMs > now;
       item.sugerido_em = row.suggested_at || null;
       item.sugestao_ate = item.sugestao_pagamento ? row.suggested_until : null;
@@ -500,32 +569,46 @@ async function desktopActivity(request, env) {
 
 async function pdfMeta(request, env, id) {
   if (!await viewAuthorized(request, env)) return json({ok:false, erro:"Não autorizado."}, 401);
-  const row = await env.DB.prepare("SELECT pdf_name,pdf_pages FROM accounts WHERE id=?").bind(id).first();
-  if (!row || Number(row.pdf_pages || 0) < 1) return json({ok:false, erro:"PDF não encontrado para esta conta."}, 404);
+  const row = await env.DB.prepare("SELECT pdf_name,pdf_pages,payload FROM accounts WHERE id=?").bind(id).first();
+  if (!row) return json({ok:false, erro:"PDF não encontrado."}, 404);
+  try {
+    if (isPaid(JSON.parse(row.payload))) return json({ok:false, erro:"PDF pago: disponivel apenas no PC."}, 404);
+  } catch { return json({ok:false, erro:"Cadastro invalido."}, 404); }
+  if (Number(row.pdf_pages || 0) < 1) return json({ok:false, erro:"PDF não encontrado para esta conta."}, 404);
   return json({ok:true, paginas:Number(row.pdf_pages), nome:row.pdf_name || `conta-${id}.pdf`});
 }
 
 async function pdfPage(request, env, id, page) {
   if (!await viewAuthorized(request, env)) return json({ok:false, erro:"Não autorizado."}, 401);
+  const row = await accountRow(env, id);
+  if (!row) return json({ok:false, erro:"PDF não encontrado."}, 404);
+  try {
+    if (isPaid(JSON.parse(row.payload))) return json({ok:false, erro:"PDF pago: disponivel apenas no PC."}, 404);
+  } catch { return json({ok:false, erro:"Cadastro invalido."}, 404); }
   const object = await env.PDFS.get(`accounts/${id}/pages/${page}.jpg`);
   if (!object) return json({ok:false, erro:"Página não encontrada."}, 404);
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("content-type", "image/jpeg");
-  headers.set("cache-control", "private, max-age=300");
+  headers.set("cache-control", "private, no-store");
   headers.set("x-content-type-options", "nosniff");
   return new Response(object.body, {headers});
 }
 
 async function originalPdf(request, env, id) {
   if (!await viewAuthorized(request, env)) return json({ok:false, erro:"Não autorizado."}, 401);
+  const row = await accountRow(env, id);
+  if (!row) return json({ok:false, erro:"PDF não encontrado."}, 404);
+  try {
+    if (isPaid(JSON.parse(row.payload))) return json({ok:false, erro:"PDF pago: disponivel apenas no PC."}, 404);
+  } catch { return json({ok:false, erro:"Cadastro invalido."}, 404); }
   const object = await env.PDFS.get(`accounts/${id}/original.pdf`);
   if (!object) return json({ok:false, erro:"PDF não encontrado."}, 404);
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("content-type", "application/pdf");
   headers.set("content-disposition", `inline; filename="conta-${id}.pdf"`);
-  headers.set("cache-control", "private, max-age=300");
+  headers.set("cache-control", "private, no-store");
   return new Response(object.body, {headers});
 }
 
