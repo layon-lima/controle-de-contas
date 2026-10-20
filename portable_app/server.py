@@ -32,6 +32,7 @@ APP_DIR = Path(os.environ.get("CONTAS_APP_DIR") or
                      str(Path.home() / "AppData" / "Local")) / "ControleContas"))
 DB_PATH = APP_DIR / "data" / "controle_contas.db"
 WEB_DIR = Path(__file__).resolve().parent
+MOBILE_DIR = ROOT / "cloud_mobile" / "public"
 ICONS_DIR = ROOT / "source_current" / "assets" / "ui_icons"
 HOST = os.environ.get("CONTAS_PORTABLE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CONTAS_PORTABLE_PORT", "8767"))
@@ -49,13 +50,14 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps
 else:
     import pdf_intelligence
     import pdf_workflows
     import sync_runtime
     import ai_assist
     import receipt_matching
+    import mobile_vps
 AI_ASSIST = ai_assist.ChatGPTAssist(
     APP_DIR, callback=f"http://{HOST}:{PORT}/auth/callback"
 )
@@ -1048,6 +1050,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"online": True, "revision": SOURCE_REVISION})
                 return
             if self.command == "GET" and route == "/":
+                # Um endereco: browser de celular recebe interface mobile;
+                # desktop recebe a interface original (mesmo banco VPS).
+                ua = self.headers.get("User-Agent", "").lower()
+                if any(name in ua for name in ("android", "iphone", "ipad", "ipod", "mobile")) and \
+                        "desktop=1" not in urlsplit(self.path).query:
+                    self.send_response(302)
+                    self.send_header("Location", "/mobile/")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 # HTML tem acesso exclusivo ao token; nenhuma API aceita chamadas
                 # de outro site, formulários sem token ou fetch de outra origem.
                 html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -1068,6 +1081,53 @@ class Handler(BaseHTTPRequestHandler):
                                  "object-src 'none'; frame-ancestors 'none'")
                 self.end_headers()
                 self.wfile.write(body)
+                return
+            if self.command == "GET" and route in ("/mobile", "/mobile/", "/mobile/index.html"):
+                html = (MOBILE_DIR / "index.html").read_text(encoding="utf-8")
+                for old, new in (
+                    ('href="/api/manifest"', 'href="/mobile/manifest.json"'),
+                    ('href="/icon.svg', 'href="/mobile/icon.svg'),
+                    ('href="/styles.css', 'href="/mobile/styles.css'),
+                    ('src="/app.js', 'src="/mobile/app.js'),
+                ):
+                    html = html.replace(old, new)
+                nonce = secrets.token_urlsafe(16)
+                bootstrap = (
+                    '<script nonce="' + nonce + '">window.__CONTAS_VPS__=true;'
+                    'window.__CONTAS_TOKEN__=' + json.dumps(TOKEN) + ';</script>'
+                )
+                html = html.replace("</head>", bootstrap + "</head>", 1)
+                body = html.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy",
+                    f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; "
+                    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                    "connect-src 'self'; object-src 'none'; frame-ancestors 'none'")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.command == "GET" and route in (
+                "/mobile/app.js", "/mobile/styles.css", "/mobile/icon.svg",
+                "/mobile/manifest.json"
+            ):
+                filename = route.rsplit("/", 1)[-1]
+                mime = {
+                    "app.js": "text/javascript; charset=utf-8",
+                    "styles.css": "text/css; charset=utf-8",
+                    "icon.svg": "image/svg+xml",
+                    "manifest.json": "application/manifest+json",
+                }[filename]
+                if filename == "manifest.json":
+                    manifest = json.loads((MOBILE_DIR / filename).read_text(encoding="utf-8"))
+                    manifest["start_url"] = "/mobile/"
+                    manifest["scope"] = "/mobile/"
+                    self._send(json.dumps(manifest).encode("utf-8"), mime=mime)
+                else:
+                    self._send((MOBILE_DIR / filename).read_bytes(), mime=mime)
                 return
             if self.command == "GET" and route == "/app.js":
                 self._send((WEB_DIR / "app.js").read_bytes(), mime="text/javascript; charset=utf-8")
@@ -1184,6 +1244,19 @@ class Handler(BaseHTTPRequestHandler):
                     ticket = str(self._body().get("ticket") or "")
                     pdf_workflows.consume_preview(ticket)
                     self._json({"ok": True, "cancelled": True})
+                    return
+                if self.command == "GET" and route == "/api/contas":
+                    # A MESMA base da versao desktop; nunca acessar D1.
+                    with connection() as conn:
+                        self._json(mobile_vps.listing(conn, status))
+                    return
+                mobile_copy = re.fullmatch(r"/api/mobile/copied/([0-9]+)", route)
+                if self.command == "POST" and mobile_copy:
+                    with connection() as conn:
+                        payload = mobile_vps.copied(conn, int(mobile_copy.group(1)))
+                    if payload is None:
+                        raise ApiError(404, "Conta em aberto nao encontrada.")
+                    self._json(payload)
                     return
                 if self.command == "GET" and route == "/api/accounts":
                     self._json({"ok": True, **list_accounts()})
