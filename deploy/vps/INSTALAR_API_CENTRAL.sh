@@ -39,7 +39,19 @@ PY
 
 docker compose --env-file "$SECRETS" -f "$COMPOSE" config --quiet
 echo "Iniciando somente PostgreSQL e API exclusivos do Controle de Contas..."
-docker compose --env-file "$SECRETS" -f "$COMPOSE" up -d --build contas-api
+# Recriar APENAS a API para aplicar o mapeamento corrigido da porta.
+# O PostgreSQL e seu volume persistente nao sao reiniciados.
+docker compose --env-file "$SECRETS" -f "$COMPOSE" up -d --build --no-deps --force-recreate contas-api
+
+# Detectar ausencia de mapeamento imediatamente (antes de aguardar HTTP).
+published="$(docker compose --env-file "$SECRETS" -f "$COMPOSE" port contas-api 8768 2>/dev/null || true)"
+echo "Porta privada da API: ${published:-NAO PUBLICADA}"
+if [[ "$published" != "127.0.0.1:18768" ]]; then
+  echo "ERRO: Docker nao publicou a porta 18768 no localhost. Nao altere o banco."
+  echo "Confira as redes e o mapeamento exclusivo do Contas."
+  exit 1
+fi
+
 echo "Aguardando API responder localmente..."
 status=""
 for i in $(seq 1 40); do
