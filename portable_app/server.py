@@ -1145,7 +1145,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(path.read_bytes(), mime="image/svg+xml")
                 return
             if route.startswith("/api/"):
-                self._check(writing=self.command == "POST")
+                # Copiar codigo no mobile e POST sem corpo (nao altera pagamento).
+                no_body_mobile_copy = (
+                    self.command == "POST"
+                    and re.fullmatch(r"/api/mobile/copied/[0-9]+", route)
+                )
+                self._check(writing=self.command == "POST" and not no_body_mobile_copy)
                 parts = route.strip("/").split("/")
                 if self.command == "GET" and route == "/api/ai/status":
                     self._json({"ok": True, **AI_ASSIST.status()})
