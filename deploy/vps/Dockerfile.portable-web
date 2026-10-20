@@ -15,4 +15,7 @@ COPY portable_app/ /app/portable_app/
 COPY cloud_mobile/public/ /app/cloud_mobile/public/
 COPY source_current/ /app/source_current/
 COPY releases/ /app/releases/
+# Falhas em importacao mobile, SQL e filtros impedem a atualizacao da imagem.
+RUN python -m py_compile portable_app/server.py portable_app/mobile_vps.py \
+    && python -m unittest -v portable_app.test_mobile_vps
 CMD ["python", "-u", "portable_app/server.py"]
