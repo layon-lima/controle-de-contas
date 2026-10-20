@@ -491,6 +491,13 @@ async function loadAccounts(){
     // Compatibilidade com cache/Worker antigo: jamais mostrar contas pagas.
     accounts = (Array.isArray(payload.contas) ? payload.contas : [])
       .filter(a => a && !String(a.data_pagamento || "").trim() && a.status !== "Paga");
+    // Se a conta foi paga enquanto o detalhe estava aberto, fechar o
+    // detalhe/visualizador no proximo refresh (30s), sem deixar dado obsoleto.
+    if(currentAccount && !accounts.some(a => Number(a.id) === Number(currentAccount.id))){
+      closePdfViewer();
+      closeDetail();
+      currentAccount = null;
+    }
 
     const sync = payload.meta?.ultima_atualizacao;
     if(sync){
@@ -696,6 +703,6 @@ setInterval(loadAccounts, 30000);
 
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{
-    navigator.serviceWorker.register("/sw.js?v=13").catch(()=>{});
+    navigator.serviceWorker.register("/sw.js?v=16").catch(()=>{});
   });
 }
