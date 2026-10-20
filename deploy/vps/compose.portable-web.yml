@@ -15,6 +15,9 @@ services:
       CONTAS_PORTABLE_HOST: 0.0.0.0
       CONTAS_PORTABLE_PORT: "8767"
       CONTAS_PORTABLE_NO_BROWSER: "1"
+      # Origem usada EXCLUSIVAMENTE no teste pelo tunel SSH do Windows.
+      # Alterar ao implantar proxy HTTPS com autenticacao independente.
+      CONTAS_PUBLIC_ORIGIN: "http://127.0.0.1:18769"
       QT_QPA_PLATFORM: offscreen
     ports:
       - "127.0.0.1:18769:8767"
