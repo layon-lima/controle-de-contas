@@ -16,7 +16,7 @@ import socket
 import subprocess
 import sys
 import time
-from urllib.request import Request, urlopen
+from urllib.request import Request, ProxyHandler, build_opener, urlopen
 
 import publicar_web_original as old
 
@@ -148,15 +148,16 @@ def check_public_data() -> int:
     ).decode("ascii")
     headers = {"Authorization": basic, "User-Agent": "ControleContas-VPS-DNS-Cutover"}
     try:
+        opener = build_opener(ProxyHandler({}))
         req = Request("https://" + DOMAIN + "/", headers=headers)
-        with urlopen(req, timeout=15) as response:
+        with opener.open(req, timeout=15) as response:
             html = response.read(250000).decode("utf-8")
         token = re.search(r'window\.__CONTAS_TOKEN__=("[^"]+");', html)
         if not token:
             fail("A interface web abriu sem o token de sessao original.")
         headers["X-Local-Token"] = json.loads(token.group(1))
         req = Request("https://" + DOMAIN + "/api/accounts", headers=headers)
-        with urlopen(req, timeout=15) as response:
+        with opener.open(req, timeout=15) as response:
             payload = json.load(response)
         if not payload.get("ok") or not isinstance(payload.get("accounts"), list):
             fail("API de contas ainda nao funciona pelo dominio novo.")
