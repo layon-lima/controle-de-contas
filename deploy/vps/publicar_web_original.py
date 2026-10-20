@@ -14,12 +14,13 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "deploy/vps/compose.portable-web.yml"
 DATA = Path("/opt/apps/contas-runtime")
-SECRETS = DATA / "public-auth.json"
+SECRETS = Path("/opt/apps/contas-private/public-auth.json")
 SETTINGS = DATA / "public-site.env"
 DB = DATA / "data/controle_contas.db"
 CADDY = "pluv-https-caddy-1"
@@ -71,6 +72,8 @@ def pick_network(caddy: dict) -> str:
 
 
 def username_password() -> tuple[str, str]:
+    SECRETS.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(SECRETS.parent, 0o700)
     if SECRETS.is_file():
         data = json.loads(SECRETS.read_text(encoding="utf-8"))
         user, password = data.get("user"), data.get("password")
@@ -191,6 +194,25 @@ def main() -> int:
                         "CONTAS_CADDY_NETWORK=" + network + "\n", encoding="utf-8")
         os.chmod(temp, 0o600)
         os.replace(temp, SETTINGS)
+        # Validar HTTPS de verdade sem precisar de DNS local ou credenciais.
+        # HTTP 401 confirma certificado funcional + gateway protegido.
+        https_ok = False
+        for attempt in range(7):
+            probe = subprocess.run(
+                ["curl", "--noproxy", "*", "--resolve",
+                 domain + ":443:127.0.0.1", "-sS", "-o", "/dev/null",
+                 "-w", "%{http_code}", "--connect-timeout", "5",
+                 "--max-time", "10", origin + "/"],
+                capture_output=True, text=True, timeout=13,
+            )
+            if probe.returncode == 0 and probe.stdout.strip() == "401":
+                https_ok = True
+                break
+            time.sleep(4)
+        if https_ok:
+            print("TESTE HTTPS: OK (login obrigatorio, HTTP 401 sem senha)")
+        else:
+            print("AVISO: HTTPS ainda nao confirmou HTTP 401. O Caddy pode estar emitindo certificado.")
         print("\n===== CONTAS 3 — ACESSO HTTPS CONFIGURADO =====")
         print("ENDERECO:", origin)
         print("USUARIO:", user)
