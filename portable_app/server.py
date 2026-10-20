@@ -1179,7 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
                         result.append({"id": aid, "r2_hash": (meta or {}).get("hash", "")})
                     self._json({"ok": True, "pending": result})
                     return
-                agent_pdf = re.fullmatch(r"/api/agent/pdf/(\\d+)", route)
+                agent_pdf = re.fullmatch(r"/api/agent/pdf/(\d+)", route)
                 if agent_pdf and self.command == "POST":
                     try:
                         size = int(self.headers.get("Content-Length") or "0")
@@ -1331,7 +1331,7 @@ class Handler(BaseHTTPRequestHandler):
                     with connection() as conn:
                         self._json(mobile_vps.listing(conn, status))
                     return
-                mobile_pdf = re.fullmatch(r"/api/pdf/(\\d+)/(meta|page/(\\d+))", route)
+                mobile_pdf = re.fullmatch(r"/api/pdf/(\d+)/(meta|page/(\d+))", route)
                 if self.command == "GET" and mobile_pdf:
                     aid = int(mobile_pdf.group(1))
                     with connection() as conn:
