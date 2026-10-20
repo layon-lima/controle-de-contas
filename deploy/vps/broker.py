@@ -28,6 +28,7 @@ JOB_ID = re.compile(r"^[A-Za-z0-9_-]{20,80}$")
 def validate_secrets(admin: str, agent: str) -> None:
     if (not isinstance(admin, str) or not isinstance(agent, str) or
             len(admin) < 32 or len(agent) < 32 or
+            admin.startswith("SUBSTITUA_") or agent.startswith("SUBSTITUA_") or
             hmac.compare_digest(admin, agent)):
         raise ValueError("Configure duas chaves distintas e seguras (minimo 32 caracteres).")
 
