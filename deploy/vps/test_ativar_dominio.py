@@ -1,5 +1,6 @@
 """Testes offline dos blocos Caddy para a troca do subdominio."""
 import sys
+import inspect
 from pathlib import Path
 import unittest
 
@@ -48,6 +49,20 @@ class DomainSwitchTests(unittest.TestCase):
 
     def test_refuse_caddyfile_without_managed_block(self):
         self.assertRaises(RuntimeError, change.caddy_managed_block, "example.com {}")
+
+    def test_no_container_restarts_in_domain_switch(self):
+        script = inspect.getsource(change.main)
+        self.assertNotIn("restart_web(", script)
+        self.assertNotIn("docker compose", script)
+        self.assertNotIn("replace_settings(", script)
+
+    def test_proxy_origin_matches_existing_app(self):
+        block = change.protected_site(
+            change.DOMAIN, "$2a$12$" + "x" * 53,
+            "https://" + change.OLD_DOMAIN
+        )
+        self.assertIn("header_up Origin https://" + change.OLD_DOMAIN, block)
+        self.assertIn("header_up -Authorization", block)
 
     def test_redirect_points_only_to_new_origin(self):
         redirect = change.OLD_DOMAIN + " {\n" + "redir https://" + change.DOMAIN + "{uri} 302\n}"
