@@ -1329,7 +1329,7 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "GET" and route == "/api/contas":
                     # A MESMA base da versao desktop; nunca acessar D1.
                     with connection() as conn:
-                        self._json(mobile_vps.listing(conn, status))
+                        self._json(mobile_vps.listing(conn, status, r2_bridge.available))
                     return
                 mobile_pdf = re.fullmatch(r"/api/pdf/(\d+)/(meta|page/(\d+))", route)
                 if self.command == "GET" and mobile_pdf:
