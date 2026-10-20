@@ -1,0 +1,32 @@
+# Banco PRINCIPAL destinado ao Controle de Contas. Nenhuma porta publica.
+# Somente preparar infraestrutura: dados reais continuam no Windows ate migracao validada.
+name: contas-central
+services:
+  contas-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: contas_central
+      POSTGRES_USER: contas
+      POSTGRES_PASSWORD: "${CONTAS_DB_PASSWORD:?Senha privada obrigatoria no central.env}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - contas_db_data:/var/lib/postgresql/data
+    networks:
+      - contas_private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contas -d contas_central"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  contas_db_data:
+
+networks:
+  contas_private:
+    driver: bridge
+    internal: true
