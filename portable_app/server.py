@@ -157,13 +157,21 @@ def list_accounts():
             "ORDER BY CASE WHEN p.id IS NULL THEN 0 ELSE 1 END,"
             "c.vencimento ASC,c.id DESC"
         ).fetchall()
+    # Um pagamento confirmado em qualquer registro torna a conta paga,
+    # mesmo se um registro posterior estiver incompleto.
+    with connection() as conn:
+        paid_ids = {int(x[0]) for x in conn.execute(
+            """SELECT DISTINCT conta_id FROM pagamentos
+               WHERE data_pagamento IS NOT NULL AND TRIM(data_pagamento)<>''"""
+        )}
     activities = activity_map()
     output = []
     for row in rows:
         item = dict(row)
         pdf = str(item.pop("pdf_conta") or "")
         receipt = str(item.pop("pdf_comprovante") or "")
-        item["status"] = status(item["vencimento"], item["data_pagamento"])
+        item["status"] = ("Paga" if int(item["id"]) in paid_ids else
+                          status(item["vencimento"], item["data_pagamento"]))
         local_available = bool(pdf and Path(pdf).is_file())
         # Apenas contas abertas no R2; comprovantes pagos sao locais no Windows.
         item["has_pdf"] = local_available or (
