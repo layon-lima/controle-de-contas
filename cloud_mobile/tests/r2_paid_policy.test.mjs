@@ -30,6 +30,11 @@ class FakeDB {
         if (stmt.includes("SELECT id,pdf_hash,pdf_name,pdf_pages,payload FROM accounts")) {
           return { results: [...db.accounts.values()].map(row => ({ ...row })) };
         }
+        if (stmt.includes("FROM accounts a") && stmt.includes("LEFT JOIN payment_activity")) {
+          // Entregar intencionalmente TAMBEM os pagos ao JS para provar que
+          // a segunda barreira de filtragem funciona, alem da SQL de producao.
+          return { results: [...db.accounts.values()].map(row => ({ ...row })) };
+        }
         throw Error("Query all nao simulada: " + stmt);
       },
       async first() {
