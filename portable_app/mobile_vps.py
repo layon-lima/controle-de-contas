@@ -58,7 +58,18 @@ def mobile_account_visible(conn, account_id):
         """,
         (account_id,),
     ).fetchone()
-    return bool(row is not None and not _hidden_on_mobile(dict(row)))
+    if row is None or _hidden_on_mobile(dict(row)):
+        return False
+    # Inclui qualquer anotacao de pagamento anterior, nao somente a ultima.
+    for payment in conn.execute(
+        """SELECT beneficiario, documento_beneficiario,
+                  resultado_conferencia, detalhes_conferencia
+           FROM pagamentos WHERE conta_id=?""",
+        (account_id,),
+    ):
+        if _hidden_on_mobile(dict(payment)):
+            return False
+    return True
 
 
 def listing(conn, status_fn, has_remote_pdf=None):
@@ -85,6 +96,18 @@ def listing(conn, status_fn, has_remote_pdf=None):
         """
     ).fetchall()
 
+    # A anotacao mais antiga de um pagamento tambem pode mencionar DAVI;
+    # ler em lote para evitar uma consulta por conta na listagem do mobile.
+    hidden_from_payments = {
+        int(payment["conta_id"])
+        for payment in conn.execute(
+            """SELECT conta_id, beneficiario, documento_beneficiario,
+                      resultado_conferencia, detalhes_conferencia
+               FROM pagamentos"""
+        )
+        if _hidden_on_mobile(dict(payment))
+    }
+
     now = datetime.now(timezone.utc)
     items = []
     with LOCK:
@@ -93,7 +116,7 @@ def listing(conn, status_fn, has_remote_pdf=None):
                 COPIED.pop(account_id, None)
         for row in rows:
             item = dict(row)
-            if _hidden_on_mobile(item):
+            if int(item["id"]) in hidden_from_payments or _hidden_on_mobile(item):
                 continue
             if str(item.get("data_pagamento") or "").strip():
                 continue
