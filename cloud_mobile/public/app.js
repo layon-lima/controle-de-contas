@@ -22,6 +22,21 @@ function normalize(value){
     .trim();
 }
 
+// A exclusao de DAVI vale para a lista E para todos os cards financeiros.
+// E aplicada no navegador alem do filtro na API, inclusive para respostas
+// de versoes antigas do mobile/Worker.
+function excludedFromMobile(account){
+  if(!account || typeof account !== "object") return true;
+  return Object.entries(account).some(([key, value])=>{
+    if(typeof value !== "string" || !value.trim()) return false;
+    // Nao excluir outros boletos so porque estao numa pasta de Davi no PC.
+    const text = /^(pdf_conta|pdf_comprovante|caminho_pdf|pdf_path)$/.test(key)
+      ? value.split(/[\\/]/).pop()
+      : value;
+    return normalize(text).includes("davi");
+  });
+}
+
 function dateVariants(value){
   const text = String(value ?? "").trim();
   const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -74,14 +89,16 @@ function statusClass(status){
 }
 
 function renderSummary(){
+  // Resumo e valores usam EXCLUSIVAMENTE contas permitidas no mobile.
+  const visible = accounts.filter(a=>!excludedFromMobile(a));
   const groups = {
-    Vencida: accounts.filter(a=>a.status==="Vencida"),
-    Próxima: accounts.filter(a=>a.status==="Próxima"),
-    "Em dia": accounts.filter(a=>a.status==="Em dia"),
+    Vencida: visible.filter(a=>a.status==="Vencida"),
+    Próxima: visible.filter(a=>a.status==="Próxima"),
+    "Em dia": visible.filter(a=>a.status==="Em dia"),
   };
 
   const sum = arr => arr.reduce((acc,a)=>acc+Number(a.valor || 0),0);
-  const open = accounts.filter(a=>!String(a.data_pagamento || "").trim() && a.status!=="Paga");
+  const open = visible.filter(a=>!String(a.data_pagamento || "").trim() && a.status!=="Paga");
 
   el("openTotal").textContent = money(sum(open));
   el("openCount").textContent =
@@ -101,7 +118,8 @@ function renderSummary(){
 function filteredAccounts(){
   const query = el("searchInput").value;
   return accounts.filter(a => {
-    if (String(a.data_pagamento || "").trim() || a.status === "Paga") return false;
+    if (excludedFromMobile(a) ||
+        String(a.data_pagamento || "").trim() || a.status === "Paga") return false;
     const statusOk = activeFilter === "Todas" || a.status === activeFilter;
     return statusOk && matchesSearch(a,query);
   });
@@ -493,9 +511,10 @@ async function loadAccounts(){
       throw new Error(payload.erro || "Falha ao ler as contas.");
     }
 
-    // Compatibilidade com cache/Worker antigo: jamais mostrar contas pagas.
+    // Nunca incluir DAVI ou contas pagas no mobile, nem em seus totais.
     accounts = (Array.isArray(payload.contas) ? payload.contas : [])
-      .filter(a => a && !String(a.data_pagamento || "").trim() && a.status !== "Paga");
+      .filter(a => a && !excludedFromMobile(a) &&
+        !String(a.data_pagamento || "").trim() && a.status !== "Paga");
     // Se a conta foi paga enquanto o detalhe estava aberto, fechar o
     // detalhe/visualizador no proximo refresh (30s), sem deixar dado obsoleto.
     if(currentAccount && !accounts.some(a => Number(a.id) === Number(currentAccount.id))){
