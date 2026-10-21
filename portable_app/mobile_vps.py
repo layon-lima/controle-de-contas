@@ -6,6 +6,7 @@ O estado da etiqueta 'copiado' e temporario e nao altera pagamentos.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import ntpath
 import unicodedata
 from threading import RLock
 
@@ -32,7 +33,11 @@ def _contains_davi(value):
 
 
 def _hidden_on_mobile(item):
-    return any(_contains_davi(item.get(field)) for field in MOBILE_TEXT_FIELDS)
+    if any(_contains_davi(item.get(field)) for field in MOBILE_TEXT_FIELDS):
+        return True
+    # O arquivo pode vir de C:\\ no Windows ou / no Linux. Usar somente
+    # o nome do PDF, nunca os diretorios pessoais do usuario.
+    return _contains_davi(ntpath.basename(str(item.get("pdf_conta") or "")))
 
 
 def mobile_account_visible(conn, account_id):
@@ -41,6 +46,7 @@ def mobile_account_visible(conn, account_id):
         """
         SELECT c.fornecedor, c.documento, c.pagador, c.referencia,
                c.codigo_pagamento, c.tipo_pagamento, c.observacoes,
+               c.pdf_conta,
                p.beneficiario, p.documento_beneficiario,
                p.resultado_conferencia, p.detalhes_conferencia
         FROM contas c
@@ -78,7 +84,8 @@ def listing(conn, status_fn, has_remote_pdf=None):
         SELECT c.id, c.fornecedor, c.documento, c.pagador, c.referencia,
                c.valor, c.vencimento, c.codigo_pagamento, c.tipo_pagamento,
                c.observacoes, c.criado_em, c.atualizado_em,
-               c.enviado_pagamento_em, p.data_pagamento, p.valor_pago,
+               c.enviado_pagamento_em, c.pdf_conta,
+               p.data_pagamento, p.valor_pago,
                p.beneficiario, p.documento_beneficiario,
                p.resultado_conferencia, p.detalhes_conferencia
         FROM contas c
@@ -118,6 +125,8 @@ def listing(conn, status_fn, has_remote_pdf=None):
             item = dict(row)
             if int(item["id"]) in hidden_from_payments or _hidden_on_mobile(item):
                 continue
+            # Nunca enviar caminhos internos do servidor ao navegador.
+            item.pop("pdf_conta", None)
             if str(item.get("data_pagamento") or "").strip():
                 continue
             item["recebedor"] = str(item.get("fornecedor") or "")
