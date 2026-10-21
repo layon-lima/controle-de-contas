@@ -1344,15 +1344,8 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command == "GET" and mobile_pdf:
                     aid = int(mobile_pdf.group(1))
                     with connection() as conn:
-                        account(conn, aid)
-                        paid = conn.execute(
-                            """SELECT 1 FROM pagamentos WHERE conta_id=?
-                               AND data_pagamento IS NOT NULL
-                               AND TRIM(data_pagamento)<>'' LIMIT 1""",
-                            (aid,)
-                        ).fetchone()
-                    if paid:
-                        raise ApiError(404, "PDF pago esta disponivel somente no PC.")
+                        if not mobile_vps.mobile_account_visible(conn, aid):
+                            raise ApiError(404, "PDF indisponivel no mobile.")
                     original = r2_bridge.read_pdf(aid)
                     import fitz
                     with fitz.open(stream=original, filetype="pdf") as doc:
