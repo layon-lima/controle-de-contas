@@ -14,7 +14,8 @@ class MobileVpsTests(unittest.TestCase):
              id INTEGER PRIMARY KEY, fornecedor TEXT, documento TEXT,
              pagador TEXT, referencia TEXT, valor REAL, vencimento TEXT,
              codigo_pagamento TEXT, tipo_pagamento TEXT, observacoes TEXT,
-             criado_em TEXT, atualizado_em TEXT, enviado_pagamento_em TEXT
+             criado_em TEXT, atualizado_em TEXT, enviado_pagamento_em TEXT,
+             pdf_conta TEXT
           );
           CREATE TABLE pagamentos (
              id INTEGER PRIMARY KEY, conta_id INTEGER, data_pagamento TEXT,
@@ -66,6 +67,7 @@ class MobileVpsTests(unittest.TestCase):
             15: ("documento", "REF/DAVI/2026"),
             16: ("codigo_pagamento", "PIX-DAVI-999"),
             17: ("tipo_pagamento", "Davi no tipo"),
+            18: ("pdf_conta", r"C:\\Contas\\FATURA DAVI.pdf"),
         }
         for account_id, (field, value) in cases.items():
             self.db.execute(
@@ -116,6 +118,20 @@ class MobileVpsTests(unittest.TestCase):
         visible = mobile_vps.listing(self.db, lambda due,paid:"Em dia")
         self.assertNotIn(26, [r["id"] for r in visible["contas"]])
         self.assertFalse(mobile_vps.mobile_account_visible(self.db,26))
+
+    def test_filename_not_parent_directory_activates_block(self):
+        self.db.execute(
+            "INSERT INTO contas (id,fornecedor,vencimento,pdf_conta) "
+            "VALUES (27,'OUTRO','2026-12-31',?)",
+            (r"C:\\Users\\Davi\\Documents\\boleto normal.pdf",),
+        )
+        self.db.commit()
+        self.assertTrue(mobile_vps.mobile_account_visible(self.db,27))
+        ids = [row["id"] for row in mobile_vps.listing(
+            self.db, lambda due,paid:"Em dia")["contas"]]
+        self.assertIn(27, ids)
+
+
 
 
 if __name__ == "__main__":
