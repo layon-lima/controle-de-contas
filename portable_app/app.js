@@ -331,8 +331,8 @@ function accountModal(a,preview=null,rerun=null){
         notice(trained?'Conta salva. Aprendizado OCR registrado ('+trained+' campos).':
           'Conta salva. Nenhum novo campo foi aprendido.');
       }else notice(a?'Conta atualizada.':'Conta cadastrada.');
-      if(localCopy?.saved)notice('Conta salva. PDF também copiado para a pasta do Windows.');
-      else if(localCopy?.error)notice('Conta salva, mas a cópia no Windows falhou: '+localCopy.error,true);
+      if(!saved.warning&&localCopy?.saved)notice('Conta salva. PDF também copiado para a pasta do Windows.');
+      else if(!saved.warning&&localCopy?.error)notice('Conta salva, mas a cópia no Windows falhou: '+localCopy.error,true);
       if(preview)setAccountView('open');
       await reload();return true;
     });
