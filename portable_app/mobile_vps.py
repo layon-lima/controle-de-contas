@@ -6,10 +6,59 @@ O estado da etiqueta 'copiado' e temporario e nao altera pagamentos.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import unicodedata
 from threading import RLock
 
 COPIED = {}
 LOCK = RLock()
+
+# Qualquer referencia textual a DAVI oculta a conta APENAS no mobile.
+# Nao incluir caminhos internos de PDF: uma pasta geral do Windows com esse
+# nome poderia ocultar indevidamente todas as contas.
+MOBILE_TEXT_FIELDS = (
+    "fornecedor", "documento", "pagador", "referencia",
+    "codigo_pagamento", "tipo_pagamento", "observacoes",
+    "beneficiario", "documento_beneficiario",
+    "resultado_conferencia", "detalhes_conferencia",
+)
+
+
+def _contains_davi(value):
+    if value is None:
+        return False
+    text = unicodedata.normalize("NFKD", str(value))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return "davi" in text.casefold()
+
+
+def _hidden_on_mobile(item):
+    return any(_contains_davi(item.get(field)) for field in MOBILE_TEXT_FIELDS)
+
+
+def mobile_account_visible(conn, account_id):
+    """Revalida no banco antes de qualquer operacao por ID no mobile."""
+    row = conn.execute(
+        """
+        SELECT c.fornecedor, c.documento, c.pagador, c.referencia,
+               c.codigo_pagamento, c.tipo_pagamento, c.observacoes,
+               p.beneficiario, p.documento_beneficiario,
+               p.resultado_conferencia, p.detalhes_conferencia
+        FROM contas c
+        LEFT JOIN pagamentos p ON p.id=(
+            SELECT p2.id FROM pagamentos p2
+            WHERE p2.conta_id=c.id ORDER BY p2.id DESC LIMIT 1
+        )
+        WHERE c.id=?
+          AND NOT EXISTS (
+              SELECT 1 FROM pagamentos paid
+              WHERE paid.conta_id=c.id
+                AND paid.data_pagamento IS NOT NULL
+                AND TRIM(paid.data_pagamento)<>''
+          )
+        """,
+        (account_id,),
+    ).fetchone()
+    return bool(row is not None and not _hidden_on_mobile(dict(row)))
 
 
 def listing(conn, status_fn, has_remote_pdf=None):
@@ -44,6 +93,8 @@ def listing(conn, status_fn, has_remote_pdf=None):
                 COPIED.pop(account_id, None)
         for row in rows:
             item = dict(row)
+            if _hidden_on_mobile(item):
+                continue
             if str(item.get("data_pagamento") or "").strip():
                 continue
             item["recebedor"] = str(item.get("fornecedor") or "")
@@ -71,16 +122,7 @@ def listing(conn, status_fn, has_remote_pdf=None):
 
 
 def copied(conn, account_id):
-    row = conn.execute(
-        """SELECT c.id FROM contas c WHERE c.id=?
-           AND NOT EXISTS (
-              SELECT 1 FROM pagamentos p WHERE p.conta_id=c.id
-                AND p.data_pagamento IS NOT NULL
-                AND TRIM(p.data_pagamento)<>''
-           )""",
-        (account_id,),
-    ).fetchone()
-    if row is None:
+    if not mobile_account_visible(conn, account_id):
         return None
     now = datetime.now(timezone.utc)
     expiry = now + timedelta(minutes=15)
