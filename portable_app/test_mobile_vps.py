@@ -57,5 +57,66 @@ class MobileVpsTests(unittest.TestCase):
         self.assertIsNone(mobile_vps.copied(self.db, 3))
 
 
+    def test_davi_in_any_user_field_never_appears_on_mobile(self):
+        cases = {
+            11: ("fornecedor", "Davi Consultoria"),
+            12: ("pagador", "Conta do davi"),
+            13: ("observacoes", "Descricao: pagar DAVI"),
+            14: ("referencia", "SERVICO DÁVI"),
+            15: ("documento", "REF/DAVI/2026"),
+            16: ("codigo_pagamento", "PIX-DAVI-999"),
+            17: ("tipo_pagamento", "Davi no tipo"),
+        }
+        for account_id, (field, value) in cases.items():
+            self.db.execute(
+                "INSERT INTO contas (id, fornecedor, valor, vencimento) "
+                "VALUES (?,?,?,?)",
+                (account_id, "SEM RESTRICAO", 10, "2026-12-31"),
+            )
+            self.db.execute(
+                "UPDATE contas SET " + field + "=? WHERE id=?",
+                (value, account_id),
+            )
+        # Um pagamento antigo pode ter a mencao, mesmo que o ultimo nao tenha.
+        self.db.execute(
+            "INSERT INTO contas (id, fornecedor, vencimento) "
+            "VALUES (25,'SEM RESTRICAO','2026-12-31')"
+        )
+        self.db.execute(
+            "INSERT INTO pagamentos (id, conta_id, beneficiario) "
+            "VALUES (50,25,'DAVI antigo')"
+        )
+        self.db.execute(
+            "INSERT INTO pagamentos (id, conta_id, beneficiario) "
+            "VALUES (51,25,'Outro beneficiario')"
+        )
+        self.db.commit()
+        checked_pdfs = []
+        result = mobile_vps.listing(
+            self.db, lambda due, paid: "Em dia",
+            lambda aid: checked_pdfs.append(aid) or True,
+        )
+        self.assertEqual([row["id"] for row in result["contas"]], [1])
+        self.assertEqual(checked_pdfs, [1])
+        for account_id in [*cases, 25]:
+            self.assertFalse(mobile_vps.mobile_account_visible(self.db, account_id))
+            self.assertIsNone(mobile_vps.copied(self.db, account_id))
+        self.assertTrue(mobile_vps.mobile_account_visible(self.db, 1))
+
+    def test_davi_inside_payment_notes_also_hidden(self):
+        self.db.execute(
+            "INSERT INTO contas(id,fornecedor,vencimento) "
+            "VALUES (26,'OUTRO','2026-12-31')"
+        )
+        self.db.execute(
+            "INSERT INTO pagamentos(id,conta_id,detalhes_conferencia) "
+            "VALUES (60,26,'Recebedor: DAVI')"
+        )
+        self.db.commit()
+        visible = mobile_vps.listing(self.db, lambda due,paid:"Em dia")
+        self.assertNotIn(26, [r["id"] for r in visible["contas"]])
+        self.assertFalse(mobile_vps.mobile_account_visible(self.db,26))
+
+
 if __name__ == "__main__":
     unittest.main()
