@@ -333,7 +333,7 @@ function accountModal(a,preview=null,rerun=null){
       }else notice(a?'Conta atualizada.':'Conta cadastrada.');
       if(!saved.warning&&localCopy?.saved)notice('Conta salva. PDF também copiado para a pasta do Windows.');
       else if(!saved.warning&&localCopy?.error)notice('Conta salva, mas a cópia no Windows falhou: '+localCopy.error,true);
-      if(preview)setAccountView('open');
+      // Salvar/importar nao altera o filtro escolhido pelo usuario.
       await reload();return true;
     });
   if($('correctGPT')){
@@ -427,7 +427,8 @@ function payModal(a){
         await api('/api/accounts/'+a.id+'/pay','POST',{data_pagamento:paidOn});
         notice('Pagamento manual registrado sem comprovante.');
       }
-      setAccountView('paid');await reload();return true;
+      // O pagamento muda o status da conta, nunca o filtro da tela.
+      await reload();return true;
     });
   $('receiptFile').addEventListener('change',async()=>{
     const proof=$('receiptFile').files?.[0],status=$('receiptCheck');
@@ -532,7 +533,7 @@ function confirmEligibleReceipt(file, report){
       if(!result.ok||!saved.ok)
         throw new Error(saved.error||'Não foi possível registrar o pagamento.');
       selected=id;
-      setAccountView('paid');
+      // Comprovante identificado nao troca a visualizacao atual.
       await reload();
       notice('Comprovante anexado à conta #'+id+'. Pagamento registrado.');
       return true;
