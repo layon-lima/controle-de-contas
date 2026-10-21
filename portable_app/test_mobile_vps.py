@@ -99,6 +99,10 @@ class MobileVpsTests(unittest.TestCase):
             lambda aid: checked_pdfs.append(aid) or True,
         )
         self.assertEqual([row["id"] for row in result["contas"]], [1])
+        # O mesmo conjunto filtrado alimenta total em aberto e cards mobile.
+        self.assertEqual(
+            sum(float(a["valor"] or 0) for a in result["contas"]), 123.45
+        )
         self.assertEqual(checked_pdfs, [1])
         for account_id in [*cases, 25]:
             self.assertFalse(mobile_vps.mobile_account_visible(self.db, account_id))
