@@ -4,6 +4,82 @@ const $=id=>document.getElementById(id);
 const token=window.__CONTAS_TOKEN__;
 let accounts=[], selected=null, activeTab='open', dialogSave=null;
 let activePreviewTicket=null;
+
+
+/* Pasta de boletos NO COMPUTADOR que abriu esta pagina. Em HTTPS/VPS o
+   servidor nao pode enxergar caminhos C:\ do Windows. O navegador libera
+   uma pasta real com showDirectoryPicker e guarda a permissao no IndexedDB. */
+const WINDOWS_FOLDERS_DB='contas-windows-folders-v1';
+let pendingImportPDF=null;
+
+function openWindowsFoldersDB(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(WINDOWS_FOLDERS_DB,1);
+    req.onupgradeneeded=()=>req.result.createObjectStore('settings');
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error||new Error('Nao foi possivel guardar a pasta.'));
+  });
+}
+async function readWindowsBoletoFolder(){
+  const db=await openWindowsFoldersDB();
+  try{
+    return await new Promise((resolve,reject)=>{
+      const req=db.transaction('settings','readonly').objectStore('settings').get('boletos');
+      req.onsuccess=()=>resolve(req.result||null);
+      req.onerror=()=>reject(req.error||new Error('Nao foi possivel ler a pasta.'));
+    });
+  }finally{db.close();}
+}
+async function rememberWindowsBoletoFolder(handle){
+  const db=await openWindowsFoldersDB();
+  try{
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction('settings','readwrite');
+      tx.objectStore('settings').put(handle,'boletos');
+      tx.oncomplete=resolve;
+      tx.onerror=()=>reject(tx.error||new Error('Falha ao salvar a pasta.'));
+      tx.onabort=()=>reject(tx.error||new Error('Falha ao salvar a pasta.'));
+    });
+  }finally{db.close();}
+}
+const WINDOWS_MONTHS=['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
+  'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+function safeWindowsPdfName(name){
+  let text=String(name||'BOLETO').replace(/[<>:"/\\|?*\x00-\x1f]/g,' ').replace(/\s+/g,' ').trim();
+  if(/\.pdf$/i.test(text))text=text.slice(0,-4);
+  text=text.slice(0,110).replace(/[. ]+$/g,'')||'BOLETO';
+  if(/^(CON|PRN|AUX|NUL|COM\d|LPT\d)$/i.test(text))text='BOLETO '+text;
+  return text;
+}
+// A copia local nao depende da VPS; nao altera nem substitui o original nela.
+async function copyPDFToWindowsFolder(file,accountInfo,accountId){
+  const root=await readWindowsBoletoFolder();
+  if(!root)return {configured:false,saved:false};
+  const permission=await root.queryPermission({mode:'readwrite'});
+  if(permission!=='granted')return {configured:true,saved:false,
+    error:'A pasta do Windows precisa ser autorizada novamente em Pasta boletos.'};
+  const due=String(accountInfo?.vencimento||'').slice(0,10);
+  const match=/^(\d{4})-(\d{2})-\d{2}$/.exec(due);
+  if(!match||Number(match[2])<1||Number(match[2])>12)
+    return {configured:true,saved:false,error:'Nao foi possivel organizar a copia local sem vencimento valido.'};
+  const year=match[1],month=Number(match[2]);
+  const yearFolder=await root.getDirectoryHandle('BOLETOS '+year,{create:true});
+  const monthFolder=await yearFolder.getDirectoryHandle(
+    String(month).padStart(2,'0')+' - '+WINDOWS_MONTHS[month-1],{create:true});
+  const stem=safeWindowsPdfName(accountInfo?.observacoes||file.name);
+  // Um ID fixo evita sobrescrever uma conta diferente com o mesmo nome.
+  const base=accountId?String(accountId)+' - '+stem:stem;
+  let name=base+'.pdf';
+  for(let i=1;i<1000;i++){
+    try{await monthFolder.getFileHandle(name);name=base+' ('+i+').pdf';}
+    catch(e){if(e.name==='NotFoundError')break;throw e;}
+  }
+  const target=await monthFolder.getFileHandle(name,{create:true});
+  const writer=await target.createWritable();
+  try{await writer.write(file);await writer.close();}
+  catch(e){await writer.abort().catch(()=>{});throw e;}
+  return {configured:true,saved:true,folder:root.name};
+}
 const money=n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const localToday=()=>{
   const d=new Date();
@@ -176,6 +252,7 @@ function closeModal({saved=false}={}){
   $('backdrop').classList.remove('show');dialogSave=null;
   const ticket=activePreviewTicket;activePreviewTicket=null;
   if(ticket&&!saved)api('/api/import/cancel','POST',{ticket}).catch(()=>{});
+  if(ticket&&pendingImportPDF?.ticket===ticket)pendingImportPDF=null;
   return true;
 }
 const accountFields=[
@@ -238,6 +315,13 @@ function accountModal(a,preview=null,rerun=null){
       const values=Object.fromEntries(new FormData(form));
       const route=preview?'/api/import/commit':a?'/api/accounts/'+a.id+'/edit':'/api/accounts';
       const saved=await api(route,'POST',preview?{...values,ticket:preview.ticket}:values);
+      let localCopy=null;
+      if(preview?.ticket&&pendingImportPDF?.ticket===preview.ticket){
+        try{
+          localCopy=await copyPDFToWindowsFolder(pendingImportPDF.file,values,saved.id||saved.account_id);
+        }catch(e){localCopy={configured:true,saved:false,error:e.message||String(e)};}
+        pendingImportPDF=null;
+      }
       if(saved.warning){
         // Cadastro foi salvo, mas a correcao ainda nao ensinou o leitor.
         // Aviso nao pode desaparecer dentro do retorno JSON.
@@ -247,6 +331,8 @@ function accountModal(a,preview=null,rerun=null){
         notice(trained?'Conta salva. Aprendizado OCR registrado ('+trained+' campos).':
           'Conta salva. Nenhum novo campo foi aprendido.');
       }else notice(a?'Conta atualizada.':'Conta cadastrada.');
+      if(localCopy?.saved)notice('Conta salva. PDF também copiado para a pasta do Windows.');
+      else if(localCopy?.error)notice('Conta salva, mas a cópia no Windows falhou: '+localCopy.error,true);
       if(preview)setAccountView('open');
       await reload();return true;
     });
@@ -545,9 +631,15 @@ async function uploadAccountPDF(file){
   });
   const data=await response.json().catch(()=>({error:'Falha ao enviar PDF.'}));
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
-  notice(data.organized
-    ? 'PDF salvo em BOLETOS por ano e mês: '+data.folder
-    : 'PDF anexado na pasta provisória. Configure a pasta-base em Pasta boletos.');await reload();
+  const registered=accounts.find(item=>item.id===selected)||{};
+  let savedLocal;
+  try{savedLocal=await copyPDFToWindowsFolder(file,registered,selected);}
+  catch(e){savedLocal={configured:true,saved:false,error:e.message||String(e)};}
+  notice(savedLocal?.saved?'PDF anexado e cópia salva na pasta do Windows.':
+    savedLocal?.error?'PDF anexado ao sistema, mas não copiado no Windows: '+savedLocal.error:
+    'PDF anexado ao sistema. Configure Pasta boletos para guardar cópias no Windows.',
+    Boolean(savedLocal?.error));
+  await reload();
 }
 
 /* Desktop: colunas personalizadas, sem redimensionar o texto das celulas. */
@@ -750,6 +842,7 @@ async function importNewPDF(file){
     });
     const result=await response.json().catch(()=>({error:'Resposta inválida do leitor OCR.'}));
     if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível ler o PDF.');
+    pendingImportPDF={ticket:result.ticket,file};
     accountModal(null,result);
   }catch(err){notice(err.message||String(err),true);}
   finally{importBusy=false;button.disabled=false;button.innerHTML=previous;}
@@ -790,17 +883,33 @@ $('uploadFile').addEventListener('change',async e=>{
 });
 $('folderBtn').addEventListener('click',async()=>{
   try{
-    const data=await api('/api/settings/folder');
-    showModal('Pasta de boletos',
-      'Pasta-base usada pelo Controle de Contas. Os PDFs são separados por ano e mês de vencimento.',
-      '<label class="field wide">Pasta-base no PC<input id="folderPath" type="text" placeholder="C:\\Meus Documentos\\Boletos" value="'+esc(data.folder||'')+'"></label>'+
-      '<p class="hint">Escolha uma pasta que já exista. O aplicativo criará as subpastas BOLETOS ANO / MÊS automaticamente.</p>',
-      'Salvar pasta',async()=>{
-        const folder=$('folderPath').value.trim();
-        const saved=await api('/api/settings/folder','POST',{folder});
-        notice('Pasta-base atualizada: '+saved.folder);
+    const current=await readWindowsBoletoFolder();
+    showModal('Pasta de boletos do Windows',
+      'Escolha a pasta do seu computador onde serão guardadas as cópias dos PDFs.',
+      '<div class="field wide"><b>Pasta selecionada neste computador</b>'+
+      '<div id="windowsFolderName" style="padding:12px;border:1px solid #dbe5f0;border-radius:8px;margin:7px 0 12px">'+
+      esc(current?.name||'Nenhuma pasta selecionada')+'</div></div>'+
+      '<button type="button" id="browseWindowsFolder" class="outline">📁 Selecionar pasta…</button>'+
+      '<p class="hint">O Windows abrirá a janela para escolher a pasta. A escolha fica salva neste navegador; o servidor VPS não recebe acesso ao disco do seu PC. Os próximos PDFs importados aqui serão copiados em BOLETOS ANO / MÊS. Não escolha uma subpasta BOLETOS ANO.</p>',
+      'Concluir',async()=>{
+        const folder=await readWindowsBoletoFolder();
+        if(!folder)throw new Error('Clique em Selecionar pasta e escolha o destino.');
         return true;
       });
+    $('browseWindowsFolder').addEventListener('click',async()=>{
+      try{
+        if(typeof window.showDirectoryPicker!=='function')
+          throw new Error('Abra o sistema no Microsoft Edge ou Google Chrome atualizado no Windows para escolher a pasta.');
+        // A chamada precisa ocorrer diretamente no clique para o navegador
+        // permitir abrir a janela nativa do Windows.
+        const chosen=await window.showDirectoryPicker({id:'contas-boletos',mode:'readwrite'});
+        await rememberWindowsBoletoFolder(chosen);
+        $('windowsFolderName').textContent=chosen.name;
+        notice('Pasta do Windows selecionada: '+chosen.name);
+      }catch(e){
+        if(e?.name!=='AbortError')notice(e.message||String(e),true);
+      }
+    });
   }catch(e){notice(e.message||String(e),true)}
 });
 $('mobileBtn').addEventListener('click',async()=>{
