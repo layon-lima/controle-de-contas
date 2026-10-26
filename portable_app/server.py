@@ -59,9 +59,16 @@ else:
     import receipt_matching
     import mobile_vps
     import r2_bridge
-AI_ASSIST = ai_assist.ChatGPTAssist(
-    APP_DIR, callback=f"http://{HOST}:{PORT}/auth/callback"
+# Sign in with ChatGPT (cliente OSS) exige callback loopback em
+# 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
+# porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
+# NUNCA usar 0.0.0.0 ou o dominio publico como redirect_uri deste fluxo.
+GPT_CALLBACK = (
+    "http://127.0.0.1:1455/auth/callback"
+    if os.environ.get("CONTAS_PUBLIC_ORIGIN", "").startswith("https://")
+    else f"http://127.0.0.1:{PORT}/auth/callback"
 )
+AI_ASSIST = ai_assist.ChatGPTAssist(APP_DIR, callback=GPT_CALLBACK)
 
 
 FIELDS = ("fornecedor", "documento", "pagador", "referencia", "valor",
