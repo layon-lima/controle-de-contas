@@ -1,7 +1,7 @@
 /* Interface portátil: nenhuma dependência de framework, sem banco no navegador. */
 'use strict';
 const $=id=>document.getElementById(id);
-const token=window.__CONTAS_TOKEN__;
+let token=window.__CONTAS_TOKEN__;
 let accounts=[], selected=null, activeTab='open', dialogSave=null;
 let activePreviewTicket=null;
 
@@ -142,11 +142,39 @@ const timeBR=v=>{
 const initials=name=>(String(name||'').match(/\b[\p{L}\p{N}]/gu)||[]).slice(0,2).join('').toUpperCase()||'C';
 const avatarColor=name=>['#377eef','#07885d','#9c66e9','#fa586a','#2c9eac'][[...String(name)].reduce((n,c)=>n+c.charCodeAt(0),0)%5];
 
+// A VPS gera um token novo sempre que o container reinicia (atualizacoes).
+// Renovar a sessao sem recarregar a pagina: formularios nao podem ser perdidos.
+let sessionTokenRecovery=null;
+async function renewSessionToken(){
+  if(!sessionTokenRecovery){
+    sessionTokenRecovery=(async()=>{
+      const response=await fetch('/?_contas_session_refresh='+Date.now(),{cache:'no-store'});
+      if(!response.ok)throw new Error('Nao foi possivel atualizar a sessao. Reabra a pagina.');
+      const html=await response.text();
+      const match=html.match(/window\\.__CONTAS_TOKEN__\\s*=\\s*("(?:\\\\.|[^"\\\\])*")\\s*;/);
+      if(!match)throw new Error('Sessao expirada. Reabra a pagina para continuar.');
+      const updated=JSON.parse(match[1]);
+      if(typeof updated!=='string'||updated.length<20)
+        throw new Error('Nao foi possivel renovar a sessao.');
+      token=updated;
+      window.__CONTAS_TOKEN__=updated;
+      return updated;
+    })().finally(()=>{sessionTokenRecovery=null;});
+  }
+  return sessionTokenRecovery;
+}
 async function api(route,method='GET',data){
   const opts={method,headers:{'X-Local-Token':token}};
   if(data!==undefined){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(data);}
-  const response=await fetch(route,opts);
-  const body=await response.json().catch(()=>({error:'Resposta inválida do servidor.'}));
+  let response=await fetch(route,opts);
+  let body=await response.json().catch(()=>({error:'Resposta inválida do servidor.'}));
+  if(response.status===403&&/sess[aã]o inv[aá]lida|reabra pelo iniciador/i.test(String(body.error||''))){
+    // A operacao foi rejeitada ANTES de executar, portanto repetir e seguro.
+    await renewSessionToken();
+    opts.headers['X-Local-Token']=token;
+    response=await fetch(route,opts);
+    body=await response.json().catch(()=>({error:'Resposta inválida do servidor.'}));
+  }
   if(!response.ok||body.ok===false)throw new Error(body.error||'Operação não concluída.');
   return body;
 }
