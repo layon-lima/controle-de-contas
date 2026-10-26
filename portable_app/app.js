@@ -10,14 +10,19 @@ let activePreviewTicket=null;
    servidor nao pode enxergar caminhos C:\ do Windows. O navegador libera
    uma pasta real com showDirectoryPicker e guarda a permissao no IndexedDB. */
 const WINDOWS_FOLDERS_DB='contas-windows-folders-v1';
+const WINDOWS_FOLDERS_VERSION=2;
 let pendingImportPDF=null;
 // Manter o handle salvo no IndexedDB e em memoria para reutiliza-lo
 // mesmo apos fechar e reabrir a interface.
 let windowsFolderHandle=null,windowsFolderLoad=null;
 function openWindowsFoldersDB(){
   return new Promise((resolve,reject)=>{
-    const req=indexedDB.open(WINDOWS_FOLDERS_DB,1);
-    req.onupgradeneeded=()=>req.result.createObjectStore('settings');
+    const req=indexedDB.open(WINDOWS_FOLDERS_DB,WINDOWS_FOLDERS_VERSION);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains('settings'))db.createObjectStore('settings');
+      if(!db.objectStoreNames.contains('pending'))db.createObjectStore('pending',{keyPath:'id'});
+    };
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error||new Error('Nao foi possivel guardar a pasta.'));
   });
@@ -50,6 +55,77 @@ async function rememberWindowsBoletoFolder(handle){
     });
   }finally{db.close();}
   windowsFolderHandle=handle;
+}
+// Uma copia que falhou continua pendente mesmo apos fechar o navegador.
+// Guardar no IndexedDB SOMENTE o PDF original selecionado pelo usuario,
+// nunca chaves/tokens do servidor.
+async function windowsCopyTransaction(mode,operation){
+  const db=await openWindowsFoldersDB();
+  try{
+    return await new Promise((resolve,reject)=>{
+      const tx=db.transaction('pending',mode);
+      const store=tx.objectStore('pending');
+      let result;
+      try{result=operation(store);}catch(e){reject(e);return;}
+      tx.oncomplete=()=>resolve(result?.result);
+      tx.onerror=()=>reject(tx.error||new Error('Falha ao acessar fila local de PDFs.'));
+      tx.onabort=()=>reject(tx.error||new Error('Falha ao salvar a copia pendente.'));
+    });
+  }finally{db.close();}
+}
+async function saveWindowsCopyPending(file,details,id){
+  if(!file||!Number.isInteger(Number(id))||Number(id)<=0)
+    throw new Error('Nao foi possivel identificar a conta para repetir a copia.');
+  return windowsCopyTransaction('readwrite',store=>store.put({
+    id:Number(id),file,details:{
+      vencimento:String(details?.vencimento||''),
+      observacoes:String(details?.observacoes||'')
+    },addedAt:Date.now()
+  }));
+}
+async function windowsPendingCopies(){
+  const db=await openWindowsFoldersDB();
+  try{return await new Promise((resolve,reject)=>{
+    const req=db.transaction('pending','readonly').objectStore('pending').getAll();
+    req.onsuccess=()=>resolve(req.result||[]);
+    req.onerror=()=>reject(req.error||new Error('Nao foi possivel ler as copias pendentes.'));
+  });}finally{db.close();}
+}
+async function removeWindowsCopyPending(id){
+  return windowsCopyTransaction('readwrite',store=>store.delete(Number(id)));
+}
+function validateWindowsFolderRoot(root){
+  if(!root)return;
+  if(/^BOLETOS\\s+\\d{4}$/i.test(root.name)||/^\\d{2}\\s*-\\s*/.test(root.name))
+    throw new Error('Selecione a pasta BOLETOS principal, e nao a subpasta de ano ou mes. Use Trocar pasta.');
+}
+async function testWindowsFolderWrite(root){
+  validateWindowsFolderRoot(root);
+  const name='.contas-teste-acesso-'+Date.now().toString(36)+'.tmp';
+  const file=await root.getFileHandle(name,{create:true});
+  try{
+    const writer=await file.createWritable();
+    try{await writer.write('Teste de escrita do Controle de Contas.');await writer.close();}
+    catch(e){await writer.abort().catch(()=>{});throw e;}
+  }finally{
+    await root.removeEntry(name).catch(()=>{});
+  }
+}
+async function copyPendingWindowsPDFs(){
+  const root=await prepareWindowsFolderCopy();
+  if(!root)throw new Error('Selecione primeiro a pasta BOLETOS no Windows.');
+  validateWindowsFolderRoot(root);
+  const pending=await windowsPendingCopies();
+  let copied=0;
+  for(const entry of pending){
+    const result=await copyPDFToWindowsFolder(entry.file,entry.details,entry.id);
+    if(!result?.saved)throw new Error(
+      copied+' PDF(s) copiado(s). Conta '+entry.id+': '+(result?.error||'Nao foi possivel gravar o PDF.')
+    );
+    await removeWindowsCopyPending(entry.id);
+    copied++;
+  }
+  return copied;
 }
 async function windowsFolderPermission(handle,request=false){
   if(!handle)return 'not-configured';
@@ -86,6 +162,7 @@ function safeWindowsPdfName(name){
 async function copyPDFToWindowsFolder(file,accountInfo,accountId){
   const root=await readWindowsBoletoFolder();
   if(!root)return {configured:false,saved:false};
+  validateWindowsFolderRoot(root);
   const permission=await windowsFolderPermission(root);
   if(permission!=='granted')return {configured:true,saved:false,
     error:'A pasta '+root.name+' ja esta lembrada. Clique em Pasta boletos > Autorizar acesso; nao precisa selecionar novamente.'};
