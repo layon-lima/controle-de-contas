@@ -151,7 +151,7 @@ async function renewSessionToken(){
       const response=await fetch('/?_contas_session_refresh='+Date.now(),{cache:'no-store'});
       if(!response.ok)throw new Error('Nao foi possivel atualizar a sessao. Reabra a pagina.');
       const html=await response.text();
-      const match=html.match(/window\\.__CONTAS_TOKEN__\\s*=\\s*("(?:\\\\.|[^"\\\\])*")\\s*;/);
+      const match=html.match(/window\.__CONTAS_TOKEN__\s*=\s*("(?:\\.|[^"\\])*")\s*;/);
       if(!match)throw new Error('Sessao expirada. Reabra a pagina para continuar.');
       const updated=JSON.parse(match[1]);
       if(typeof updated!=='string'||updated.length<20)
