@@ -99,7 +99,7 @@ async function removeWindowsCopyPending(id){
 }
 function validateWindowsFolderRoot(root){
   if(!root)return;
-  if(/^BOLETOS\\s+\\d{4}$/i.test(root.name)||/^\\d{2}\\s*-\\s*/.test(root.name))
+  if(/^BOLETOS\s+\d{4}$/i.test(root.name)||/^\d{2}\s*-\s*/.test(root.name))
     throw new Error('Selecione a pasta BOLETOS principal, e nao a subpasta de ano ou mes. Use Trocar pasta.');
 }
 async function testWindowsFolderWrite(root){
