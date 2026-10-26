@@ -223,7 +223,8 @@ def normalize(data: dict):
 
 def create_account(data):
     values = normalize(data)
-    with connection(write=True) as conn:
+    with LOCK, connection(write=True) as conn:
+        pdf_workflows.check_duplicate_fields(conn, values)
         columns = ",".join(FIELDS)
         placeholders = ",".join("?" for _ in FIELDS)
         record = conn.execute(
@@ -364,7 +365,11 @@ def create_account_from_preview(data):
         created = False
         try:
             with connection(write=True) as conn:
-                pdf_workflows.check_duplicate(conn, source, fields)
+                pdf_workflows.check_duplicate(
+                    conn, source, fields,
+                    remote_metadata=r2_bridge.metadata if r2_bridge.enabled() else None,
+                    remote_read=r2_bridge.read_pdf if r2_bridge.enabled() else None,
+                )
                 target, organized = _pdf_destination(fields, source_name, None)
                 temp = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".part")
                 shutil.copyfile(source, temp)
@@ -397,8 +402,9 @@ def create_account_from_preview(data):
 
 def edit_account(account_id, data):
     values = normalize(data)
-    with connection(write=True) as conn:
+    with LOCK, connection(write=True) as conn:
         original = dict(account(conn, account_id))
+        pdf_workflows.check_duplicate_fields(conn, values, exclude_id=account_id)
         # Não toca em pagamentos, PDFs, atividade cloud ou datas de envio.
         pairs = ",".join(f"{key}=?" for key in FIELDS)
         conn.execute(
@@ -933,7 +939,11 @@ def upload_pdf(account_id, data: bytes, filename: str):
         try:
             with connection() as conn:
                 info = account(conn, account_id)
-                pdf_workflows.check_duplicate(conn, stage, info, exclude_id=account_id)
+                pdf_workflows.check_duplicate(
+                    conn, stage, info, exclude_id=account_id,
+                    remote_metadata=r2_bridge.metadata if r2_bridge.enabled() else None,
+                    remote_read=r2_bridge.read_pdf if r2_bridge.enabled() else None,
+                )
             target, organized = _pdf_destination(info, filename, account_id)
             temp = target.with_name("." + target.stem + "_upload_" + secrets.token_hex(6) + ".part")
             shutil.copyfile(stage, temp)
