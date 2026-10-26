@@ -23,7 +23,10 @@ function openWindowsFoldersDB(){
       if(!db.objectStoreNames.contains('settings'))db.createObjectStore('settings');
       if(!db.objectStoreNames.contains('pending'))db.createObjectStore('pending',{keyPath:'id'});
     };
-    req.onsuccess=()=>resolve(req.result);
+    req.onsuccess=()=>{const db=req.result;db.onversionchange=()=>db.close();resolve(db);};
+    req.onblocked=()=>reject(new Error(
+      'Outra aba do Controle de Contas esta usando a pasta. Feche as outras abas e atualize esta pagina.'
+    ));
     req.onerror=()=>reject(req.error||new Error('Nao foi possivel guardar a pasta.'));
   });
 }
@@ -1133,7 +1136,7 @@ $('folderBtn').addEventListener('click',async()=>{
         await updateFolderStatus();
         notice(copied+' PDF(s) copiado(s) ao Windows. Nenhuma conta da VPS foi alterada.');
       }catch(e){notice('Copia pendente nao concluida: '+(e.message||String(e)),true,15000);}
-      finally{button.disabled=false;}
+      finally{await updateFolderStatus().catch(()=>{button.disabled=false;});}
     });
     await updateFolderStatus();
   }catch(e){notice(e.message||String(e),true,12000);}
