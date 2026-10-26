@@ -11,7 +11,9 @@ let activePreviewTicket=null;
    uma pasta real com showDirectoryPicker e guarda a permissao no IndexedDB. */
 const WINDOWS_FOLDERS_DB='contas-windows-folders-v1';
 let pendingImportPDF=null;
-
+// Manter o handle salvo no IndexedDB e em memoria para reutiliza-lo
+// mesmo apos fechar e reabrir a interface.
+let windowsFolderHandle=null,windowsFolderLoad=null;
 function openWindowsFoldersDB(){
   return new Promise((resolve,reject)=>{
     const req=indexedDB.open(WINDOWS_FOLDERS_DB,1);
@@ -21,14 +23,20 @@ function openWindowsFoldersDB(){
   });
 }
 async function readWindowsBoletoFolder(){
-  const db=await openWindowsFoldersDB();
-  try{
-    return await new Promise((resolve,reject)=>{
-      const req=db.transaction('settings','readonly').objectStore('settings').get('boletos');
-      req.onsuccess=()=>resolve(req.result||null);
-      req.onerror=()=>reject(req.error||new Error('Nao foi possivel ler a pasta.'));
-    });
-  }finally{db.close();}
+  if(windowsFolderHandle)return windowsFolderHandle;
+  if(!windowsFolderLoad)windowsFolderLoad=(async()=>{
+    const db=await openWindowsFoldersDB();
+    try{
+      const handle=await new Promise((resolve,reject)=>{
+        const req=db.transaction('settings','readonly').objectStore('settings').get('boletos');
+        req.onsuccess=()=>resolve(req.result||null);
+        req.onerror=()=>reject(req.error||new Error('Nao foi possivel ler a pasta.'));
+      });
+      if(handle?.kind==='directory')windowsFolderHandle=handle;
+      return windowsFolderHandle;
+    }finally{db.close();}
+  })().finally(()=>{windowsFolderLoad=null;});
+  return windowsFolderLoad;
 }
 async function rememberWindowsBoletoFolder(handle){
   const db=await openWindowsFoldersDB();
@@ -41,7 +49,30 @@ async function rememberWindowsBoletoFolder(handle){
       tx.onabort=()=>reject(tx.error||new Error('Falha ao salvar a pasta.'));
     });
   }finally{db.close();}
+  windowsFolderHandle=handle;
 }
+async function windowsFolderPermission(handle,request=false){
+  if(!handle)return 'not-configured';
+  if(typeof handle.queryPermission!=='function')return 'unsupported';
+  let permission=await handle.queryPermission({mode:'readwrite'});
+  // O navegador so permite pedir permissao em uma acao iniciada pelo usuario.
+  if(permission!=='granted'&&request&&typeof handle.requestPermission==='function'){
+    permission=await handle.requestPermission({mode:'readwrite'});
+  }
+  return permission;
+}
+async function prepareWindowsFolderCopy(){
+  const handle=await readWindowsBoletoFolder();
+  if(!handle)return null; // Mantem a opcao original de nao configurar a pasta.
+  let permission;
+  try{permission=await windowsFolderPermission(handle,true);}
+  catch(_){throw new Error('A pasta '+handle.name+' esta lembrada. Abra Pasta boletos e autorize o acesso.');}
+  if(permission!=='granted')throw new Error(
+    'A pasta '+handle.name+' esta lembrada. Use Pasta boletos > Autorizar acesso. Nao precisa selecionar de novo.');
+  return handle;
+}
+// Antecipar a leitura do IndexedDB, sem solicitar permissoes no carregamento.
+readWindowsBoletoFolder().catch(()=>{});
 const WINDOWS_MONTHS=['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
   'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
 function safeWindowsPdfName(name){
@@ -55,9 +86,9 @@ function safeWindowsPdfName(name){
 async function copyPDFToWindowsFolder(file,accountInfo,accountId){
   const root=await readWindowsBoletoFolder();
   if(!root)return {configured:false,saved:false};
-  const permission=await root.queryPermission({mode:'readwrite'});
+  const permission=await windowsFolderPermission(root);
   if(permission!=='granted')return {configured:true,saved:false,
-    error:'A pasta do Windows precisa ser autorizada novamente em Pasta boletos.'};
+    error:'A pasta '+root.name+' ja esta lembrada. Clique em Pasta boletos > Autorizar acesso; nao precisa selecionar novamente.'};
   const due=String(accountInfo?.vencimento||'').slice(0,10);
   const match=/^(\d{4})-(\d{2})-\d{2}$/.exec(due);
   if(!match||Number(match[2])<1||Number(match[2])>12)
@@ -313,6 +344,9 @@ function accountModal(a,preview=null,rerun=null){
       const form=$('accountForm');
       if(!form.reportValidity())return false;
       const values=Object.fromEntries(new FormData(form));
+      // Solicitar permissao no clique ANTES da requisicao ao servidor.
+      if(preview?.ticket&&pendingImportPDF?.ticket===preview.ticket)
+        await prepareWindowsFolderCopy();
       const route=preview?'/api/import/commit':a?'/api/accounts/'+a.id+'/edit':'/api/accounts';
       const saved=await api(route,'POST',preview?{...values,ticket:preview.ticket}:values);
       let localCopy=null;
@@ -626,6 +660,7 @@ async function uploadAccountPDF(file){
   if(!selected)throw new Error('Selecione uma conta na lista antes de importar um PDF.');
   if(!file.name.toLowerCase().endsWith('.pdf'))throw new Error('Selecione um documento PDF.');
   if(file.size>30*1024*1024)throw new Error('PDF maior que 30 MB.');
+  await prepareWindowsFolderCopy();
   const response=await fetch('/api/accounts/'+selected+'/upload-pdf',{
     method:'POST',headers:{'X-Local-Token':token,'Content-Type':'application/pdf','X-Pdf-Name':encodeURIComponent(file.name)},
     body:file
@@ -886,32 +921,56 @@ $('folderBtn').addEventListener('click',async()=>{
   try{
     const current=await readWindowsBoletoFolder();
     showModal('Pasta de boletos do Windows',
-      'Escolha a pasta do seu computador onde serão guardadas as cópias dos PDFs.',
+      'A pasta continua lembrada mesmo quando voce fecha o site. Se a permissao vencer, apenas autorize novamente.',
       '<div class="field wide"><b>Pasta selecionada neste computador</b>'+
-      '<div id="windowsFolderName" style="padding:12px;border:1px solid #dbe5f0;border-radius:8px;margin:7px 0 12px">'+
-      esc(current?.name||'Nenhuma pasta selecionada')+'</div></div>'+
-      '<button type="button" id="browseWindowsFolder" class="outline">📁 Selecionar pasta…</button>'+
-      '<p class="hint">O Windows abrirá a janela para escolher a pasta. A escolha fica salva neste navegador; o servidor VPS não recebe acesso ao disco do seu PC. Os próximos PDFs importados aqui serão copiados em BOLETOS ANO / MÊS. Não escolha uma subpasta BOLETOS ANO.</p>',
+      '<div id="windowsFolderName" style="padding:12px;border:1px solid #dbe5f0;border-radius:8px;margin:7px 0 8px">'+
+      esc(current?.name||'Nenhuma pasta selecionada')+'</div>'+
+      '<p id="windowsFolderStatus" class="hint">Verificando autorizacao...</p></div>'+
+      '<button type="button" id="authorizeWindowsFolder" class="outline">Autorizar acesso à pasta salva</button> '+
+      '<button type="button" id="browseWindowsFolder" class="outline">'+(current?'Trocar pasta…':'Selecionar pasta…')+'</button>'+
+      '<p class="hint">A pasta e lembrada neste navegador, mesmo apos sair do site. Chrome e Edge podem pedir uma nova autorizacao ao reiniciar, mas voce nao precisa escolher a mesma pasta novamente. O servidor VPS nao tem acesso direto aos arquivos do Windows.</p>',
       'Concluir',async()=>{
-        const folder=await readWindowsBoletoFolder();
-        if(!folder)throw new Error('Clique em Selecionar pasta e escolha o destino.');
+        const root=await readWindowsBoletoFolder();
+        if(!root)throw new Error('Escolha a pasta de boletos pela primeira vez.');
+        const permission=await windowsFolderPermission(root,true);
+        if(permission!=='granted')throw new Error('Autorize o acesso à pasta '+root.name+'.');
         return true;
       });
+    async function updateFolderStatus(){
+      const root=await readWindowsBoletoFolder();
+      const permission=await windowsFolderPermission(root);
+      const text=$('windowsFolderStatus'),button=$('authorizeWindowsFolder');
+      if(!text||!button)return;
+      text.textContent=!root?'Selecione a pasta uma unica vez.':
+        permission==='granted'?'Pasta lembrada e autorizada. Os proximos PDFs serao salvos aqui.':
+        'Pasta lembrada. Falta apenas autorizar o acesso; nao precisa escolher novamente.';
+      button.disabled=!root||permission==='granted';
+    }
+    $('authorizeWindowsFolder').addEventListener('click',async()=>{
+      try{
+        const root=windowsFolderHandle||await readWindowsBoletoFolder();
+        if(!root)throw new Error('Selecione a pasta uma vez para comecar.');
+        const state=await windowsFolderPermission(root,true);
+        if(state!=='granted')throw new Error('A permissao nao foi concedida. Confira as permissoes deste site no navegador.');
+        await updateFolderStatus();
+        notice('Pasta '+root.name+' autorizada. A selecao anterior foi mantida.');
+      }catch(e){notice(e.message||String(e),true);}
+    });
     $('browseWindowsFolder').addEventListener('click',async()=>{
       try{
         if(typeof window.showDirectoryPicker!=='function')
-          throw new Error('Abra o sistema no Microsoft Edge ou Google Chrome atualizado no Windows para escolher a pasta.');
-        // A chamada precisa ocorrer diretamente no clique para o navegador
-        // permitir abrir a janela nativa do Windows.
+          throw new Error('Abra o site no Microsoft Edge ou Google Chrome atualizado no Windows.');
+        // Seletor apenas na primeira escolha ou troca intencional.
         const chosen=await window.showDirectoryPicker({id:'contas-boletos',mode:'readwrite'});
         await rememberWindowsBoletoFolder(chosen);
         $('windowsFolderName').textContent=chosen.name;
-        notice('Pasta do Windows selecionada: '+chosen.name);
-      }catch(e){
-        if(e?.name!=='AbortError')notice(e.message||String(e),true);
-      }
+        $('browseWindowsFolder').textContent='Trocar pasta…';
+        await updateFolderStatus();
+        notice('Pasta salva neste navegador: '+chosen.name);
+      }catch(e){if(e?.name!=='AbortError')notice(e.message||String(e),true);}
     });
-  }catch(e){notice(e.message||String(e),true)}
+    await updateFolderStatus();
+  }catch(e){notice(e.message||String(e),true);}
 });
 $('mobileBtn').addEventListener('click',async()=>{
   try{const data=await api('/api/mobile-link');window.open(data.url,'_blank','noopener');}
