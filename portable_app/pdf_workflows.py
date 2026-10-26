@@ -123,38 +123,109 @@ def pdf_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-def check_duplicate(conn, pdf: Path, fields: dict, exclude_id: int | None = None):
-    incoming_hash = pdf_hash(pdf)
+def _normalized_payment_code(value):
+    # Separadores da linha digitavel nao mudam a identidade do pagamento.
+    return "".join(ch for ch in str(value or "") if ch.isalnum())
+
+
+def _is_unique_payment_code(code):
+    # Linha/barras bancarios: forte identificador da propria cobranca.
+    return code.isdigit() and len(code) in (44, 46, 47, 48)
+
+
+def _same_dynamic_pix(code, original, incoming_amount, incoming_due):
+    # A chave PIX estatica pode ser reutilizada; so bloquear o PIX EMV
+    # repetido quando VALOR e VENCIMENTO tambem forem iguais.
+    return (
+        code.startswith("000201") and len(code) >= 50
+        and round(float(original["valor"] or 0), 2) == incoming_amount
+        and str(original["vencimento"] or "") == incoming_due
+    )
+
+
+def check_duplicate_fields(conn, fields: dict, exclude_id: int | None = None):
+    """Bloqueia identificadores de pagamento fortes, inclusive cadastro manual.
+
+    Mesmo fornecedor, valor e vencimento, SEM identificador unico, nao bastam
+    para barrar duas contas legitimas (ex.: duas notas no mesmo dia).
+    """
+    incoming_code = _normalized_payment_code(fields.get("codigo_pagamento"))
+    if not incoming_code:
+        return
+    if not _is_unique_payment_code(incoming_code) and not (
+        incoming_code.startswith("000201") and len(incoming_code) >= 50
+    ):
+        return
     incoming_amount = round(float(fields.get("valor") or 0), 2)
     incoming_due = str(fields.get("vencimento") or "")
-    incoming_code = "".join(c for c in str(fields.get("codigo_pagamento") or "") if c.isalnum())
     for row in conn.execute(
-        "SELECT id,pdf_conta,valor,vencimento,codigo_pagamento,fornecedor FROM contas"
+        "SELECT id,valor,vencimento,codigo_pagamento FROM contas"
     ):
-        if exclude_id and int(row["id"]) == exclude_id:
+        if exclude_id is not None and int(row["id"]) == exclude_id:
+            continue
+        original_code = _normalized_payment_code(row["codigo_pagamento"])
+        if incoming_code != original_code:
+            continue
+        if _is_unique_payment_code(incoming_code):
+            raise ValueError(
+                "Linha digitavel ja cadastrada na conta " + str(row["id"]) + "."
+            )
+        if _same_dynamic_pix(incoming_code, row, incoming_amount, incoming_due):
+            raise ValueError("PIX EMV ja cadastrado na conta " + str(row["id"]) + ".")
+
+
+def check_duplicate(conn, pdf: Path, fields: dict, exclude_id: int | None = None,
+                    *, remote_metadata=None, remote_read=None):
+    """Compara arquivo e identificadores tambem quando original esta no R2.
+
+    Como PDFs pagos ficam somente no Windows, a deteccao destes pelo hash
+    depende de copia local acessivel. Codigos fortes continuam sendo
+    comparados contra TODAS as contas, pagas ou abertas.
+    """
+    check_duplicate_fields(conn, fields, exclude_id=exclude_id)
+    incoming_hash = pdf_hash(pdf)
+    incoming_size = pdf.stat().st_size
+    incoming_amount = round(float(fields.get("valor") or 0), 2)
+    incoming_due = str(fields.get("vencimento") or "")
+    for row in conn.execute(
+        "SELECT id,pdf_conta,valor,vencimento FROM contas"
+    ):
+        aid = int(row["id"])
+        if exclude_id is not None and aid == exclude_id:
             continue
         original = Path(str(row["pdf_conta"] or "")) if row["pdf_conta"] else None
         if original and original.is_file():
             try:
-                if original.stat().st_size == pdf.stat().st_size and pdf_hash(original) == incoming_hash:
-                    raise ValueError("Este PDF já está cadastrado na conta " + str(row["id"]) + ".")
+                if original.stat().st_size == incoming_size and pdf_hash(original) == incoming_hash:
+                    raise ValueError("Este PDF ja esta cadastrado na conta " + str(aid) + ".")
             except OSError:
                 pass
-        original_code = "".join(
-            c for c in str(row["codigo_pagamento"] or "") if c.isalnum()
-        )
-        if not incoming_code or incoming_code != original_code:
             continue
-        # Mesmas regras de duplicata do aplicativo instalado:
-        # linha bancária igual é prova forte independentemente do fornecedor.
-        if incoming_code.isdigit() and len(incoming_code) in {44, 46, 47, 48}:
-            raise ValueError("Linha digitável já cadastrada na conta " + str(row["id"]) + ".")
-        if incoming_code.startswith("000201") and len(incoming_code) >= 50:
-            if (round(float(row["valor"] or 0), 2) == incoming_amount
-                    and str(row["vencimento"] or "") == incoming_due):
-                raise ValueError("PIX EMV já cadastrado na conta " + str(row["id"]) + ".")
-        # Chave PIX estática, referência e fornecedor parecidos não bloqueiam
-        # contas legítimas, ainda que seus valores e vencimentos coincidam.
+
+        # PDFs no Windows nao sao legiveis no filesystem Linux da VPS.
+        # Consultar o R2 somente para candidatos com mesmo valor/vencimento,
+        # evitando centenas de requisicoes remotas por boleto importado.
+        if not remote_metadata or (
+            round(float(row["valor"] or 0), 2) != incoming_amount
+            or str(row["vencimento"] or "") != incoming_due
+        ):
+            continue
+        meta = remote_metadata(aid)
+        if not meta:
+            continue
+        size = int(meta.get("size") or 0)
+        if size and size != incoming_size:
+            continue
+        digest = str(meta.get("hash") or "").lower()
+        if digest:
+            if digest == incoming_hash:
+                raise ValueError("Este PDF ja esta cadastrado na conta " + str(aid) + " (R2).")
+        elif remote_read:
+            # PDFs antigos do Worker podem nao ter metadado sha256:
+            # conferir os bytes originais, sem apagar ou modificar o R2.
+            content = remote_read(aid)
+            if len(content) == incoming_size and hashlib.sha256(content).hexdigest() == incoming_hash:
+                raise ValueError("Este PDF ja esta cadastrado na conta " + str(aid) + " (R2).")
 
 
 def merge_receipt(original_pdf: Path | None, receipt_bytes: bytes,
