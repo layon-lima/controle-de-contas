@@ -127,6 +127,21 @@ async function copyPendingWindowsPDFs(){
   }
   return copied;
 }
+async function copyOrQueueWindowsPDF(file,details,id){
+  let result;
+  try{result=await copyPDFToWindowsFolder(file,details,id);}
+  catch(e){result={configured:true,saved:false,error:e.message||String(e)};}
+  if(result?.saved||!result?.configured)return result;
+  try{
+    await saveWindowsCopyPending(file,details,id);
+    return {...result,queued:true};
+  }catch(e){
+    return {...result,queued:false,
+      error:(result.error||'Falha ao copiar para o Windows.')+
+        ' Tambem nao foi possivel manter uma copia pendente no navegador: '+
+        (e.message||String(e))};
+  }
+}
 async function windowsFolderPermission(handle,request=false){
   if(!handle)return 'not-configured';
   if(typeof handle.queryPermission!=='function')return 'unsupported';
@@ -456,9 +471,9 @@ function accountModal(a,preview=null,rerun=null){
       const saved=await api(route,'POST',preview?{...values,ticket:preview.ticket}:values);
       let localCopy=null;
       if(preview?.ticket&&pendingImportPDF?.ticket===preview.ticket){
-        try{
-          localCopy=await copyPDFToWindowsFolder(pendingImportPDF.file,values,saved.id||saved.account_id);
-        }catch(e){localCopy={configured:true,saved:false,error:e.message||String(e)};}
+        localCopy=await copyOrQueueWindowsPDF(
+          pendingImportPDF.file,values,saved.id||saved.account_id
+        );
         pendingImportPDF=null;
       }
       if(saved.warning){
@@ -470,8 +485,12 @@ function accountModal(a,preview=null,rerun=null){
         notice(trained?'Conta salva. Aprendizado OCR registrado ('+trained+' campos).':
           'Conta salva. Nenhum novo campo foi aprendido.');
       }else notice(a?'Conta atualizada.':'Conta cadastrada.');
-      if(!saved.warning&&localCopy?.saved)notice('Conta salva. PDF também copiado para a pasta do Windows.');
-      else if(!saved.warning&&localCopy?.error)notice('Conta salva, mas a cópia no Windows falhou: '+localCopy.error,true);
+      if(localCopy?.saved&&!saved.warning)
+        notice('Conta salva. PDF também copiado para a pasta do Windows.');
+      else if(localCopy?.queued)
+        notice('Conta salva na VPS. Cópia do Windows pendente: abra Pasta boletos e clique em Copiar pendentes.',true,14000);
+      else if(localCopy?.error)
+        notice('Conta salva na VPS, mas SEM cópia local: '+localCopy.error,true,14000);
       // Salvar/importar nao altera o filtro escolhido pelo usuario.
       await reload();return true;
     });
@@ -773,13 +792,12 @@ async function uploadAccountPDF(file){
   const data=await response.json().catch(()=>({error:'Falha ao enviar PDF.'}));
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
   const registered=accounts.find(item=>item.id===selected)||{};
-  let savedLocal;
-  try{savedLocal=await copyPDFToWindowsFolder(file,registered,selected);}
-  catch(e){savedLocal={configured:true,saved:false,error:e.message||String(e)};}
+  const savedLocal=await copyOrQueueWindowsPDF(file,registered,selected);
   notice(savedLocal?.saved?'PDF anexado e cópia salva na pasta do Windows.':
-    savedLocal?.error?'PDF anexado ao sistema, mas não copiado no Windows: '+savedLocal.error:
-    'PDF anexado ao sistema. Configure Pasta boletos para guardar cópias no Windows.',
-    Boolean(savedLocal?.error));
+    savedLocal?.queued?'PDF anexado na VPS. Cópia Windows pendente: abra Pasta boletos e clique em Copiar pendentes.':
+    savedLocal?.error?'PDF anexado na VPS, mas SEM cópia no Windows: '+savedLocal.error:
+    'PDF anexado à VPS. Configure Pasta boletos para copiar ao Windows.',
+    Boolean(savedLocal?.error||savedLocal?.queued),14000);
   await reload();
 }
 
