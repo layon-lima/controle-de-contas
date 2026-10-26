@@ -10,7 +10,7 @@ Saida:
 
 O relatorio NAO remove nada, NAO altera o banco e NAO imprime codigos de pagamento.
 """
-import re
+import hashlib
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
@@ -37,12 +37,23 @@ def main():
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """SELECT id,fornecedor,pagador,referencia,valor,vencimento,
-                      codigo_pagamento FROM contas ORDER BY id"""
+                      codigo_pagamento,pdf_conta FROM contas ORDER BY id"""
         ).fetchall()
 
     by_code = defaultdict(list)
     by_business = defaultdict(list)
+    by_local_pdf = defaultdict(list)
     for r in rows:
+        local_pdf = Path(str(r["pdf_conta"] or "")) if r["pdf_conta"] else None
+        if local_pdf and local_pdf.suffix.lower() == ".pdf" and local_pdf.is_file():
+            try:
+                digest = hashlib.sha256()
+                with local_pdf.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+                by_local_pdf[digest.hexdigest()].append(r)
+            except OSError:
+                pass
         code = payment_code(r["codigo_pagamento"])
         amount = normalize_amount(r["valor"])
         due = str(r["vencimento"] or "")[:10]
@@ -60,12 +71,15 @@ def main():
             by_business[(supplier, payer, ref, amount, due)].append(r)
 
     strong = [items for items in by_code.values() if len(items) > 1]
+    exact_local = [items for items in by_local_pdf.values() if len(items) > 1]
     suspects = [items for items in by_business.values() if len(items) > 1]
     print("AUDITORIA SOMENTE LEITURA - CONTROLE DE CONTAS")
     print("Total de contas no banco:", len(rows))
     print("Grupos com identificador forte repetido:", len(strong))
+    print("Grupos com arquivo PDF local identico:", len(exact_local))
     print("Grupos suspeitos por dados cadastrais:", len(suspects))
     for label, groups in (("IDENTIFICADOR REPETIDO", strong),
+                          ("PDF LOCAL IDENTICO", exact_local),
                           ("SUSPEITA CADASTRAL (CONFERIR)", suspects)):
         for items in groups:
             print("\n" + label)
