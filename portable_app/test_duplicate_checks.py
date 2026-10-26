@@ -143,12 +143,26 @@ class DuplicateChecksTests(unittest.TestCase):
             remote_read=lambda _: self.fail("Nao baixar documento com hash conhecido diferente"),
         )
 
-    def test_unrelated_due_date_does_not_make_remote_requests(self):
-        self.insert(code="",path=r"C:\\Documentos\\outro.pdf",due="2026-12-15")
+    def test_unrelated_values_and_due_dates_do_not_scan_r2(self):
+        self.insert(code="",path=r"C:\\Documentos\\outro.pdf",amount=987.23,due="2026-12-15")
         pdf_workflows.check_duplicate(
             self.conn,self.incoming,dict(self.fields,codigo_pagamento=""),
-            remote_metadata=lambda _: self.fail("Nao deveria consultar R2 para vencimento diferente"),
+            remote_metadata=lambda _: self.fail("Nao deveria consultar R2 para contas sem indicios"),
         )
+
+    def test_same_supplier_amount_finds_r2_even_if_due_differs(self):
+        aid = self.insert(code="",path=r"C:\\Documentos\\boleto.pdf",due="2026-12-15")
+        digest=hashlib.sha256(self.incoming.read_bytes()).hexdigest()
+        checked=[]
+        def metadata(id):
+            checked.append(id)
+            return {"hash":digest,"size":self.incoming.stat().st_size}
+        with self.assertRaisesRegex(ValueError, "R2"):
+            pdf_workflows.check_duplicate(
+                self.conn,self.incoming,dict(self.fields,codigo_pagamento=""),
+                remote_metadata=metadata,
+            )
+        self.assertEqual(checked,[aid])
 
     def test_static_pix_key_does_not_block_distinct_invoices(self):
         same_key={"codigo_pagamento": "chave.pix@empresa.com",
