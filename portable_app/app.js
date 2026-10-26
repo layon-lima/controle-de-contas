@@ -1044,56 +1044,99 @@ $('folderBtn').addEventListener('click',async()=>{
   try{
     const current=await readWindowsBoletoFolder();
     showModal('Pasta de boletos do Windows',
-      'A pasta continua lembrada mesmo quando voce fecha o site. Se a permissao vencer, apenas autorize novamente.',
+      'A pasta fica lembrada neste navegador. O Edge/Chrome pode exigir nova autorizacao ao fechar e reabrir o site.',
       '<div class="field wide"><b>Pasta selecionada neste computador</b>'+
       '<div id="windowsFolderName" style="padding:12px;border:1px solid #dbe5f0;border-radius:8px;margin:7px 0 8px">'+
       esc(current?.name||'Nenhuma pasta selecionada')+'</div>'+
-      '<p id="windowsFolderStatus" class="hint">Verificando autorizacao...</p></div>'+
-      '<button type="button" id="authorizeWindowsFolder" class="outline">Autorizar acesso à pasta salva</button> '+
-      '<button type="button" id="browseWindowsFolder" class="outline">'+(current?'Trocar pasta…':'Selecionar pasta…')+'</button>'+
-      '<p class="hint">A pasta e lembrada neste navegador, mesmo apos sair do site. Chrome e Edge podem pedir uma nova autorizacao ao reiniciar, mas voce nao precisa escolher a mesma pasta novamente. O servidor VPS nao tem acesso direto aos arquivos do Windows.</p>',
+      '<p id="windowsFolderStatus" class="hint">Verificando a pasta...</p>'+
+      '<p id="windowsCopyQueueStatus" class="hint"></p></div>'+
+      '<button type="button" id="authorizeWindowsFolder" class="outline">Autorizar pasta salva</button> '+
+      '<button type="button" id="browseWindowsFolder" class="outline">'+(current?'Trocar pasta…':'Selecionar pasta…')+'</button> '+
+      '<button type="button" id="testWindowsFolder" class="outline">Testar gravação</button> '+
+      '<button type="button" id="retryWindowsCopies" class="outline">Copiar pendentes</button>'+
+      '<p class="hint">Selecione a pasta BOLETOS principal, nao uma subpasta de ano/mes. '+
+      'O teste cria e remove um arquivo temporario, sem alterar seus boletos. '+
+      'Se a autorizacao do navegador expirar, clique em Autorizar pasta salva. '+
+      'PDFs pendentes sao guardados somente neste navegador ate serem copiados.</p>',
       'Concluir',async()=>{
         const root=await readWindowsBoletoFolder();
-        if(!root)throw new Error('Escolha a pasta de boletos pela primeira vez.');
-        const permission=await windowsFolderPermission(root,true);
-        if(permission!=='granted')throw new Error('Autorize o acesso à pasta '+root.name+'.');
+        if(!root)throw new Error('Selecione a pasta BOLETOS pela primeira vez.');
+        validateWindowsFolderRoot(root);
+        const permission=await windowsFolderPermission(root);
+        if(permission!=='granted')
+          throw new Error('Pasta lembrada, mas sem acesso. Clique em Autorizar pasta salva.');
+        await testWindowsFolderWrite(root);
         return true;
       });
     async function updateFolderStatus(){
       const root=await readWindowsBoletoFolder();
-      const permission=await windowsFolderPermission(root);
       const text=$('windowsFolderStatus'),button=$('authorizeWindowsFolder');
-      if(!text||!button)return;
-      text.textContent=!root?'Selecione a pasta uma unica vez.':
-        permission==='granted'?'Pasta lembrada e autorizada. Os proximos PDFs serao salvos aqui.':
-        'Pasta lembrada. Falta apenas autorizar o acesso; nao precisa escolher novamente.';
+      const retry=$('retryWindowsCopies'),queue=$('windowsCopyQueueStatus');
+      if(!text||!button||!retry||!queue)return;
+      let permission='not-configured';
+      try{permission=await windowsFolderPermission(root);}
+      catch(e){permission='error';}
+      text.textContent=!root?'Nenhuma pasta selecionada. Escolha a pasta BOLETOS principal.':
+        permission==='granted'?'Pasta lembrada e autorizada para gravar.':
+        permission==='prompt'?'Pasta lembrada, mas o navegador precisa de sua autorizacao.':
+        'A pasta esta lembrada, mas o acesso foi negado ou nao esta disponivel.';
       button.disabled=!root||permission==='granted';
+      const pending=await windowsPendingCopies();
+      queue.textContent=pending.length
+        ?pending.length+' PDF(s) aguardando copia no Windows. Use Copiar pendentes.'
+        :'Nenhum PDF aguardando copia no Windows neste navegador.';
+      retry.disabled=!root||!pending.length;
+      $('testWindowsFolder').disabled=!root;
     }
     $('authorizeWindowsFolder').addEventListener('click',async()=>{
       try{
         const root=windowsFolderHandle||await readWindowsBoletoFolder();
-        if(!root)throw new Error('Selecione a pasta uma vez para comecar.');
+        if(!root)throw new Error('Selecione a pasta BOLETOS primeiro.');
+        validateWindowsFolderRoot(root);
         const state=await windowsFolderPermission(root,true);
-        if(state!=='granted')throw new Error('A permissao nao foi concedida. Confira as permissoes deste site no navegador.');
+        if(state!=='granted')throw new Error('Autorize o acesso a pasta na janela do navegador.');
+        await testWindowsFolderWrite(root);
         await updateFolderStatus();
-        notice('Pasta '+root.name+' autorizada. A selecao anterior foi mantida.');
-      }catch(e){notice(e.message||String(e),true);}
+        notice('Pasta '+root.name+' autorizada. Teste real de gravacao concluido.');
+      }catch(e){notice('Nao foi possivel autorizar: '+(e.message||String(e)),true,12000);}
     });
     $('browseWindowsFolder').addEventListener('click',async()=>{
       try{
         if(typeof window.showDirectoryPicker!=='function')
-          throw new Error('Abra o site no Microsoft Edge ou Google Chrome atualizado no Windows.');
-        // Seletor apenas na primeira escolha ou troca intencional.
+          throw new Error('Use Microsoft Edge ou Google Chrome atualizado no Windows.');
+        // O seletor deve ser aberto diretamente pelo clique do usuario.
         const chosen=await window.showDirectoryPicker({id:'contas-boletos',mode:'readwrite'});
+        validateWindowsFolderRoot(chosen);
         await rememberWindowsBoletoFolder(chosen);
         $('windowsFolderName').textContent=chosen.name;
         $('browseWindowsFolder').textContent='Trocar pasta…';
         await updateFolderStatus();
-        notice('Pasta salva neste navegador: '+chosen.name);
-      }catch(e){if(e?.name!=='AbortError')notice(e.message||String(e),true);}
+        notice('Pasta '+chosen.name+' lembrada. Clique em Testar gravacao para conferir.');
+      }catch(e){if(e?.name!=='AbortError')notice(e.message||String(e),true,12000);}
+    });
+    $('testWindowsFolder').addEventListener('click',async()=>{
+      try{
+        const root=windowsFolderHandle||await readWindowsBoletoFolder();
+        if(!root)throw new Error('Selecione a pasta BOLETOS primeiro.');
+        const permission=await windowsFolderPermission(root,true);
+        if(permission!=='granted')throw new Error('Autorize a pasta na janela do navegador.');
+        await testWindowsFolderWrite(root);
+        await updateFolderStatus();
+        notice('Teste OK: o navegador consegue gravar na pasta '+root.name+'.');
+      }catch(e){notice('Teste da pasta falhou: '+(e.message||String(e)),true,12000);}
+    });
+    $('retryWindowsCopies').addEventListener('click',async()=>{
+      const button=$('retryWindowsCopies');
+      button.disabled=true;
+      try{
+        const copied=await copyPendingWindowsPDFs();
+        await updateFolderStatus();
+        notice(copied+' PDF(s) copiado(s) ao Windows. Nenhuma conta da VPS foi alterada.');
+      }catch(e){notice('Copia pendente nao concluida: '+(e.message||String(e)),true,15000);}
+      finally{button.disabled=false;}
     });
     await updateFolderStatus();
-  }catch(e){notice(e.message||String(e),true);}
+  }catch(e){notice(e.message||String(e),true,12000);}
 });
 $('mobileBtn').addEventListener('click',async()=>{
   try{const data=await api('/api/mobile-link');window.open(data.url,'_blank','noopener');}
