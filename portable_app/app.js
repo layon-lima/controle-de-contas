@@ -273,6 +273,23 @@ async function api(route,method='GET',data){
   if(!response.ok||body.ok===false)throw new Error(body.error||'Operação não concluída.');
   return body;
 }
+async function postPDF(route,file,extraHeaders={}){
+  const opts={
+    method:'POST',
+    headers:{'X-Local-Token':token,'Content-Type':'application/pdf',...extraHeaders},
+    body:file
+  };
+  let response=await fetch(route,opts);
+  if(response.status===403){
+    const rejected=await response.clone().json().catch(()=>({}));
+    if(/sess[aã]o inv[aá]lida|reabra pelo iniciador/i.test(String(rejected.error||''))){
+      await renewSessionToken();
+      opts.headers['X-Local-Token']=token;
+      response=await fetch(route,opts);
+    }
+  }
+  return response;
+}
 function notice(message,error=false,duration=4200){
   const toast=$('toast');toast.textContent=message;toast.className='toast '+(error?'error':'ok');toast.style.display='block';
   clearTimeout(notice.timer);notice.timer=setTimeout(()=>toast.style.display='none',duration);
@@ -788,9 +805,8 @@ async function uploadAccountPDF(file){
   if(!file.name.toLowerCase().endsWith('.pdf'))throw new Error('Selecione um documento PDF.');
   if(file.size>30*1024*1024)throw new Error('PDF maior que 30 MB.');
   await prepareWindowsFolderCopy();
-  const response=await fetch('/api/accounts/'+selected+'/upload-pdf',{
-    method:'POST',headers:{'X-Local-Token':token,'Content-Type':'application/pdf','X-Pdf-Name':encodeURIComponent(file.name)},
-    body:file
+  const response=await postPDF('/api/accounts/'+selected+'/upload-pdf',file,{
+    'X-Pdf-Name':encodeURIComponent(file.name)
   });
   const data=await response.json().catch(()=>({error:'Falha ao enviar PDF.'}));
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
@@ -996,11 +1012,8 @@ async function importNewPDF(file){
   const button=$('pdfImport'),previous=button.innerHTML;
   importBusy=true;button.disabled=true;button.textContent='Lendo PDF e preenchendo…';
   try{
-    const response=await fetch('/api/import/preview',{
-      method:'POST',
-      headers:{'X-Local-Token':token,'Content-Type':'application/pdf',
-               'X-Pdf-Name':encodeURIComponent(file.name),'X-Ocr-Mode':'hybrid'},
-      body:file,
+    const response=await postPDF('/api/import/preview',file,{
+      'X-Pdf-Name':encodeURIComponent(file.name),'X-Ocr-Mode':'hybrid'
     });
     const result=await response.json().catch(()=>({error:'Resposta inválida do leitor OCR.'}));
     if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível ler o PDF.');
