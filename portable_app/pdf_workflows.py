@@ -187,8 +187,9 @@ def check_duplicate(conn, pdf: Path, fields: dict, exclude_id: int | None = None
     incoming_size = pdf.stat().st_size
     incoming_amount = round(float(fields.get("valor") or 0), 2)
     incoming_due = str(fields.get("vencimento") or "")
+    incoming_supplier = " ".join(str(fields.get("fornecedor") or "").casefold().split())
     for row in conn.execute(
-        "SELECT id,pdf_conta,valor,vencimento FROM contas"
+        "SELECT id,pdf_conta,fornecedor,valor,vencimento FROM contas"
     ):
         aid = int(row["id"])
         if exclude_id is not None and aid == exclude_id:
@@ -200,14 +201,21 @@ def check_duplicate(conn, pdf: Path, fields: dict, exclude_id: int | None = None
                     raise ValueError("Este PDF ja esta cadastrado na conta " + str(aid) + ".")
             except OSError:
                 pass
-            continue
 
         # PDFs no Windows nao sao legiveis no filesystem Linux da VPS.
-        # Consultar o R2 somente para candidatos com mesmo valor/vencimento,
-        # evitando centenas de requisicoes remotas por boleto importado.
-        if not remote_metadata or (
-            round(float(row["valor"] or 0), 2) != incoming_amount
-            or str(row["vencimento"] or "") != incoming_due
+        # Revisar candidatos com valor+vencimento iguais OU mesmo fornecedor
+        # e ao menos um dos dois campos igual. Assim um erro isolado no OCR
+        # nao impede comparar o PDF remoto, sem varrer todo o R2.
+        same_amount = round(float(row["valor"] or 0), 2) == incoming_amount
+        same_due = str(row["vencimento"] or "") == incoming_due
+        same_supplier = bool(
+            incoming_supplier
+            and incoming_supplier ==
+            " ".join(str(row["fornecedor"] or "").casefold().split())
+        )
+        if not remote_metadata or not (
+            (same_amount and same_due)
+            or (same_supplier and (same_amount or same_due))
         ):
             continue
         meta = remote_metadata(aid)
