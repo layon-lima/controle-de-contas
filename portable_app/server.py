@@ -1053,12 +1053,12 @@ class Handler(BaseHTTPRequestHandler):
         if writing and self.headers.get("Content-Type", "").split(";")[0].strip() not in ("application/json", "application/pdf"):
             raise ApiError(415, "Formato não aceito.")
     
-    def _body(self):
+    def _body(self, max_bytes=64_000):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError as exc:
             raise ApiError(400, "Tamanho inválido.") from exc
-        if length < 2 or length > 64_000:
+        if length < 2 or length > max_bytes:
             raise ApiError(413, "Dados muito grandes ou vazios.")
         try:
             obj = json.loads(self.rfile.read(length))
@@ -1394,7 +1394,7 @@ class Handler(BaseHTTPRequestHandler):
                     # Somente os IDs exibidos na lista filtrada são exportados.
                     # Buscar os dados REAIS no banco, nunca confiar em valores
                     # enviados pelo navegador nem alterar qualquer lançamento.
-                    options = self._body()
+                    options = self._body(max_bytes=128_000)
                     raw_ids = options.get("ids")
                     if (not isinstance(raw_ids, list) or not raw_ids or
                             len(raw_ids) > excel_export.MAX_ROWS or
