@@ -438,20 +438,21 @@ def remove_account(account_id):
 
 
 def payment_text(data):
-    # Texto copiado para pagamento. Não altera o cadastro nem o PDF.
+    """Mensagem enxuta para envio. Não modifica cadastro, PDF ou pagamentos."""
     values = normalize(data)
     money = f"{values['valor']:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
-    entries = [
-        ("RECEBEDOR", values["fornecedor"]),
-        ("PAGADOR", values["pagador"]),
-        ("VALOR", "R$ " + money),
-        ("VENCIMENTO", values["vencimento"]),
-        ("OBSERVAÇÕES", values["observacoes"]),
+    # Remover somente a extensao .pdf no fim da observacao exibida.
+    # O nome armazenado no cadastro e no arquivo permanece intacto.
+    observation = re.sub(r"(?i)\\.pdf\\s*$", "", values["observacoes"]).strip()
+    parts = [
+        "RECEBEDOR: " + values["fornecedor"],
+        "VALOR: R$ " + money,
     ]
-    message = "\n".join(f"{label}: {value}" for label, value in entries if value)
+    if observation:
+        parts.append(observation)
     if values["codigo_pagamento"]:
-        message += "\n\nCÓDIGO PIX / LINHA DIGITÁVEL: " + values["codigo_pagamento"]
-    return message
+        parts.append(values["codigo_pagamento"])
+    return "\n\n".join(parts)
 
 
 def prepare_send(account_id):
