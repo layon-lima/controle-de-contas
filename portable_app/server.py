@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, whatsapp_payments
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -59,6 +59,7 @@ else:
     import receipt_matching
     import mobile_vps
     import r2_bridge
+    import whatsapp_payments
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -1255,6 +1256,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._check(writing=self.command == "POST" and not no_body_mobile_copy)
                 parts = route.strip("/").split("/")
+                if self.command == "GET" and route == "/api/whatsapp/status":
+                    self._json({"ok": True, **whatsapp_payments.status(APP_DIR)})
+                    return
                 if self.command == "GET" and route == "/api/ai/status":
                     self._json({"ok": True, **AI_ASSIST.status()})
                     return
@@ -1534,6 +1538,23 @@ class Handler(BaseHTTPRequestHandler):
                             result = {"deleted": True}
                         elif op == "prepare-send":
                             result = prepare_send(account_id)
+                        elif op == "whatsapp-send":
+                            # Confirmacao humana em cada envio. Nao marca a conta
+                            # como enviada: a API confirma aceitacao, nao entrega.
+                            number = str(data.get("phone") or "").strip()
+                            with connection() as conn:
+                                detail = account(conn, account_id)
+                                paid = conn.execute(
+                                    "SELECT 1 FROM pagamentos WHERE conta_id=? "
+                                    "AND data_pagamento IS NOT NULL "
+                                    "AND TRIM(data_pagamento)<>'' LIMIT 1",
+                                    (account_id,)
+                                ).fetchone()
+                            if paid:
+                                raise ApiError(409, "Conta ja paga. Envio pelo WhatsApp bloqueado.")
+                            result = whatsapp_payments.send(
+                                APP_DIR, detail, number, opt_in=data.get("opt_in") is True
+                            )
                         elif op == "confirm-send":
                             result = {"sent_at": confirm_send(account_id, data.get("nonce"))}
                         elif op == "pay":
