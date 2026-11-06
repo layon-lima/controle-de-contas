@@ -300,6 +300,20 @@ async function reload(){
   if(selected&&!accounts.some(a=>a.id===selected))selected=null;
   render();
 }
+function filteredAccountsForView(){
+  const requested=$('status').value;
+  const query=$('search').value.trim().toLocaleLowerCase('pt-BR');
+  return accounts.filter(a=>{
+    if(activeTab==='paid'&&a.status!=='Paga')return false;
+    if(activeTab==='open'&&a.status==='Paga')return false;
+    if(requested!=='all'&&a.status!==requested)return false;
+    if(query&&![
+      a.fornecedor,a.observacoes,a.documento,a.referencia,a.pagador,a.valor,
+      a.vencimento,a.codigo_pagamento
+    ].some(v=>String(v||'').toLocaleLowerCase('pt-BR').includes(query)))return false;
+    return true;
+  });
+}
 function render(){
   const totals={'Vencida':[0,0],'Próxima':[0,0],'Em dia':[0,0],'Paga':[0,0]};
   for(const a of accounts){
@@ -315,18 +329,7 @@ function render(){
   $('paidCard').setAttribute('aria-pressed',String(activeTab==='paid'));
   $('backToOpen').hidden=activeTab!=='paid';
   $('listTitle').textContent=activeTab==='paid'?'Contas pagas':'Visão geral';
-  const requested=$('status').value;
-  const query=$('search').value.trim().toLocaleLowerCase('pt-BR');
-  const visible=accounts.filter(a=>{
-    if(activeTab==='paid'&&a.status!=='Paga')return false;
-    if(activeTab==='open'&&a.status==='Paga')return false;
-    if(requested!=='all'&&a.status!==requested)return false;
-    if(query&&![
-      a.fornecedor,a.observacoes,a.documento,a.referencia,a.pagador,a.valor,
-      a.vencimento,a.codigo_pagamento
-    ].some(v=>String(v||'').toLocaleLowerCase('pt-BR').includes(query)))return false;
-    return true;
-  });
+  const visible=filteredAccountsForView();
   $('count').textContent=visible.length+' registros';
   const body=$('rows');body.replaceChildren();
   if(!visible.length){
@@ -433,6 +436,61 @@ async function copyText(text){
     document.body.appendChild(field);field.focus();field.select();
     const ok=document.execCommand('copy');field.remove();
     if(!ok)throw new Error('Não foi possível copiar. Autorize o acesso à área de transferência.');
+  }
+}
+async function exportExcel(){
+  const visible=filteredAccountsForView();
+  if(!visible.length){
+    notice('Não há contas nesta lista para exportar.',true);return;
+  }
+  if(visible.length>6000){
+    notice('A exportação aceita até 6.000 contas. Aplique um filtro para reduzir a lista.',true);return;
+  }
+  const button=$('exportExcel');
+  button.disabled=true;
+  const original=button.textContent;
+  button.textContent='Gerando Excel...';
+  try{
+    const description=[
+      activeTab==='paid'?'Contas pagas':'Contas em aberto',
+      $('status').value!=='all'?'Status: '+$('status').value:null,
+      $('search').value.trim()?'Pesquisa: '+$('search').value.trim():null
+    ].filter(Boolean).join(' | ');
+    const ids=visible.map(a=>a.id);
+    const request=()=>fetch('/api/export/excel',{
+      method:'POST',
+      headers:{'X-Local-Token':token,'Content-Type':'application/json'},
+      body:JSON.stringify({ids,label:description})
+    });
+    let response=await request();
+    if(response.status===403){
+      const detail=await response.clone().json().catch(()=>({}));
+      if(/sess[aã]o inv[aá]lida|reabra pelo iniciador/i.test(String(detail.error||''))){
+        await renewSessionToken();
+        response=await request();
+      }
+    }
+    if(!response.ok){
+      const detail=await response.json().catch(()=>({}));
+      throw new Error(detail.error||'Não foi possível gerar o Excel.');
+    }
+    const blob=await response.blob();
+    if(blob.size<100||!blob.type.includes('spreadsheetml'))
+      throw new Error('O servidor não retornou um arquivo Excel válido.');
+    const url=URL.createObjectURL(blob);
+    const anchor=document.createElement('a');
+    anchor.href=url;
+    anchor.download='CONTAS_'+(activeTab==='paid'?'PAGAS':'EM_ABERTO')+'_'+localToday()+'.xlsx';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    notice('Excel gerado com '+visible.length+' lançamento(s), respeitando os filtros da lista.',false,9000);
+  }catch(error){
+    notice(error.message||String(error),true,11000);
+  }finally{
+    button.disabled=false;
+    button.textContent=original;
   }
 }
 async function sendPayment(){
@@ -1038,6 +1096,7 @@ $('paidCard').addEventListener('keydown',e=>{
 });
 $('backToOpen').addEventListener('click',()=>setAccountView('open'));
 $('search').addEventListener('input',render);
+$('exportExcel').addEventListener('click',exportExcel);
 $('newAccount').addEventListener('click',()=>accountModal(null));
 $('pdfImport').addEventListener('click',()=>$('importFile').click());
 let importBusy=false;
