@@ -757,6 +757,45 @@ async function deleteAccount(a){
   await api('/api/accounts/'+a.id+'/delete','POST',{});
   selected=null;notice('Conta excluída.');await reload();
 }
+async function whatsappPaymentModal(account){
+  const status=await api('/api/whatsapp/status');
+  if(!status.configured)
+    throw new Error('WhatsApp Business API ainda não conectado. É preciso ativar a coexistência pela Meta e configurar os modelos de pagamento.');
+  const original=String(account.codigo_pagamento||'').trim();
+  const digits=original.replace(/[^0-9]/g,'');
+  const mode=original.startsWith('000201')?'pix':
+    ([47,48].includes(digits.length)&&/^[0-9. \\-]+$/.test(original)?'boleto':null);
+  if(!mode)
+    throw new Error('Este pagamento não possui Pix dinâmico ou linha digitável de boleto compatível com o card oficial.');
+  if(!status.modes.includes(mode))
+    throw new Error('Falta configurar o modelo de pagamento '+mode.toUpperCase()+' na API Meta.');
+  const description=String(account.observacoes||'').replace(/\\.pdf\\s*$/i,'').trim();
+  showModal('Enviar cartão pelo WhatsApp',
+    'O destinatário receberá um card de pagamento, sujeito à aprovação e disponibilidade da Meta.',
+    '<div class="field wide"><b>Recebedor</b><div>'+esc(account.fornecedor)+'</div></div>'+
+    '<div class="field"><b>Valor</b><div>'+esc(money(account.valor))+'</div></div>'+
+    '<div class="field wide"><b>Descrição</b><div>'+esc(description||'Pagamento de boleto')+'</div></div>'+
+    '<label class="field wide">WhatsApp do destinatário com DDD'+
+    '<input id="waRecipient" type="tel" autocomplete="tel" placeholder="11999999999" required></label>'+
+    '<label class="field wide"><input type="checkbox" id="waConsent"> '+
+    'Confirmo que esta pessoa autorizou receber mensagens de pagamento pelo WhatsApp.</label>'+
+    '<p class="hint">O envio é feito pela API oficial da Meta. A confirmação da API não comprova a entrega ao destinatário. '+
+    'O status da conta não será alterado.</p>',
+    'Enviar pelo WhatsApp',async()=>{
+      const phone=$('waRecipient').value.trim();
+      if(!/^\\+?[0-9 ()-]{10,22}$/.test(phone))
+        throw new Error('Informe um telefone do WhatsApp com DDD.');
+      if(!$('waConsent').checked)
+        throw new Error('Confirme a autorização do destinatário.');
+      if(!window.confirm('Enviar o card de pagamento desta conta para '+phone+'?'))return false;
+      const result=await api('/api/accounts/'+account.id+'/whatsapp-send','POST',{
+        phone, opt_in:true
+      });
+      if(!result.accepted)throw new Error('A Meta não confirmou o recebimento do pedido.');
+      notice('Card de pagamento aceito pela API Meta. Confirme a entrega no WhatsApp.',false,11000);
+      return true;
+    });
+}
 async function action(kind){
   const a=current();closeMenu();if(!a)return;
   try{
@@ -774,6 +813,7 @@ async function action(kind){
     }
     else if(kind==='receipt')await showPDF(true);
     else if(kind==='send')await sendPayment();
+    else if(kind==='whatsapp')await whatsappPaymentModal(a);
     else if(kind==='cancel-suggestion'){
       if(!window.confirm('Cancelar a sugestão desta conta no mobile?'))return;
       const result=await api('/api/accounts/'+a.id+'/cancel-suggestion','POST',{});
