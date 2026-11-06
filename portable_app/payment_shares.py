@@ -133,7 +133,7 @@ def share_page(account, link, *, pdf_available=False):
 <pre id="payment-code">{e(code)}</pre>
 <button id="copy-code" type="button">Copiar código de pagamento</button>
 <p id="copy-status" role="status" aria-live="polite"></p>
-{('<a class="pdf-button" href="' + e(link) + '/boleto.pdf" target="_blank" rel="noopener noreferrer">Abrir boleto em PDF</a>') if pdf_available else '<p class="pdf-hint">PDF indisponível no servidor. O código de pagamento está acima.</p>'}
+{('<a class="pdf-button" href="' + e(link) + '/boleto.pdf">Abrir boleto em PDF</a>') if pdf_available else '<p class="pdf-hint">PDF indisponível no servidor. O código de pagamento está acima.</p>'}
 </section>
 <p class="footer">Confira o favorecido e o valor no aplicativo do seu banco antes de pagar.</p>
 </main><script src="/payment-share.js" defer></script>
