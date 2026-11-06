@@ -370,6 +370,7 @@ function openMenu(id,event){
   menu.querySelector('[data-action="reanalyze"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="cancel-suggestion"]').disabled=!a.suggested_at;
   menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||'').trim();
+  menu.querySelector('[data-action="send"]').disabled=a.status==='Paga'||!String(a.codigo_pagamento||'').trim();
   menu.querySelector('[data-action="receipt"]').disabled=!a.has_receipt;
   menu.querySelector('[data-action="pay"]').disabled=a.status==='Paga';
   menu.querySelector('[data-action="delete"]').disabled=a.status==='Paga';
@@ -396,6 +397,29 @@ async function copyText(text){
     document.body.appendChild(field);field.focus();field.select();
     const ok=document.execCommand('copy');field.remove();
     if(!ok)throw new Error('Não foi possível copiar. Autorize o acesso à área de transferência.');
+  }
+}
+async function sharePayment(){
+  const account=current();
+  if(!account)return;
+  if(!String(account.codigo_pagamento||'').trim())
+    throw new Error('Cadastre o PIX ou código digitável antes de compartilhar.');
+  // Abrir a aba no clique do usuário, ANTES da requisição, para evitar bloqueio
+  // do navegador. Nunca envia mensagem automaticamente.
+  const tab=window.open('about:blank','_blank');
+  if(tab)tab.opener=null;
+  try{
+    const ready=await api('/api/accounts/'+account.id+'/prepare-share','POST',{});
+    const link='https://wa.me/?text='+encodeURIComponent(ready.text);
+    if(tab){
+      tab.location.replace(link);
+    }else{
+      window.location.assign(link);
+    }
+    notice('Mensagem pronta no WhatsApp. Escolha o contato e confirme o envio.',false,10000);
+  }catch(e){
+    if(tab&&!tab.closed)tab.close();
+    throw e;
   }
 }
 async function sendPayment(){
@@ -757,45 +781,6 @@ async function deleteAccount(a){
   await api('/api/accounts/'+a.id+'/delete','POST',{});
   selected=null;notice('Conta excluída.');await reload();
 }
-async function whatsappPaymentModal(account){
-  const status=await api('/api/whatsapp/status');
-  if(!status.configured)
-    throw new Error('WhatsApp Business API ainda não conectado. É preciso ativar a coexistência pela Meta e configurar os modelos de pagamento.');
-  const original=String(account.codigo_pagamento||'').trim();
-  const digits=original.replace(/[^0-9]/g,'');
-  const mode=original.startsWith('000201')?'pix':
-    ([47,48].includes(digits.length)&&/^[0-9. \-]+$/.test(original)?'boleto':null);
-  if(!mode)
-    throw new Error('Este pagamento não possui Pix dinâmico ou linha digitável de boleto compatível com o card oficial.');
-  if(!status.modes.includes(mode))
-    throw new Error('Falta configurar o modelo de pagamento '+mode.toUpperCase()+' na API Meta.');
-  const description=String(account.observacoes||'').replace(/\.pdf\s*$/i,'').trim();
-  showModal('Enviar cartão pelo WhatsApp',
-    'O destinatário receberá um card de pagamento, sujeito à aprovação e disponibilidade da Meta.',
-    '<div class="field wide"><b>Recebedor</b><div>'+esc(account.fornecedor)+'</div></div>'+
-    '<div class="field"><b>Valor</b><div>'+esc(money(account.valor))+'</div></div>'+
-    '<div class="field wide"><b>Descrição</b><div>'+esc(description||'Pagamento de boleto')+'</div></div>'+
-    '<label class="field wide">WhatsApp do destinatário com DDD'+
-    '<input id="waRecipient" type="tel" autocomplete="tel" placeholder="11999999999" required></label>'+
-    '<label class="field wide"><input type="checkbox" id="waConsent"> '+
-    'Confirmo que esta pessoa autorizou receber mensagens de pagamento pelo WhatsApp.</label>'+
-    '<p class="hint">O envio é feito pela API oficial da Meta. A confirmação da API não comprova a entrega ao destinatário. '+
-    'O status da conta não será alterado.</p>',
-    'Enviar pelo WhatsApp',async()=>{
-      const phone=$('waRecipient').value.trim();
-      if(!/^\+?[0-9 ()-]{10,22}$/.test(phone))
-        throw new Error('Informe um telefone do WhatsApp com DDD.');
-      if(!$('waConsent').checked)
-        throw new Error('Confirme a autorização do destinatário.');
-      if(!window.confirm('Enviar o card de pagamento desta conta para '+phone+'?'))return false;
-      const result=await api('/api/accounts/'+account.id+'/whatsapp-send','POST',{
-        phone, opt_in:true
-      });
-      if(!result.accepted)throw new Error('A Meta não confirmou o recebimento do pedido.');
-      notice('Card de pagamento aceito pela API Meta. Confirme a entrega no WhatsApp.',false,11000);
-      return true;
-    });
-}
 async function action(kind){
   const a=current();closeMenu();if(!a)return;
   try{
@@ -812,8 +797,8 @@ async function action(kind){
       notice('Código PIX / linha digitável copiado.');
     }
     else if(kind==='receipt')await showPDF(true);
-    else if(kind==='send')await sendPayment();
-    else if(kind==='whatsapp')await whatsappPaymentModal(a);
+    else if(kind==='send')await sharePayment();
+    else if(kind==='copy-message')await sendPayment();
     else if(kind==='cancel-suggestion'){
       if(!window.confirm('Cancelar a sugestão desta conta no mobile?'))return;
       const result=await api('/api/accounts/'+a.id+'/cancel-suggestion','POST',{});
