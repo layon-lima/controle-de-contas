@@ -17,5 +17,5 @@ COPY source_current/ /app/source_current/
 COPY releases/ /app/releases/
 # Falhas em importacao mobile, SQL e filtros impedem a atualizacao da imagem.
 RUN python -m py_compile portable_app/server.py portable_app/mobile_vps.py portable_app/r2_bridge.py portable_app/pdf_clipboard.py \
-    && python -m unittest -v portable_app.test_mobile_vps portable_app.test_duplicate_checks portable_app.test_pdf_clipboard
+    && python -m unittest -v portable_app.test_mobile_vps portable_app.test_duplicate_checks portable_app.test_pdf_clipboard portable_app.test_portable.PortableDataTests.test_due_today_is_overdue_in_server_and_account_summary
 CMD ["python", "-u", "portable_app/server.py"]
