@@ -399,33 +399,6 @@ async function copyText(text){
     if(!ok)throw new Error('Não foi possível copiar. Autorize o acesso à área de transferência.');
   }
 }
-async function sharePayment(){
-  const account=current();
-  if(!account)return;
-  if(!String(account.codigo_pagamento||'').trim())
-    throw new Error('Cadastre o PIX ou código digitável antes de compartilhar.');
-  // Copia SOMENTE o endereco do card. Nenhuma aba, app ou WhatsApp e aberto.
-  const ready=await api('/api/accounts/'+account.id+'/prepare-share','POST',{});
-  if(!ready.url)throw new Error('Não foi possível gerar o link de pagamento.');
-  try{
-    await copyText(ready.url);
-    notice('Link do card copiado! Cole na conversa do WhatsApp. O PDF estará no link se disponível.',false,11000);
-  }catch(_){
-    // Alguns navegadores só autorizam copiar após um novo clique humano.
-    showModal('Copiar link de pagamento',
-      'O navegador pediu confirmação para copiar. O endereço abre um card com código e PDF, se disponível.',
-      '<label class="field wide">Link do pagamento'+
-      '<input id="paymentShareUrl" type="text" readonly value="'+esc(ready.url)+'"></label>',
-      'Copiar link',async()=>{
-        const input=$('paymentShareUrl');
-        input.focus();input.select();
-        await copyText(input.value);
-        notice('Link do card copiado. Cole no WhatsApp.',false,11000);
-        return true;
-      });
-    $('paymentShareUrl')?.select();
-  }
-}
 async function sendPayment(){
   const a=current();if(!a)return;
   const ready=await api('/api/accounts/'+a.id+'/prepare-send','POST',{});
@@ -801,8 +774,7 @@ async function action(kind){
       notice('Código PIX / linha digitável copiado.');
     }
     else if(kind==='receipt')await showPDF(true);
-    else if(kind==='send')await sharePayment();
-    else if(kind==='copy-message')await sendPayment();
+    else if(kind==='send')await sendPayment();
     else if(kind==='cancel-suggestion'){
       if(!window.confirm('Cancelar a sugestão desta conta no mobile?'))return;
       const result=await api('/api/accounts/'+a.id+'/cancel-suggestion','POST',{});
