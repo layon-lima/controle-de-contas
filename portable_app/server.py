@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -59,6 +59,7 @@ else:
     import receipt_matching
     import mobile_vps
     import r2_bridge
+    import pdf_clipboard
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -1462,6 +1463,35 @@ class Handler(BaseHTTPRequestHandler):
                         else:
                             raise FileNotFoundError("PDF nao disponivel nesta conta.")
                         self._json({"ok": True, **analysis})
+                        return
+                    if self.command == "GET" and op == "pdf-image":
+                        # Mesma autenticacao que o PDF; não expor esta imagem
+                        # publicamente nem gravar arquivos temporarios no disco.
+                        with connection() as conn:
+                            rec = account(conn, account_id)
+                            paid = conn.execute(
+                                """SELECT 1 FROM pagamentos WHERE conta_id=?
+                                   AND data_pagamento IS NOT NULL
+                                   AND TRIM(data_pagamento)<>'' LIMIT 1""",
+                                (account_id,)
+                            ).fetchone()
+                        local_pdf = Path(str(rec.get("pdf_conta") or ""))
+                        if local_pdf.is_file() and local_pdf.suffix.lower() == ".pdf":
+                            data = local_pdf.read_bytes()
+                        elif not paid:
+                            try:
+                                data = r2_bridge.read_pdf(account_id)
+                            except r2_bridge.R2Unavailable:
+                                raise FileNotFoundError(
+                                    "PDF não disponível na VPS ou no R2. "
+                                    "Sincronize primeiro o arquivo do Windows."
+                                ) from None
+                        else:
+                            raise FileNotFoundError(
+                                "PDF pago disponível somente na pasta do Windows."
+                            )
+                        image = pdf_clipboard.first_page_png(data)
+                        self._send(image, mime="image/png")
                         return
                     if self.command == "GET" and op == "pdf":
                         receipt = urlsplit(self.path).query == "receipt=1"
