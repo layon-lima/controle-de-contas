@@ -1110,7 +1110,9 @@ class Handler(BaseHTTPRequestHandler):
                         else "text/javascript; charset=utf-8")
                 self._send((WEB_DIR / route.lstrip("/")).read_bytes(), mime=mime)
                 return
-            shared = re.fullmatch(r"/p/([A-Za-z0-9_.-]{65,150})", route)
+            shared = re.fullmatch(
+                r"/p/([A-Za-z0-9_.-]{65,150})(/boleto[.]pdf)?", route
+            )
             if self.command == "GET" and shared:
                 account_id = payment_shares.read_token(APP_DIR, shared.group(1))
                 if account_id is None:
@@ -1130,9 +1132,31 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(410, "Esta cobrança já foi paga.")
                 if not str(info.get("codigo_pagamento") or "").strip():
                     raise ApiError(404, "Código de pagamento indisponível.")
+                local_pdf = Path(str(info.get("pdf_conta") or "").strip())
+                local_ok = (local_pdf.suffix.lower() == ".pdf" and
+                            local_pdf.is_file())
+                if shared.group(2):
+                    # Não expor caminho local nem pastas da VPS ao visitante.
+                    # Quem possui o link assinado também pode consultar o PDF
+                    # desta conta, enquanto estiver aberta e o link for válido.
+                    if local_ok:
+                        content = local_pdf.read_bytes()
+                    else:
+                        try:
+                            content = r2_bridge.read_pdf(account_id)
+                        except r2_bridge.R2Unavailable:
+                            raise ApiError(
+                                404, "PDF ainda não disponível na VPS."
+                            ) from None
+                    if not content.startswith(b"%PDF-") or len(content) > 30 * 1024 * 1024:
+                        raise ApiError(404, "PDF indisponível.")
+                    self._send(content, mime="application/pdf")
+                    return
+                pdf_available = local_ok or r2_bridge.available(account_id)
                 link = payment_shares.share_url(shared.group(1))
-                self._send(payment_shares.share_page(info, link),
-                           mime="text/html; charset=utf-8")
+                self._send(payment_shares.share_page(
+                    info, link, pdf_available=pdf_available
+                ), mime="text/html; charset=utf-8")
                 return
             if self.command == "GET" and route == "/health":
                 # Apenas metadado de versao: nunca expor contas nem tokens.
