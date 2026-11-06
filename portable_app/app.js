@@ -218,7 +218,7 @@ const dayLabel=v=>{
   const due=new Date(String(v).slice(0,10)+'T00:00:00');
   const distance=Math.round((due-today)/86400000);
   if(!Number.isFinite(distance))return '';
-  return distance<0?Math.abs(distance)+' dias atrás':distance===0?'Hoje':distance===1?'Amanhã':'Em '+distance+' dias';
+  return distance<0?Math.abs(distance)+' dias atrás':distance===0?'Vencida hoje':distance===1?'Amanhã':'Em '+distance+' dias';
 };
 const dateBR=v=>{
   if(!v)return '—';
@@ -344,7 +344,7 @@ function render(){
     tr.innerHTML=
        '<td data-label="Fornecedor"><div class="vendor"><span class="vendor-avatar" style="background:'+avatarColor(a.fornecedor)+'">'+esc(initials(a.fornecedor))+'</span><span class="vendor-name">'+esc(a.fornecedor)+'</span></div></td>'
       +'<td data-label="Observações" class="obs" title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'—')+'</td>'
-      +'<td data-label="Vencimento"><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(dueDescription.includes('atrás')?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
+      +'<td data-label="Vencimento"><div class="due">'+esc(dateBR(a.vencimento))+'<small class="'+(a.status==='Vencida'?'late':'')+'">'+esc(a.status==='Paga'?'Pago':dueDescription)+'</small></div></td>'
       +'<td data-label="Valor" class="value">'+esc(money(a.valor))+'</td>'
       +'<td data-label="Status"><span class="pill '+esc(a.status.replace(/\s/g,''))+'">'+esc(a.status)+'</span></td>'
       +'<td data-label="Sugerido em" class="date-time">'+esc(timeBR(a.suggested_at))+'</td>'
