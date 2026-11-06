@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from io import BytesIO
+from zipfile import ZipFile
 import tempfile
 import threading
 import unittest
@@ -61,6 +63,38 @@ class PortableDataTests(unittest.TestCase):
         for p in self.patchers:
             p.start()
             self.addCleanup(p.stop)
+
+    def test_excel_export_download_has_session_and_does_not_change_accounts(self):
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        endpoint = f"http://127.0.0.1:{httpd.server_port}/api/export/excel"
+        payload = json.dumps({"ids": [1], "label": "Em aberto | Teste"}).encode()
+        headers = {"Content-Type": "application/json", "X-Local-Token": s.TOKEN}
+        before = s.list_accounts()["accounts"][0].copy()
+        with urlopen(Request(endpoint, data=payload, method="POST",
+                             headers=headers), timeout=15) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("spreadsheetml.sheet", response.headers["Content-Type"])
+            raw = response.read()
+        with ZipFile(BytesIO(raw)) as archive:
+            sheet = archive.read("xl/worksheets/sheet1.xml")
+            self.assertIn(b"PROVA SEM PDF", sheet)
+            self.assertIn(b'autoFilter ref="A4:G5"', sheet)
+            self.assertIn(b"123.45", sheet)
+        self.assertEqual(s.list_accounts()["accounts"][0], before)
+        with self.assertRaises(HTTPError) as unauthorized:
+            urlopen(Request(endpoint, data=payload, method="POST",
+                            headers={"Content-Type": "application/json"}), timeout=15)
+        self.assertEqual(unauthorized.exception.code, 403)
+        unauthorized.exception.close()
+        missing_id = json.dumps({"ids": [9999]}).encode()
+        with self.assertRaises(HTTPError) as stale:
+            urlopen(Request(endpoint, data=missing_id, method="POST",
+                            headers=headers), timeout=15)
+        self.assertEqual(stale.exception.code, 409)
+        stale.exception.close()
 
     def test_due_today_is_overdue_in_server_and_account_summary(self):
         today = date.today()
