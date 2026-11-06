@@ -97,7 +97,7 @@ def display_amount(value):
     return "R$ " + f"{amount:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
 
 
-def share_page(account, link):
+def share_page(account, link, *, pdf_available=False):
     """O WhatsApp lê as meta-tags no HTML, sem executar JavaScript."""
     e = lambda value: html.escape(str(value), quote=True)
     receiver = str(account.get("fornecedor") or "Pagamento")
@@ -133,6 +133,7 @@ def share_page(account, link):
 <pre id="payment-code">{e(code)}</pre>
 <button id="copy-code" type="button">Copiar código de pagamento</button>
 <p id="copy-status" role="status" aria-live="polite"></p>
+{('<a class="pdf-button" href="' + e(link) + '/boleto.pdf" target="_blank" rel="noopener noreferrer">Abrir boleto em PDF</a>') if pdf_available else '<p class="pdf-hint">PDF indisponível no servidor. O código de pagamento está acima.</p>'}
 </section>
 <p class="footer">Confira o favorecido e o valor no aplicativo do seu banco antes de pagar.</p>
 </main><script src="/payment-share.js" defer></script>
