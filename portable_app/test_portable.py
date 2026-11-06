@@ -82,20 +82,32 @@ class PortableDataTests(unittest.TestCase):
             "vencimento": "2026-10-09",
             "tipo_pagamento": "PIX",
             "codigo_pagamento": pix,
-            "observacoes": "ITR CIB 9463750-4",
+            "observacoes": "ITR CIB 9463750-4.pdf",
         }
         expected = (
-            "RECEBEDOR: RECEITA FEDERAL\n"
-            "PAGADOR: JONAS NELMAR MARLOW\n"
-            "VALOR: R$ 270,35\n"
-            "VENCIMENTO: 2026-10-09\n"
-            "OBSERVAÇÕES: ITR CIB 9463750-4\n\n"
-            "CÓDIGO PIX / LINHA DIGITÁVEL: " + pix
+            "RECEBEDOR: RECEITA FEDERAL\n\n"
+            "VALOR: R$ 270,35\n\n"
+            "ITR CIB 9463750-4\n\n" + pix
         )
         self.assertEqual(s.payment_text(data), expected)
-        # Sem código, não deixar uma linha vazia desnecessária no final.
+        # O texto copiado nao altera observacoes armazenadas.
+        self.assertEqual(data["observacoes"], "ITR CIB 9463750-4.pdf")
+        # Sem codigo, termina na observacao sem linhas em branco extras.
         data["codigo_pagamento"] = ""
-        self.assertEqual(s.payment_text(data), expected.split("\n\n")[0])
+        self.assertEqual(s.payment_text(data), expected.rsplit("\n\n", 1)[0])
+        # Extensao PDF em caixa alta e espacos extras tambem devem sair.
+        data["observacoes"] = " SEGURO ULTIMA PARCELA CAR 3.PDF  "
+        self.assertEqual(
+            s.payment_text(data),
+            "RECEBEDOR: RECEITA FEDERAL\n\nVALOR: R$ 270,35"
+            "\n\nSEGURO ULTIMA PARCELA CAR 3",
+        )
+        # Sem observacao nao gerar uma secao vazia.
+        data["observacoes"] = ""
+        self.assertEqual(
+            s.payment_text(data),
+            "RECEBEDOR: RECEITA FEDERAL\n\nVALOR: R$ 270,35",
+        )
 
     def test_send_is_not_persisted_until_acknowledgment(self):
         ready = s.prepare_send(1)
