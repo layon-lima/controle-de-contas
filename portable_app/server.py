@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -60,6 +60,7 @@ else:
     import mobile_vps
     import r2_bridge
     import pdf_clipboard
+    import excel_export
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -1388,6 +1389,25 @@ class Handler(BaseHTTPRequestHandler):
                     if payload is None:
                         raise ApiError(404, "Conta em aberto nao encontrada.")
                     self._json(payload)
+                    return
+                if self.command == "POST" and route == "/api/export/excel":
+                    # Somente os IDs exibidos na lista filtrada são exportados.
+                    # Buscar os dados REAIS no banco, nunca confiar em valores
+                    # enviados pelo navegador nem alterar qualquer lançamento.
+                    options = self._body()
+                    raw_ids = options.get("ids")
+                    if (not isinstance(raw_ids, list) or not raw_ids or
+                            len(raw_ids) > excel_export.MAX_ROWS or
+                            any(type(aid) is not int or aid <= 0 for aid in raw_ids) or
+                            len(set(raw_ids)) != len(raw_ids)):
+                        raise ApiError(400, "Lista de exportação inválida ou muito grande.")
+                    catalog = {item["id"]: item for item in list_accounts()["accounts"]}
+                    if not all(aid in catalog for aid in raw_ids):
+                        raise ApiError(409, "A lista mudou. Atualize a página e exporte novamente.")
+                    rows = [catalog[aid] for aid in raw_ids]
+                    description = str(options.get("label") or "Lista filtrada")[:120]
+                    content = excel_export.build_xlsx(rows, label=description)
+                    self._send(content, mime=excel_export.MIME_TYPE)
                     return
                 if self.command == "GET" and route == "/api/accounts":
                     self._json({"ok": True, **list_accounts()})
