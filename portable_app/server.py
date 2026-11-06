@@ -147,7 +147,7 @@ def status(due, paid):
         return "Paga"
     try:
         days = (date.fromisoformat(str(due)[:10]) - date.today()).days
-        return "Vencida" if days < 0 else "Próxima" if days <= 5 else "Em dia"
+        return "Vencida" if days <= 0 else "Próxima" if days <= 5 else "Em dia"
     except (ValueError, TypeError):
         return "Em dia"
 
