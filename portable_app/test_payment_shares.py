@@ -61,6 +61,22 @@ class PaymentShareTests(unittest.TestCase):
         self.assertNotIn("NÃO DEVE APARECER", output)
         self.assertIn("Copiar código de pagamento", output)
 
+    def test_pdf_button_only_when_file_is_available(self):
+        with patch.dict(os.environ, {
+            "CONTAS_SHARE_ORIGIN": "https://contas-cloud.fazendanovohorizonte.com"
+        }):
+            url = "https://contas-cloud.fazendanovohorizonte.com/p/exemplo"
+            available = ps.share_page(
+                self.account, url, pdf_available=True
+            ).decode("utf-8")
+            missing = ps.share_page(
+                self.account, url, pdf_available=False
+            ).decode("utf-8")
+        self.assertIn('href="' + url + '/boleto.pdf"', available)
+        self.assertIn("Abrir boleto em PDF", available)
+        self.assertNotIn("/boleto.pdf", missing)
+        self.assertIn("PDF indisponível no servidor", missing)
+
     def test_no_html_injection_and_safe_metadata(self):
         self.account["fornecedor"] = '<script>alert("x")</script>'
         self.account["observacoes"] = 'Boleto <img src=x onerror=alert(1)>.PDF'
