@@ -764,12 +764,12 @@ async function whatsappPaymentModal(account){
   const original=String(account.codigo_pagamento||'').trim();
   const digits=original.replace(/[^0-9]/g,'');
   const mode=original.startsWith('000201')?'pix':
-    ([47,48].includes(digits.length)&&/^[0-9. \\-]+$/.test(original)?'boleto':null);
+    ([47,48].includes(digits.length)&&/^[0-9. \-]+$/.test(original)?'boleto':null);
   if(!mode)
     throw new Error('Este pagamento não possui Pix dinâmico ou linha digitável de boleto compatível com o card oficial.');
   if(!status.modes.includes(mode))
     throw new Error('Falta configurar o modelo de pagamento '+mode.toUpperCase()+' na API Meta.');
-  const description=String(account.observacoes||'').replace(/\\.pdf\\s*$/i,'').trim();
+  const description=String(account.observacoes||'').replace(/\.pdf\s*$/i,'').trim();
   showModal('Enviar cartão pelo WhatsApp',
     'O destinatário receberá um card de pagamento, sujeito à aprovação e disponibilidade da Meta.',
     '<div class="field wide"><b>Recebedor</b><div>'+esc(account.fornecedor)+'</div></div>'+
@@ -783,7 +783,7 @@ async function whatsappPaymentModal(account){
     'O status da conta não será alterado.</p>',
     'Enviar pelo WhatsApp',async()=>{
       const phone=$('waRecipient').value.trim();
-      if(!/^\\+?[0-9 ()-]{10,22}$/.test(phone))
+      if(!/^\+?[0-9 ()-]{10,22}$/.test(phone))
         throw new Error('Informe um telefone do WhatsApp com DDD.');
       if(!$('waConsent').checked)
         throw new Error('Confirme a autorização do destinatário.');
