@@ -368,6 +368,7 @@ function openMenu(id,event){
   menu.classList.add('visible');
   menu.querySelector('[data-action="pdf"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="reanalyze"]').disabled=!a.has_pdf;
+  menu.querySelector('[data-action="copy-pdf-image"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="cancel-suggestion"]').disabled=!a.suggested_at;
   menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||'').trim();
   menu.querySelector('[data-action="send"]').disabled=a.status==='Paga'||!String(a.codigo_pagamento||'').trim();
@@ -388,6 +389,41 @@ async function showPDF(receipt=false){
   const viewer=window.open(url,'_blank');
   if(!viewer)notice('Permita popups para visualizar o PDF.',true);
   setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+async function copyPDFAsImage(account){
+  // O navegador autoriza escrita de PNG com interação direta do usuário.
+  // O ClipboardItem recebe a Promise: a chamada de write acontece ainda
+  // no clique, antes de qualquer await da rede (evita perda da ativacao).
+  if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')
+    throw new Error('Para copiar imagens, use Edge ou Chrome atualizado com HTTPS.');
+  let loadError=null;
+  const png=(async()=>{
+    const url='/api/accounts/'+account.id+'/pdf-image';
+    const load=()=>fetch(url,{headers:{'X-Local-Token':token}});
+    let response=await load();
+    if(response.status===403){
+      const rejected=await response.clone().json().catch(()=>({}));
+      if(/sess[aã]o inv[aá]lida|reabra pelo iniciador/i.test(String(rejected.error||''))){
+        await renewSessionToken();
+        response=await load();
+      }
+    }
+    if(!response.ok){
+      const problem=await response.json().catch(()=>({}));
+      throw new Error(problem.error||'Não foi possível gerar a imagem do PDF.');
+    }
+    const blob=await response.blob();
+    if(blob.type!=='image/png'||blob.size<20)
+      throw new Error('O servidor não retornou uma imagem PNG válida.');
+    return blob;
+  })().catch(error=>{loadError=error;throw error;});
+  try{
+    await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);
+    notice('Imagem da primeira página do boleto copiada! Abra o WhatsApp e pressione Ctrl+V.',false,11000);
+  }catch(error){
+    if(loadError)throw loadError;
+    throw new Error('O navegador não permitiu copiar a imagem. Verifique a permissão da área de transferência no Edge/Chrome.');
+  }
 }
 async function copyText(text){
   if(navigator.clipboard&&navigator.clipboard.writeText){
@@ -762,6 +798,7 @@ async function action(kind){
   const a=current();closeMenu();if(!a)return;
   try{
     if(kind==='pdf')await showPDF();
+    else if(kind==='copy-pdf-image')await copyPDFAsImage(a);
     else if(kind==='attach')$('uploadFile').click();
     else if(kind==='reanalyze'){
       const read=await api('/api/accounts/'+a.id+'/analyze');
