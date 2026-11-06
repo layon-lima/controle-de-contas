@@ -43,6 +43,8 @@ main.surface{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hid
 .filters select{min-width:125px;max-width:190px}.filters .search{flex:1;min-width:0;position:relative}
 .filters .search img{width:17px;height:17px;position:absolute;left:12px;top:11px;opacity:.7}
 .filters .search input{width:100%;padding-left:37px}.filters input::placeholder{color:#91a1b5}
+.export-excel{min-height:39px;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;border:1px solid #cfe1d9;background:#f0faf5;color:#167351;border-radius:9px;padding:0 14px;font-size:12px;font-weight:750;cursor:pointer}
+.export-excel:hover{background:#e0f5e9}.export-excel:disabled{opacity:.6;cursor:wait}
 .table-scroll{flex:1;min-height:340px;overflow:auto;margin:0 9px 8px;border:1px solid #e7edf5;border-radius:10px}
 table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;min-width:1000px}
 thead th{height:43px;background:#f8fbfe;color:#516982;text-align:left;padding:0 20px 0 12px;font-size:11px;border-bottom:1px solid #e0e9f4;position:sticky;top:0;z-index:3;white-space:nowrap;overflow:visible}
@@ -220,6 +222,7 @@ table{min-width:0}.vendor-name{min-width:0}
     <div class="filters">
       <label>Status <select id="status"><option value="all">Todas</option><option>Vencida</option><option>Próxima</option><option>Em dia</option><option>Paga</option></select></label>
       <div class="search"><img src="/search.svg" alt=""><input type="search" id="search" placeholder="Pesquisar fornecedor, valor, descrição ou vencimento..."></div>
+      <button type="button" id="exportExcel" class="export-excel" title="Exportar para Excel as contas exibidas com os filtros atuais">↓ Exportar Excel</button>
     </div>
     <div class="table-scroll">
       <table aria-label="Contas a pagar, clique duas vezes em uma linha para as ações">
@@ -250,5 +253,5 @@ table{min-width:0}.vendor-name{min-width:0}
 <div id="dropZone" class="drop-zone" aria-hidden="true"><div class="drop-zone-content"><img src="/icons/upload.svg" alt=""><strong>Solte um boleto ou comprovante PDF</strong><span>Boletos entram no cadastro; comprovantes mostram as contas elegíveis para sua escolha.</span></div></div>
 <div id="toast" class="toast" role="status"></div>
 <!--LOCAL_AUTH-->
-<script src="/app.js?v=20261106-copy-pdf-image"></script>
+<script src="/app.js?v=20261106-export-excel"></script>
 </body></html>
