@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, whatsapp_payments
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, payment_shares
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -59,7 +59,7 @@ else:
     import receipt_matching
     import mobile_vps
     import r2_bridge
-    import whatsapp_payments
+    import payment_shares
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -454,6 +454,24 @@ def payment_text(data):
     if values["codigo_pagamento"]:
         parts.append(values["codigo_pagamento"])
     return "\n\n".join(parts)
+
+
+def prepare_share(account_id):
+    """Cria um link assinado apenas para uma conta aberta e com código."""
+    with connection() as conn:
+        info = account(conn, account_id)
+        paid = conn.execute(
+            "SELECT 1 FROM pagamentos WHERE conta_id=? "
+            "AND data_pagamento IS NOT NULL AND TRIM(data_pagamento)<>'' LIMIT 1",
+            (account_id,)
+        ).fetchone()
+    if paid:
+        raise ValueError("Conta paga. Não é possível compartilhar novo pagamento.")
+    if not str(info.get("codigo_pagamento") or "").strip():
+        raise ValueError("Cadastre o PIX ou código digitável antes de compartilhar.")
+    token = payment_shares.create_token(APP_DIR, account_id)
+    url = payment_shares.share_url(token)
+    return {"url": url, "text": payment_text(info) + "\n\n" + url}
 
 
 def prepare_send(account_id):
@@ -1082,6 +1100,40 @@ class Handler(BaseHTTPRequestHandler):
                             + html + "</body></html>").encode("utf-8"),
                            mime="text/html; charset=utf-8")
                 return
+            if self.command == "GET" and route == "/payment-share-preview.png":
+                self._send(payment_shares.preview_png(), mime="image/png")
+                return
+            if self.command == "GET" and route in (
+                "/payment-share.css", "/payment-share.js"
+            ):
+                mime = ("text/css; charset=utf-8" if route.endswith(".css")
+                        else "text/javascript; charset=utf-8")
+                self._send((WEB_DIR / route.lstrip("/")).read_bytes(), mime=mime)
+                return
+            shared = re.fullmatch(r"/p/([A-Za-z0-9_.-]{65,150})", route)
+            if self.command == "GET" and shared:
+                account_id = payment_shares.read_token(APP_DIR, shared.group(1))
+                if account_id is None:
+                    raise ApiError(404, "Link de pagamento inválido ou expirado.")
+                with connection() as conn:
+                    try:
+                        info = account(conn, account_id)
+                    except ValueError:
+                        raise ApiError(404, "Link indisponível.") from None
+                    paid = conn.execute(
+                        "SELECT 1 FROM pagamentos WHERE conta_id=? "
+                        "AND data_pagamento IS NOT NULL "
+                        "AND TRIM(data_pagamento)<>'' LIMIT 1",
+                        (account_id,)
+                    ).fetchone()
+                if paid:
+                    raise ApiError(410, "Esta cobrança já foi paga.")
+                if not str(info.get("codigo_pagamento") or "").strip():
+                    raise ApiError(404, "Código de pagamento indisponível.")
+                link = payment_shares.share_url(shared.group(1))
+                self._send(payment_shares.share_page(info, link),
+                           mime="text/html; charset=utf-8")
+                return
             if self.command == "GET" and route == "/health":
                 # Apenas metadado de versao: nunca expor contas nem tokens.
                 self._json({"online": True, "revision": SOURCE_REVISION})
@@ -1256,9 +1308,6 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._check(writing=self.command == "POST" and not no_body_mobile_copy)
                 parts = route.strip("/").split("/")
-                if self.command == "GET" and route == "/api/whatsapp/status":
-                    self._json({"ok": True, **whatsapp_payments.status(APP_DIR)})
-                    return
                 if self.command == "GET" and route == "/api/ai/status":
                     self._json({"ok": True, **AI_ASSIST.status()})
                     return
@@ -1538,23 +1587,8 @@ class Handler(BaseHTTPRequestHandler):
                             result = {"deleted": True}
                         elif op == "prepare-send":
                             result = prepare_send(account_id)
-                        elif op == "whatsapp-send":
-                            # Confirmacao humana em cada envio. Nao marca a conta
-                            # como enviada: a API confirma aceitacao, nao entrega.
-                            number = str(data.get("phone") or "").strip()
-                            with connection() as conn:
-                                detail = account(conn, account_id)
-                                paid = conn.execute(
-                                    "SELECT 1 FROM pagamentos WHERE conta_id=? "
-                                    "AND data_pagamento IS NOT NULL "
-                                    "AND TRIM(data_pagamento)<>'' LIMIT 1",
-                                    (account_id,)
-                                ).fetchone()
-                            if paid:
-                                raise ApiError(409, "Conta ja paga. Envio pelo WhatsApp bloqueado.")
-                            result = whatsapp_payments.send(
-                                APP_DIR, detail, number, opt_in=data.get("opt_in") is True
-                            )
+                        elif op == "prepare-share":
+                            result = prepare_share(account_id)
                         elif op == "confirm-send":
                             result = {"sent_at": confirm_send(account_id, data.get("nonce"))}
                         elif op == "pay":
