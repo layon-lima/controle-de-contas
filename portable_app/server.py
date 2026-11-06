@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, payment_shares
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -59,7 +59,6 @@ else:
     import receipt_matching
     import mobile_vps
     import r2_bridge
-    import payment_shares
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -444,7 +443,7 @@ def payment_text(data):
     money = f"{values['valor']:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
     # Remover somente a extensao .pdf no fim da observacao exibida.
     # O nome armazenado no cadastro e no arquivo permanece intacto.
-    observation = re.sub(r"(?i)\\.pdf\\s*$", "", values["observacoes"]).strip()
+    observation = re.sub(r"(?i)\.pdf\s*$", "", values["observacoes"]).strip()
     parts = [
         "RECEBEDOR: " + values["fornecedor"],
         "VALOR: R$ " + money,
@@ -454,24 +453,6 @@ def payment_text(data):
     if values["codigo_pagamento"]:
         parts.append(values["codigo_pagamento"])
     return "\n\n".join(parts)
-
-
-def prepare_share(account_id):
-    """Cria um link assinado apenas para uma conta aberta e com código."""
-    with connection() as conn:
-        info = account(conn, account_id)
-        paid = conn.execute(
-            "SELECT 1 FROM pagamentos WHERE conta_id=? "
-            "AND data_pagamento IS NOT NULL AND TRIM(data_pagamento)<>'' LIMIT 1",
-            (account_id,)
-        ).fetchone()
-    if paid:
-        raise ValueError("Conta paga. Não é possível compartilhar novo pagamento.")
-    if not str(info.get("codigo_pagamento") or "").strip():
-        raise ValueError("Cadastre o PIX ou código digitável antes de compartilhar.")
-    token = payment_shares.create_token(APP_DIR, account_id)
-    url = payment_shares.share_url(token)
-    return {"url": url, "text": payment_text(info) + "\n\n" + url}
 
 
 def prepare_send(account_id):
@@ -1100,64 +1081,6 @@ class Handler(BaseHTTPRequestHandler):
                             + html + "</body></html>").encode("utf-8"),
                            mime="text/html; charset=utf-8")
                 return
-            if self.command == "GET" and route == "/payment-share-preview.png":
-                self._send(payment_shares.preview_png(), mime="image/png")
-                return
-            if self.command == "GET" and route in (
-                "/payment-share.css", "/payment-share.js"
-            ):
-                mime = ("text/css; charset=utf-8" if route.endswith(".css")
-                        else "text/javascript; charset=utf-8")
-                self._send((WEB_DIR / route.lstrip("/")).read_bytes(), mime=mime)
-                return
-            shared = re.fullmatch(
-                r"/p/([A-Za-z0-9_.-]{65,150})(/boleto[.]pdf)?", route
-            )
-            if self.command == "GET" and shared:
-                account_id = payment_shares.read_token(APP_DIR, shared.group(1))
-                if account_id is None:
-                    raise ApiError(404, "Link de pagamento inválido ou expirado.")
-                with connection() as conn:
-                    try:
-                        info = account(conn, account_id)
-                    except (ValueError, LookupError):
-                        raise ApiError(404, "Link indisponível.") from None
-                    paid = conn.execute(
-                        "SELECT 1 FROM pagamentos WHERE conta_id=? "
-                        "AND data_pagamento IS NOT NULL "
-                        "AND TRIM(data_pagamento)<>'' LIMIT 1",
-                        (account_id,)
-                    ).fetchone()
-                if paid:
-                    raise ApiError(410, "Esta cobrança já foi paga.")
-                if not str(info.get("codigo_pagamento") or "").strip():
-                    raise ApiError(404, "Código de pagamento indisponível.")
-                local_pdf = Path(str(info.get("pdf_conta") or "").strip())
-                local_ok = (local_pdf.suffix.lower() == ".pdf" and
-                            local_pdf.is_file())
-                if shared.group(2):
-                    # Não expor caminho local nem pastas da VPS ao visitante.
-                    # Quem possui o link assinado também pode consultar o PDF
-                    # desta conta, enquanto estiver aberta e o link for válido.
-                    if local_ok:
-                        content = local_pdf.read_bytes()
-                    else:
-                        try:
-                            content = r2_bridge.read_pdf(account_id)
-                        except r2_bridge.R2Unavailable:
-                            raise ApiError(
-                                404, "PDF ainda não disponível na VPS."
-                            ) from None
-                    if not content.startswith(b"%PDF-") or len(content) > 30 * 1024 * 1024:
-                        raise ApiError(404, "PDF indisponível.")
-                    self._send(content, mime="application/pdf")
-                    return
-                pdf_available = local_ok or r2_bridge.available(account_id)
-                link = payment_shares.share_url(shared.group(1))
-                self._send(payment_shares.share_page(
-                    info, link, pdf_available=pdf_available
-                ), mime="text/html; charset=utf-8")
-                return
             if self.command == "GET" and route == "/health":
                 # Apenas metadado de versao: nunca expor contas nem tokens.
                 self._json({"online": True, "revision": SOURCE_REVISION})
@@ -1611,8 +1534,6 @@ class Handler(BaseHTTPRequestHandler):
                             result = {"deleted": True}
                         elif op == "prepare-send":
                             result = prepare_send(account_id)
-                        elif op == "prepare-share":
-                            result = prepare_share(account_id)
                         elif op == "confirm-send":
                             result = {"sent_at": confirm_send(account_id, data.get("nonce"))}
                         elif op == "pay":
