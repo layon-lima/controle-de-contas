@@ -7,7 +7,7 @@ from contextlib import closing
 import tempfile
 import threading
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -61,6 +61,19 @@ class PortableDataTests(unittest.TestCase):
         for p in self.patchers:
             p.start()
             self.addCleanup(p.stop)
+
+    def test_due_today_is_overdue_in_server_and_account_summary(self):
+        today = date.today()
+        self.assertEqual(s.status(today.isoformat(), None), "Vencida")
+        self.assertEqual(s.status((today - timedelta(days=1)).isoformat(), None), "Vencida")
+        self.assertEqual(s.status((today + timedelta(days=1)).isoformat(), None), "Próxima")
+        self.assertEqual(s.status((today + timedelta(days=5)).isoformat(), None), "Próxima")
+        self.assertEqual(s.status((today + timedelta(days=6)).isoformat(), None), "Em dia")
+        self.assertEqual(s.status(today.isoformat(), today.isoformat()), "Paga")
+        # A linha no SQLite é um lançamento real de teste que vence hoje.
+        record = s.list_accounts()["accounts"][0]
+        self.assertEqual(record["status"], "Vencida")
+        self.assertEqual(record["vencimento"], today.isoformat())
 
     def test_read_uses_same_database_and_never_requires_pdf(self):
         state = s.list_accounts()
