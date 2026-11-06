@@ -404,22 +404,26 @@ async function sharePayment(){
   if(!account)return;
   if(!String(account.codigo_pagamento||'').trim())
     throw new Error('Cadastre o PIX ou código digitável antes de compartilhar.');
-  // Abrir a aba no clique do usuário, ANTES da requisição, para evitar bloqueio
-  // do navegador. Nunca envia mensagem automaticamente.
-  const tab=window.open('about:blank','_blank');
-  if(tab)tab.opener=null;
+  // Copia SOMENTE o endereco do card. Nenhuma aba, app ou WhatsApp e aberto.
+  const ready=await api('/api/accounts/'+account.id+'/prepare-share','POST',{});
+  if(!ready.url)throw new Error('Não foi possível gerar o link de pagamento.');
   try{
-    const ready=await api('/api/accounts/'+account.id+'/prepare-share','POST',{});
-    const link='https://wa.me/?text='+encodeURIComponent(ready.text);
-    if(tab){
-      tab.location.replace(link);
-    }else{
-      window.location.assign(link);
-    }
-    notice('Mensagem pronta no WhatsApp. Escolha o contato e confirme o envio.',false,10000);
-  }catch(e){
-    if(tab&&!tab.closed)tab.close();
-    throw e;
+    await copyText(ready.url);
+    notice('Link do card copiado! Cole na conversa do WhatsApp. O PDF estará no link se disponível.',false,11000);
+  }catch(_){
+    // Alguns navegadores só autorizam copiar após um novo clique humano.
+    showModal('Copiar link de pagamento',
+      'O navegador pediu confirmação para copiar. O endereço abre um card com código e PDF, se disponível.',
+      '<label class="field wide">Link do pagamento'+
+      '<input id="paymentShareUrl" type="text" readonly value="'+esc(ready.url)+'"></label>',
+      'Copiar link',async()=>{
+        const input=$('paymentShareUrl');
+        input.focus();input.select();
+        await copyText(input.value);
+        notice('Link do card copiado. Cole no WhatsApp.',false,11000);
+        return true;
+      });
+    $('paymentShareUrl')?.select();
   }
 }
 async function sendPayment(){
