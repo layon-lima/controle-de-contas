@@ -1118,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
                 with connection() as conn:
                     try:
                         info = account(conn, account_id)
-                    except ValueError:
+                    except (ValueError, LookupError):
                         raise ApiError(404, "Link indisponível.") from None
                     paid = conn.execute(
                         "SELECT 1 FROM pagamentos WHERE conta_id=? "
