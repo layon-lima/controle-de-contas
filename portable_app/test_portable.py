@@ -1046,6 +1046,91 @@ class PortableDataTests(unittest.TestCase):
         with s.connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM pagamentos").fetchone()[0], 0)
 
+    def test_photo_receipt_needs_confirmation_and_merges_into_one_pdf(self):
+        from PIL import Image, ImageDraw
+        bill = self._real_pdf("BOLETO ORIGINAL FOTO")
+        s.upload_pdf(1, bill, "boleto.pdf")
+        original = s.pdf_path(1)
+        before = original.read_bytes()
+        img = Image.new("RGB", (720, 1020), "white")
+        ImageDraw.Draw(img).text((35, 50), "COMPROVANTE DE PAGAMENTO", fill="black")
+        buffer = BytesIO()
+        img.save(buffer, format="JPEG", quality=93)
+        image = buffer.getvalue()
+
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        base = f"http://127.0.0.1:{httpd.server_port}/api/accounts/1"
+        common = {"Content-Type": "image/jpeg", "X-Local-Token": s.TOKEN}
+
+        verify = Request(base + "/verify-receipt", data=image,
+                         headers=common, method="POST")
+        with urlopen(verify, timeout=15) as response:
+            checked = json.load(response)
+        self.assertTrue(checked["ok"])
+        self.assertTrue(checked["manual_required"])
+        self.assertIn("Imagem convertida para PDF", checked["reason"])
+        self.assertEqual(original.read_bytes(), before)
+
+        unconfirmed = Request(
+            base + "/pay-with-receipt", data=image, method="POST",
+            headers={**common, "X-Paid-Date": date.today().isoformat()}
+        )
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(unconfirmed, timeout=15)
+        self.assertEqual(rejected.exception.code, 400)
+        rejected.exception.close()
+        self.assertEqual(original.read_bytes(), before)
+        self.assertEqual(s.list_accounts()["accounts"][0]["status"], "Vencida")
+
+        confirmed = Request(
+            base + "/pay-with-receipt", data=image, method="POST",
+            headers={**common, "X-Paid-Date": date.today().isoformat(),
+                     "X-Receipt-Manual-Confirmed": "yes"}
+        )
+        with urlopen(confirmed, timeout=15) as response:
+            saved = json.load(response)
+        self.assertTrue(saved["ok"])
+        self.assertTrue(saved["merged"])
+        self.assertEqual(saved["pages"], 2)
+        self.assertEqual(s.pdf_path(1), original)
+        self.assertEqual(s.pdf_path(1, receipt=True), original)
+        import fitz
+        with fitz.open(str(original)) as document:
+            self.assertEqual(document.page_count, 2)
+            self.assertIn("BOLETO ORIGINAL FOTO", document[0].get_text())
+            self.assertTrue(document[1].get_images())
+        with s.connection() as conn:
+            row = conn.execute(
+                "SELECT resultado_conferencia,detalhes_conferencia "
+                "FROM pagamentos WHERE conta_id=1"
+            ).fetchone()
+        self.assertEqual(row["resultado_conferencia"], "Confirmado pelo usuário")
+        self.assertIn("Imagem do comprovante convertida em PDF", row["detalhes_conferencia"])
+
+        # A mesma foto novamente deve gerar o mesmo hash e ser bloqueada,
+        # inclusive em outra conta. Não inserir segundo pagamento.
+        second_id = s.create_account({
+            "fornecedor": "SEGUNDA CONTA", "valor": 33.25,
+            "vencimento": date.today().isoformat(), "observacoes": "Outra conta"
+        })
+        reused = Request(
+            f"http://127.0.0.1:{httpd.server_port}/api/accounts/{second_id}/pay-with-receipt",
+            data=image, method="POST",
+            headers={**common, "X-Paid-Date": date.today().isoformat(),
+                     "X-Receipt-Manual-Confirmed": "yes"}
+        )
+        with self.assertRaises(HTTPError) as rejected_duplicate:
+            urlopen(reused, timeout=15)
+        self.assertEqual(rejected_duplicate.exception.code, 400)
+        rejected_duplicate.exception.close()
+        with s.connection() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM pagamentos"
+            ).fetchone()[0], 1)
+
     def test_payment_with_receipt_merges_pdf_and_disallows_second_payment(self):
         bill = self._real_pdf("BOLETO ORIGINAL")
         receipt = self._real_pdf("COMPROVANTE DE PAGAMENTO")
