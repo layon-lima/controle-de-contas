@@ -10,6 +10,12 @@ from io import BytesIO
 import fitz
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+try:
+    from . import pdf_workflows
+except ImportError:
+    # server.py tambem é iniciado diretamente pelo container da VPS.
+    import pdf_workflows
+
 MAX_FILE_BYTES = 30 * 1024 * 1024
 MAX_IMAGE_PIXELS = 32_000_000
 IMAGE_TYPES = {
@@ -36,7 +42,6 @@ def normalize_receipt(data: bytes, content_type: str) -> tuple[bytes, bool]:
     if not isinstance(data, bytes) or len(data) < 5 or len(data) > MAX_FILE_BYTES:
         raise ValueError("O comprovante deve ter até 30 MB e não pode estar vazio.")
     if content_type == "application/pdf":
-        from . import pdf_workflows
         pdf_workflows.check_pdf(data)
         return data, False
 
@@ -80,7 +85,6 @@ def normalize_receipt(data: bytes, content_type: str) -> tuple[bytes, bool]:
             result = document.tobytes(garbage=4, deflate=True)
         if len(result) > MAX_FILE_BYTES:
             raise ValueError("O PDF gerado ultrapassou 30 MB. Use uma imagem menor.")
-        from . import pdf_workflows
         pdf_workflows.check_pdf(result)
         return result, True
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
