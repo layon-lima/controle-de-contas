@@ -667,15 +667,30 @@ function accountModal(a,preview=null,rerun=null){
     });
   }
 }
+function receiptUploadMime(file){
+  // Extensao do arquivo ajuda quando o Windows informa MIME vazio.
+  const name=String(file?.name||'').toLowerCase();
+  const mimeByExtension={
+    pdf:'application/pdf',jpg:'image/jpeg',jpeg:'image/jpeg',
+    png:'image/png',webp:'image/webp',bmp:'image/bmp',
+    gif:'image/gif',tif:'image/tiff',tiff:'image/tiff'
+  };
+  const extension=name.split('.').pop();
+  const mime=mimeByExtension[extension]||String(file?.type||'').toLowerCase();
+  if(!['application/pdf','image/jpeg','image/png','image/webp',
+        'image/bmp','image/gif','image/tiff'].includes(mime))
+    throw new Error('Formato não aceito. Selecione PDF, JPG, PNG, WebP, BMP, GIF ou TIFF.');
+  return mime;
+}
 function payModal(a){
   if(a.status==='Paga'){notice('Conta já paga.',true);return}
   const now=localToday();
   let checkingReceipt=false,receiptResult=null;
   showModal('Registrar pagamento',a.fornecedor+' · '+money(a.valor),
     '<label class="field">Data do pagamento<input type="date" id="paidDate" value="'+now+'"></label>'
-    +'<label class="field" style="margin-top:15px">Comprovante PDF (opcional)<input type="file" id="receiptFile" accept=".pdf,application/pdf"></label>'
+    +'<label class="field" style="margin-top:15px">Comprovante PDF ou imagem (opcional)<input type="file" id="receiptFile" accept=".pdf,application/pdf,.jpg,.jpeg,image/jpeg,.png,image/png,.webp,image/webp,.bmp,image/bmp,.gif,image/gif,.tif,.tiff,image/tiff"></label>'
     +'<div class="receipt-check" id="receiptCheck" aria-live="polite"></div>'
-    +'<p class="hint">O aplicativo confere os identificadores antes de mesclar o comprovante. Se existirem contas idênticas sem prova exclusiva, será necessária confirmação manual. Sem comprovante: registro manual.</p>',
+    +'<p class="hint">JPG, PNG, WebP e outras imagens são convertidas em PDF automaticamente. O boleto e o comprovante ficam em um único PDF. Para imagens, confira o documento e confirme manualmente a associação. Sem comprovante: registro manual.</p>',
     'Confirmar pagamento',async()=>{
       const paidOn=$('paidDate').value;
       if(!paidOn)throw new Error('Escolha a data.');
@@ -688,9 +703,10 @@ function payModal(a){
         const checked=Boolean($('receiptManualConfirm')?.checked);
         if(receiptResult?.manual_required&&!checked)
           throw new Error('Confira a conta e marque a confirmação manual antes de registrar.');
+        const proofMime=receiptUploadMime(proof);
         const response=await fetch('/api/accounts/'+a.id+'/pay-with-receipt',{
           method:'POST',headers:{'X-Local-Token':token,
-            'Content-Type':'application/pdf','X-Paid-Date':paidOn,
+            'Content-Type':proofMime,'X-Paid-Date':paidOn,
             'X-Receipt-Manual-Confirmed':checked?'yes':'no'},body:proof
         });
         const result=await response.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
@@ -710,11 +726,15 @@ function payModal(a){
     if(!proof)return;
     if(proof.size>30*1024*1024){status.textContent='Comprovante acima de 30 MB.';return;}
     checkingReceipt=true;
-    status.textContent='Conferindo identificadores do comprovante...';
+    status.textContent='Preparando e conferindo o comprovante...';
     try{
+      const proofMime=receiptUploadMime(proof);
+      status.textContent=proofMime==='application/pdf'
+        ?'Conferindo identificadores do comprovante...'
+        :'Convertendo a imagem em PDF e preparando a conferência...';
       const response=await fetch('/api/accounts/'+a.id+'/verify-receipt',{
         method:'POST',headers:{'X-Local-Token':token,
-          'Content-Type':'application/pdf'},body:proof
+          'Content-Type':proofMime},body:proof
       });
       const answer=await response.json().catch(()=>({error:'Falha na leitura da conferência.'}));
       if($('receiptFile').files?.[0]!==proof||!$('backdrop').classList.contains('show'))return;
