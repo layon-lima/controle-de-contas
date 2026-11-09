@@ -750,7 +750,10 @@ function payModal(a){
       status.appendChild(message);
       if(answer.manual_required){
         const detail=document.createElement('small');
-        detail.textContent='Contas semelhantes: '+(answer.candidate_ids||[]).join(', ')+'.';
+        const candidates=answer.candidate_ids||[];
+        detail.textContent=candidates.length>1
+          ?'Contas semelhantes: '+candidates.join(', ')+'.'
+          :'Conferência visual necessária antes de registrar este comprovante.';
         status.appendChild(detail);
         const label=document.createElement('label');
         label.className='receipt-manual';
