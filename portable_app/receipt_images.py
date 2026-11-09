@@ -82,7 +82,9 @@ def normalize_receipt(data: bytes, content_type: str) -> tuple[bytes, bool]:
                 fitz.Rect(left, top, left + shown_width, top + shown_height),
                 stream=jpeg.getvalue(), keep_proportion=True
             )
-            result = document.tobytes(garbage=4, deflate=True)
+            # Sem IDs randômicos: a mesma imagem gera exatamente o mesmo PDF.
+            # Preserva detecção de comprovante duplicado via SHA256.
+            result = document.tobytes(garbage=4, deflate=True, no_new_id=True)
         if len(result) > MAX_FILE_BYTES:
             raise ValueError("O PDF gerado ultrapassou 30 MB. Use uma imagem menor.")
         pdf_workflows.check_pdf(result)
