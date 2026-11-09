@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export, receipt_images
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -61,6 +61,7 @@ else:
     import r2_bridge
     import pdf_clipboard
     import excel_export
+    import receipt_images
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -685,7 +686,7 @@ def eligible_receipt_accounts(data: bytes) -> dict:
     return receipt_matching.eligible_receipt_accounts(data, rows, prior)
 
 
-def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False, eligible_confirmed: bool = False):
+def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *, manual_confirmed: bool = False, auto_verified: bool = False, eligible_confirmed: bool = False, image_origin: bool = False):
     """Mescla comprovante ao PDF original, valida páginas e só então registra.
 
     O banco e os arquivos originais são restaurados se alguma etapa falhar.
@@ -732,6 +733,15 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             if match.get("receipt_value") is None:
                 raise ValueError("Valor pago não encontrado no comprovante.")
         verification = check_receipt_for_account(account_id, data)
+        if image_origin:
+            # Fotos de comprovante não têm texto selecionável para cruzar
+            # com a cobrança. Bloqueie até a associação visual ser aprovada.
+            verification["manual_required"] = True
+            if not manual_confirmed:
+                raise ValueError(
+                    "Comprovante em imagem: confira o documento e marque "
+                    "a confirmação manual antes de registrar."
+                )
         # Para a seleção explícita de elegíveis, o identificador antigo pode
         # não estar no comprovante. A duplicidade já é bloqueada acima.
         if verification["status"] == "conflict" and not eligible_confirmed:
@@ -781,9 +791,10 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
                     "resultado_conferencia": (
                         "Confirmado pelo usuário" if eligible_confirmed else
                         "Identificador confirmado" if verification["status"] == "verified" else
-                        "Confirmado pelo usuário" if verification["manual_required"] else "Não conferido"
+                        "Confirmado pelo usuário" if verification["manual_required"] or manual_confirmed else "Não conferido"
                     ),
                     "detalhes_conferencia": (
+                        ("Imagem do comprovante convertida em PDF. " if image_origin else "") +
                         ("Selecionado entre contas elegíveis e confirmado pelo usuário. "
                          if eligible_confirmed else verification["reason"] + " ") +
                         "SHA256:" + verification["sha256"] +
@@ -1050,8 +1061,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-Local-Token", "") != TOKEN:
             self._drain_rejected_post()
             raise ApiError(403, "Sessão inválida. Reabra pelo iniciador.")
-        if writing and self.headers.get("Content-Type", "").split(";")[0].strip() not in ("application/json", "application/pdf"):
-            raise ApiError(415, "Formato não aceito.")
+        if writing:
+            content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            allowed = {"application/json", "application/pdf"}
+            route = urlsplit(self.path).path
+            # Imagens só são autorizadas no envio/conferência de comprovante.
+            # Todas as demais rotas continuam exigindo seus formatos usuais.
+            if re.fullmatch(
+                r"/api/accounts/[0-9]+/(verify-receipt|pay-with-receipt)", route
+            ):
+                allowed.update(receipt_images.IMAGE_TYPES)
+            if content_type not in allowed:
+                raise ApiError(415, "Formato não aceito.")
     
     def _body(self, max_bytes=64_000):
         try:
@@ -1542,7 +1563,21 @@ class Handler(BaseHTTPRequestHandler):
                             raise ApiError(400, "Tamanho inválido.") from exc
                         if size < 5 or size > pdf_workflows.MAX_PDF:
                             raise ApiError(413, "Comprovante deve ter até 30 MB.")
-                        checked = check_receipt_for_account(account_id, self.rfile.read(size))
+                        original = self.rfile.read(size)
+                        pdf_bytes, is_image = receipt_images.normalize_receipt(
+                            original, self.headers.get("Content-Type", "")
+                        )
+                        checked = check_receipt_for_account(account_id, pdf_bytes)
+                        if is_image and checked["status"] != "conflict":
+                            # Uma imagem transformada em PDF não traz texto
+                            # selecionável. Não fingir conferência automática:
+                            # exigir aprovação visual antes de registrar.
+                            checked["manual_required"] = True
+                            checked["reason"] = (
+                                checked["reason"] +
+                                " Imagem convertida para PDF. Confira o comprovante "
+                                "e confirme manualmente a associação."
+                            )
                         self._json({"ok": True, **{
                             key: value for key, value in checked.items()
                             if key not in ("sha256", "e2e")
@@ -1556,11 +1591,15 @@ class Handler(BaseHTTPRequestHandler):
                         if size < 5 or size > pdf_workflows.MAX_PDF:
                             raise ApiError(413, "Comprovante deve ter até 30 MB.")
                         paid_on = self.headers.get("X-Paid-Date") or ""
+                        pdf_bytes, is_image = receipt_images.normalize_receipt(
+                            self.rfile.read(size), self.headers.get("Content-Type", "")
+                        )
                         self._json({"ok": True, **register_payment_with_receipt(
-                            account_id, paid_on, self.rfile.read(size),
+                            account_id, paid_on, pdf_bytes,
                             manual_confirmed=self.headers.get("X-Receipt-Manual-Confirmed") == "yes",
                             auto_verified=self.headers.get("X-Receipt-Auto-Verified") == "yes",
-                            eligible_confirmed=self.headers.get("X-Receipt-Eligible-Confirmed") == "yes"
+                            eligible_confirmed=self.headers.get("X-Receipt-Eligible-Confirmed") == "yes",
+                            image_origin=is_image
                         )})
                         return
                     if self.command == "POST" and op == "upload-pdf":
