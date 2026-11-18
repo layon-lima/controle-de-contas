@@ -24,9 +24,19 @@ MONTH_YEAR = re.compile(
     re.IGNORECASE,
 )
 EMPLOYEE_NAME = re.compile(
-    r"(?im)^\s*(?:NOME\s+DO\s+(?:EMPREGADO|FUNCIONARIO|COLABORADOR)|"
-    r"FUNCIONARIO|EMPREGADO|COLABORADOR)\s*:\s*"
-    r"([A-ZÀ-Ý][A-ZÀ-Ýa-zà-ÿ' .-]{4,90})\s*$"
+    r"(?im)^[ \\t]*(?:NOME\s+(?:DO|DA)\s+"
+    r"(?:EMPREGADO|FUNCIONARIO|COLABORADOR|TRABALHADOR|RECEBEDOR)|"
+    r"FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR)"
+    r"[ \\t]*[:\\-]?[ \\t]*"
+    r"([A-Z][A-Z' .-]{4,90})[ \\t]*$"
+)
+EMPLOYEE_NAME_NEXT_LINE = re.compile(
+    r"(?im)^[ \\t]*(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|"
+    r"NOME\s+(?:DO|DA)\s+(?:EMPREGADO|FUNCIONARIO|TRABALHADOR))"
+    r"[ \\t]*:?[ \\t]*\\n[ \\t]*([A-Z][A-Z' .-]{4,90})[ \\t]*$"
+)
+SIMPLE_NAME = re.compile(
+    r"(?im)^[ \\t]*NOME[ \\t]*[:\\-][ \\t]*([A-Z][A-Z' .-]{4,90})[ \\t]*$"
 )
 
 
@@ -282,7 +292,13 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
     # de reconhecimento falhar, bloqueando o build Docker da VPS.
     lines = "\n".join(simplify(line) for line in raw.splitlines())
     detected = bool(HOLERITE_WORDS.search(lines))
-    match_name = EMPLOYEE_NAME.search(lines) if detected else None
+    match_name = (EMPLOYEE_NAME.search(lines) or
+                  EMPLOYEE_NAME_NEXT_LINE.search(lines)) if detected else None
+    if detected and not match_name:
+        # Um campo NOME isolado é ambíguo quando há mais de um (empresa,
+        # funcionário, pagador). Só sugerir quando for o único.
+        names = list(SIMPLE_NAME.finditer(lines))
+        match_name = names[0] if len(names) == 1 else None
     suggestion = " ".join(match_name.group(1).split()).strip(" -.") if match_name else ""
     # Não confundir empregador com recebedor caso haja ambiguidade.
     if any(term in simplify(suggestion) for term in ("CNPJ", "CPF", "MATRICULA", "SALARIO")):
