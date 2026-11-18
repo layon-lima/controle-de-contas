@@ -813,7 +813,7 @@ function accountModal(a,preview=null,rerun=null,opts={}){
         '<div id="payrollNewFields"'+(employeeChosen?' hidden':'')+'>'+
           '<label class="field">Nome do funcionário *'+
             '<input type="text" name="funcionario_nome" id="payrollEmployeeName" maxlength="150" value="'+esc(suggestedEmployee)+'"></label>'+
-          '<label class="field">Pix padrão do funcionário'+
+          '<label class="field">Pix padrão do funcionário *'+
             '<input type="text" name="pix_padrao" id="payrollDefaultPix" maxlength="150" value="'+esc(opts.pendingEmployee?.chave_pix||'')+'" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
         '</div>'+
         '<p class="payroll-info" id="payrollPixPreview"></p>'+
@@ -890,6 +890,7 @@ function accountModal(a,preview=null,rerun=null,opts={}){
     const newFields=$('payrollNewFields');
     newFields.hidden=Boolean(employeeSelect.value);
     $('payrollEmployeeName').required=isPayroll&&!employeeSelect.value;
+    $('payrollDefaultPix').required=isPayroll&&!employeeSelect.value;
     $('payrollCompetence').required=isPayroll;
     const existing=payrollEmployees.find(e=>e.id===Number(employeeSelect.value));
     if(isPayroll&&!a){
