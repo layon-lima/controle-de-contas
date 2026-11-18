@@ -1458,14 +1458,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(content, mime=excel_export.MIME_TYPE)
                     return
                 if self.command == "GET" and route == "/api/holerites":
+                    # As contas já vêm em /api/accounts. Evitar listar
+                    # todos os PDFs no R2 novamente só para abrir a aba.
                     with connection() as conn:
                         employees = holerites.get_employees(conn)
-                    all_accounts = list_accounts()["accounts"]
-                    self._json({"ok": True, "funcionarios": employees,
-                                "lancamentos": [
-                                    row for row in all_accounts
-                                    if row["holerite"] or row["holerite_sugerido"]
-                                ]})
+                    self._json({"ok": True, "funcionarios": employees})
                     return
                 if self.command == "POST" and route == "/api/holerites/funcionarios":
                     payload = self._body()
