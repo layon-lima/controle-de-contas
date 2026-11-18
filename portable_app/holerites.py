@@ -46,6 +46,48 @@ def simplify(value):
     )
 
 
+
+# Não aceitar cabeçalhos como se fossem nomes de funcionários.
+# Em contracheques as caixas NOME/FUNCIONARIO muitas vezes ficam ao lado
+# de "CÓDIGO / DISCRIMINADA / DESCONTOS". A IA e o OCR passam por este crivo.
+PAYROLL_BAD_WORDS = frozenset((
+    "DISCRIMINADA", "DISCRIMINACAO", "DISCRIMINACAO", "DESCRICAO",
+    "VENCIMENTO", "VENCIMENTOS", "DESCONTO", "DESCONTOS", "PROVENTOS",
+    "REFERENCIA", "COMPETENCIA", "FUNCIONARIO", "FUNCIONARIOS",
+    "EMPREGADO", "EMPREGADOS", "COLABORADOR", "COLABORADORES",
+    "RECIBO", "HOLERITE", "CONTRACHEQUE", "PAGAMENTO", "SALARIO",
+    "EMPRESA", "EMPREGADOR", "MATRICULA", "ADMISSAO", "CARGO",
+    "SETOR", "DEPARTAMENTO", "FUNCAO", "FUNCOES", "CODIGO",
+    "CONTA", "BANCO", "BRUTO", "LIQUIDO", "TOTAL", "VALOR",
+    "CPF", "CNPJ", "MES", "ANO", "RUBRICA", "TABELA",
+    "DATA", "BASE", "INSS", "FGTS", "IRRF", "FOLHA", "DEMONSTRATIVO",
+    "DO", "DA", "DE", "DAS", "DOS", "PARA", "AO", "AS", "OS",
+))
+
+
+def valid_employee_name(value):
+    """Somente nome de pessoa plausível; nunca confiar cegamente no OCR/IA."""
+    name = " ".join(str(value or "").split()).strip(" .-:;,")
+    if len(name) < 7 or len(name) > 120 or len(name.split()) < 2:
+        return ""
+    canonical = simplify(name)
+    words = canonical.split()
+    if len(words) < 2 or len(words) > 9:
+        return ""
+    if words[0] in {"DO", "DA", "DE", "DAS", "DOS", "NOME", "CODIGO"}:
+        return ""
+    if any(w in PAYROLL_BAD_WORDS for w in words):
+        # Preposições entre nomes são normais: MARIA DA SILVA.
+        blocking = [w for w in words if w not in {"DE", "DA", "DO", "DAS", "DOS"}]
+        if any(w in PAYROLL_BAD_WORDS for w in blocking):
+            return ""
+    if not re.fullmatch(r"[A-Za-zÀ-ÿ' .-]+", name):
+        return ""
+    substantial = [w for w in words if w not in {"DE", "DA", "DO", "DAS", "DOS"}]
+    if len(substantial) < 2 or any(len(w) < 2 for w in substantial):
+        return ""
+    return name
+
 def tables_exist(conn):
     found = {
         row[0] for row in conn.execute(
@@ -295,17 +337,25 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
     # de reconhecimento falhar, bloqueando o build Docker da VPS.
     lines = "\n".join(simplify(line) for line in raw.splitlines())
     detected = bool(HOLERITE_WORDS.search(lines))
-    match_name = (EMPLOYEE_NAME.search(lines) or
-                  EMPLOYEE_NAME_NEXT_LINE.search(lines)) if detected else None
-    if detected and not match_name:
-        # Um campo NOME isolado é ambíguo quando há mais de um (empresa,
-        # funcionário, pagador). Só sugerir quando for o único.
-        names = list(SIMPLE_NAME.finditer(lines))
-        match_name = names[0] if len(names) == 1 else None
-    suggestion = " ".join(match_name.group(1).split()).strip(" -.") if match_name else ""
-    # Não confundir empregador com recebedor caso haja ambiguidade.
-    if any(term in simplify(suggestion) for term in ("CNPJ", "CPF", "MATRICULA", "SALARIO")):
-        suggestion = ""
+    suggestion = ""
+    if detected:
+        # Rejeitar falsos candidatos e continuar procurando no PDF.
+        for pattern in (EMPLOYEE_NAME, EMPLOYEE_NAME_NEXT_LINE):
+            candidates = [
+                valid_employee_name(m.group(1)) for m in pattern.finditer(lines)
+            ]
+            valid = list(dict.fromkeys(name for name in candidates if name))
+            if len(valid) == 1:
+                suggestion = valid[0]
+                break
+        if not suggestion:
+            # "NOME" sozinho é ambíguo caso várias pessoas apareçam.
+            candidates = [
+                valid_employee_name(m.group(1)) for m in SIMPLE_NAME.finditer(lines)
+            ]
+            valid = list(dict.fromkeys(name for name in candidates if name))
+            if len(valid) == 1:
+                suggestion = valid[0]
     competence = ""
     match_month = MONTH_YEAR.search(lines) if detected else None
     if match_month:
