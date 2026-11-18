@@ -892,12 +892,23 @@ function accountModal(a,preview=null,rerun=null,opts={}){
     $('payrollEmployeeName').required=isPayroll&&!employeeSelect.value;
     $('payrollCompetence').required=isPayroll;
     const existing=payrollEmployees.find(e=>e.id===Number(employeeSelect.value));
+    if(isPayroll&&!a){
+      const receiver=$('accountForm')?.querySelector('[name="fornecedor"]');
+      const correctName=existing?.nome||$('payrollEmployeeName')?.value.trim();
+      if(receiver&&correctName)receiver.value=correctName;
+    }
     $('payrollPixPreview').textContent=existing
       ? 'Pix padrão recuperado: '+(existing.chave_pix||'não cadastrado — edite o cadastro do funcionário')
       : 'Novo funcionário: informe a chave Pix padrão uma única vez.';
   }
   payrollType.addEventListener('change',updateHoleriteControls);
   employeeSelect.addEventListener('change',updateHoleriteControls);
+  $('payrollEmployeeName').addEventListener('input',()=>{
+    if(payrollType.value==='sim'&&!employeeSelect.value&&!a){
+      const receiver=$('accountForm')?.querySelector('[name="fornecedor"]');
+      if(receiver)receiver.value=$('payrollEmployeeName').value.trim();
+    }
+  });
   updateHoleriteControls();
   if($('correctGPT')){
     $('correctGPT').addEventListener('click',async()=>{
