@@ -692,7 +692,9 @@ function accountModal(a,preview=null,rerun=null,opts={}){
     const wide=['fornecedor','codigo_pagamento','observacoes'].includes(key);
     const predictedValue=suggested[key];
     const readable=predictedValue!==null&&predictedValue!==undefined&&String(predictedValue).trim()!=='';
-    const fallbackValue=a?(a[key]??''):(key==='vencimento'?localToday():'');
+    const fallbackValue=a?(a[key]??''):
+      key==='vencimento'?localToday():
+      key==='fornecedor'&&opts.employee?opts.employee.nome:'';
     // Cadastro inicial: Observacoes inicia pelo nome do PDF original,
     // independentemente das sugestoes OCR. Em releitura de conta ja existente,
     // preservar as Observacoes cadastradas (sem mudar o nome do documento).
@@ -727,6 +729,7 @@ function accountModal(a,preview=null,rerun=null,opts={}){
           '<label class="field">Pix padrão do funcionário'+
             '<input type="text" name="pix_padrao" id="payrollDefaultPix" maxlength="150" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
         '</div>'+
+        '<p class="payroll-info" id="payrollPixPreview"></p>'+
         '<p class="payroll-info">Cada holerite é uma conta independente. A chave Pix fica no cadastro permanente do funcionário; o valor é informado em cada mês.</p>'+
       '</div>'+
     '</section>';
@@ -801,6 +804,10 @@ function accountModal(a,preview=null,rerun=null,opts={}){
     newFields.hidden=Boolean(employeeSelect.value);
     $('payrollEmployeeName').required=isPayroll&&!employeeSelect.value;
     $('payrollCompetence').required=isPayroll;
+    const existing=payrollEmployees.find(e=>e.id===Number(employeeSelect.value));
+    $('payrollPixPreview').textContent=existing
+      ? 'Pix padrão recuperado: '+(existing.chave_pix||'não cadastrado — edite o cadastro do funcionário')
+      : 'Novo funcionário: informe a chave Pix padrão uma única vez.';
   }
   payrollType.addEventListener('change',updateHoleriteControls);
   employeeSelect.addEventListener('change',updateHoleriteControls);
