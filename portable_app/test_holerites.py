@@ -159,6 +159,26 @@ class PayrollTests(unittest.TestCase):
             self.assertEqual(result["funcionario_sugestao"], "MARIA DE SOUZA")
             self.assertEqual(result["origem_sugestao"], "OCR local do PDF")
 
+    def test_cabecalho_holerite_com_nome_apenas_na_imagem_aciona_ocr(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "papel_1.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "HOLERITE")
+                doc.save(str(path))
+            with patch("subprocess.run", return_value=SimpleNamespace(
+                    returncode=0, stdout=(
+                        b"NOME DO FUNCIONARIO: JOSE DE OLIVEIRA\n"
+                        b"COMPETENCIA: 11/2026\n"
+                    ))) as mocked:
+                result = h.detect_from_document("papel_1.pdf", path=path)
+            mocked.assert_called_once()
+            self.assertTrue(result["detected"])
+            self.assertEqual(result["funcionario_sugestao"], "JOSE DE OLIVEIRA")
+            self.assertEqual(result["origem_sugestao"], "OCR local do PDF")
+
     def test_nome_do_funcionario_depende_de_quebras_de_linha(self):
         # Regressão: simplificar o documento todo achata o texto e quebra
         # ^FUNCIONARIO, impedindo a construção da imagem Docker na VPS.
