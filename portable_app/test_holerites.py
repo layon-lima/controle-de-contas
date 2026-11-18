@@ -161,6 +161,22 @@ class PayrollTests(unittest.TestCase):
             self.assertTrue(result["detected"])
             self.assertFalse(result["funcionario_sugestao"])
 
+    def test_nao_tratar_cabecalho_discriminada_como_funcionario(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "contra-cheque.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "HOLERITE")
+                page.insert_text((40, 90), "FUNCIONARIO: DO DISCRIMINADA")
+                page.insert_text((40, 110), "DESCONTOS VENCIMENTOS TOTAL")
+                doc.save(str(path))
+            info = h.detect_from_document("holerite.pdf", path=path)
+        self.assertTrue(info["detected"])
+        self.assertEqual(info["funcionario_sugestao"], "")
+        self.assertFalse(h.valid_employee_name("DO DISCRIMINADA"))
+        self.assertEqual(h.valid_employee_name("JOSE MARIA DA SILVA"),
+                         "JOSE MARIA DA SILVA")
+
     def test_old_holerite_candidate_is_only_a_suggestion(self):
         self.assertTrue(h.guess_existing({
             "observacoes": "CONTRACHEQUE DE OUTUBRO.pdf"
