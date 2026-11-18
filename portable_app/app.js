@@ -451,6 +451,10 @@ function startDetectedHolerite(preview){
         '<input id="payrollRecognizedName" name="nome" type="text" required maxlength="150" value="'+esc(identified)+'"></label>'+
       '<label class="field wide" id="payrollRecognitionPixField">Chave Pix de pagamento *'+
         '<input id="payrollRecognizedPix" name="chave_pix" type="text" required maxlength="150" autocomplete="off" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
+      '<div class="wide" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+
+        '<button type="button" class="outline" id="payrollReadNameAI">Identificar nome com IA</button>'+
+        '<small id="payrollAIMessage" class="hint" role="status">A IA analisa o nome do recebedor na imagem do holerite mediante autorização.</small>'+
+      '</div>'+
       '<p class="hint" id="payrollRecognitionHint" style="grid-column:1/-1"></p>'+
     '</form>',
     'Continuar para o holerite',async()=>{
@@ -498,6 +502,32 @@ function startDetectedHolerite(preview){
       :'Novo recebedor: confirme o nome e cadastre o Pix. O funcionário será criado junto com este holerite.';
   }
   $('payrollRecognizedExisting').addEventListener('change',updateRecognition);
+  $('payrollReadNameAI').addEventListener('click',async()=>{
+    const status=$('payrollAIMessage'),button=$('payrollReadNameAI');
+    if(!aiStatus.enabled||!aiStatus.consented){
+      status.textContent='Primeiro conecte e autorize o ChatGPT no topo da tela. Depois clique novamente aqui.';
+      return;
+    }
+    button.disabled=true;
+    status.textContent='Conferindo visualmente o nome no holerite com IA...';
+    try{
+      const result=await api('/api/holerites/identificar','POST',{
+        ticket:preview.ticket
+      });
+      if(!result.funcionario_nome){
+        status.textContent='A IA não identificou um nome com segurança. Confira o PDF e corrija manualmente.';
+        return;
+      }
+      const name=String(result.funcionario_nome).trim();
+      $('payrollRecognizedName').value=name;
+      const match=matchPayrollEmployee(name);
+      $('payrollRecognizedExisting').value=match?String(match.id):'';
+      updateRecognition();
+      status.textContent='Nome identificado: '+name+'. Confira e informe a chave Pix se for novo.';
+    }catch(error){
+      status.textContent='Não foi possível usar a IA: '+(error.message||String(error));
+    }finally{button.disabled=false;}
+  });
   updateRecognition();
 }
 function payrollShortMonth(value){
@@ -1436,8 +1466,9 @@ async function refreshAI(){
     button.textContent=aiStatus.enabled?'ChatGPT conectado':aiStatus.connected?'IA desativada':'Conectar ChatGPT';
     button.classList.toggle('enabled',Boolean(aiStatus.enabled));
     button.classList.toggle('disabled',Boolean(aiStatus.connected&&!aiStatus.enabled));
-    button.title=aiStatus.enabled?'GPT disponível somente pelo botão Corrigir com GPT no formulário':
-      'A IA é opcional e nunca roda automaticamente.';
+    button.title=aiStatus.enabled
+      ?'IA disponível para leitura de nome em holerite e correções autorizadas.'
+      :'IA opcional. A leitura automática de holerite exige autorização própria.';
   }catch(_){
     // A interface de contas nao depende da disponibilidade deste recurso.
   }
@@ -1450,14 +1481,19 @@ $('aiConnect').addEventListener('click',async()=>{
     showModal('Assistência ChatGPT','O OCR continua sendo o leitor principal.',
       '<div class="ai-settings"><label><input id="aiEnabled" type="checkbox" '+
       (aiStatus.enabled?'checked':'')+
-      '> Permitir correção manual com GPT nos formulários</label>'+
-      '<p>Nenhum PDF será enviado automaticamente. A IA só revisa dados quando você clicar em Corrigir com GPT '+
-      'dentro de um formulário com PDF. Confira as sugestões e salve para treinar o OCR. '+
-      'A correção manual pode substituir campos preenchidos incorretamente. '+
-      'O uso consome a cota autorizada do seu ChatGPT, sem chave API.</p>'+
+      '> Habilitar ChatGPT para as correções e identificações manuais</label>'+
+      '<label><input id="aiAutoPayroll" type="checkbox" '+
+      (aiStatus.auto_holerites?'checked':'')+
+      '> Identificar automaticamente o nome do funcionário ao importar um holerite</label>'+
+      '<p>Quando esta segunda opção estiver ligada, a primeira página do holerite poderá ser enviada à OpenAI para leitura visual do nome do recebedor, sem clique adicional. '+
+      'Se desligada, a IA só será usada quando você solicitar manualmente. O resultado deve ser conferido antes de salvar. '+
+      'Pode consumir a cota autorizada da conexão ChatGPT.</p>'+
       '<button type="button" id="disconnectAI" class="outline">Desconectar ChatGPT</button></div>',
       'Salvar configuração',async()=>{
-        await api('/api/ai/consent','POST',{enabled:$('aiEnabled').checked});
+        await api('/api/ai/consent','POST',{
+          enabled:$('aiEnabled').checked,
+          auto_holerites:$('aiEnabled').checked&&$('aiAutoPayroll').checked
+        });
         await refreshAI();return true;
       });
     $('disconnectAI').addEventListener('click',async()=>{
@@ -1471,7 +1507,7 @@ $('aiConnect').addEventListener('click',async()=>{
     });
     return;
   }
-  if(!window.confirm('Conectar ChatGPT para CORRIGIR BOLETOS SOMENTE QUANDO VOCÊ CLICAR em Corrigir com GPT? Nenhum PDF será enviado automaticamente. Cada correção solicitada enviará imagens do documento à OpenAI usando a cota autorizada do seu plano. Nenhuma API paga será configurada.'))return;
+  if(!window.confirm('Conectar ChatGPT para leitura visual de documentos quando você autorizar? A identificação automática de holerites ficará DESATIVADA até ser habilitada nas configurações. Ao solicitar uma análise, a imagem do PDF será enviada à OpenAI.'))return;
   const tab=window.open('about:blank','_blank');
   try{
     await api('/api/ai/consent','POST',{enabled:true});
