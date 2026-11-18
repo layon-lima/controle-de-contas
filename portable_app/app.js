@@ -1627,12 +1627,12 @@ $('folderBtn').addEventListener('click',async()=>{
       '<p id="windowsCopyQueueStatus" class="hint"></p></div>'+
       '<button type="button" id="authorizeWindowsFolder" class="outline">Autorizar pasta salva</button> '+
       '<button type="button" id="browseWindowsFolder" class="outline">'+(current?'Trocar pasta…':'Selecionar pasta…')+'</button> '+
-      '<button type="button" id="testWindowsFolder" class="outline">Testar gravação</button> '+
-      '<button type="button" id="retryWindowsCopies" class="outline">Copiar pendentes</button>'+
+      '<button type="button" id="testWindowsFolder" class="outline">Testar gravação</button>'+
       '<p class="hint">Selecione a pasta BOLETOS principal, nao uma subpasta de ano/mes. '+
       'O teste cria e remove um arquivo temporario, sem alterar seus boletos. '+
       'Se a autorizacao do navegador expirar, clique em Autorizar pasta salva. '+
-      'PDFs pendentes sao guardados somente neste navegador ate serem copiados.</p>',
+      'O CONTAS 4 envia ao R2 e copia para o Windows automaticamente. '+
+      'Pendencias sao repetidas assim que a pasta estiver acessivel, sem sincronizacao manual.</p>',
       'Concluir',async()=>{
         const root=await readWindowsBoletoFolder();
         if(!root)throw new Error('Selecione a pasta BOLETOS pela primeira vez.');
@@ -1646,8 +1646,8 @@ $('folderBtn').addEventListener('click',async()=>{
     async function updateFolderStatus(){
       const root=await readWindowsBoletoFolder();
       const text=$('windowsFolderStatus'),button=$('authorizeWindowsFolder');
-      const retry=$('retryWindowsCopies'),queue=$('windowsCopyQueueStatus');
-      if(!text||!button||!retry||!queue)return;
+      const queue=$('windowsCopyQueueStatus');
+      if(!text||!button||!queue)return;
       let permission='not-configured';
       try{permission=await windowsFolderPermission(root);}
       catch(e){permission='error';}
@@ -1658,9 +1658,8 @@ $('folderBtn').addEventListener('click',async()=>{
       button.disabled=!root||permission==='granted';
       const pending=await windowsPendingCopies();
       queue.textContent=pending.length
-        ?pending.length+' PDF(s) aguardando copia no Windows. Use Copiar pendentes.'
-        :'Nenhum PDF aguardando copia no Windows neste navegador.';
-      retry.disabled=!root||!pending.length;
+        ?pending.length+' PDF(s) na fila de copia automatica do Windows.'
+        :'Todas as copias recentes foram processadas neste navegador.';
       $('testWindowsFolder').disabled=!root;
     }
     $('authorizeWindowsFolder').addEventListener('click',async()=>{
@@ -1672,7 +1671,8 @@ $('folderBtn').addEventListener('click',async()=>{
         if(state!=='granted')throw new Error('Autorize o acesso a pasta na janela do navegador.');
         await testWindowsFolderWrite(root);
         await updateFolderStatus();
-        notice('Pasta '+root.name+' autorizada. Teste real de gravacao concluido.');
+        await retryWindowsCopiesAutomatically();
+        notice('Pasta '+root.name+' autorizada. Copias pendentes processadas automaticamente.');
       }catch(e){notice('Nao foi possivel autorizar: '+(e.message||String(e)),true,12000);}
     });
     $('browseWindowsFolder').addEventListener('click',async()=>{
@@ -1699,16 +1699,6 @@ $('folderBtn').addEventListener('click',async()=>{
         await updateFolderStatus();
         notice('Teste OK: o navegador consegue gravar na pasta '+root.name+'.');
       }catch(e){notice('Teste da pasta falhou: '+(e.message||String(e)),true,12000);}
-    });
-    $('retryWindowsCopies').addEventListener('click',async()=>{
-      const button=$('retryWindowsCopies');
-      button.disabled=true;
-      try{
-        const copied=await copyPendingWindowsPDFs();
-        await updateFolderStatus();
-        notice(copied+' PDF(s) copiado(s) ao Windows. Nenhuma conta da VPS foi alterada.');
-      }catch(e){notice('Copia pendente nao concluida: '+(e.message||String(e)),true,15000);}
-      finally{await updateFolderStatus().catch(()=>{button.disabled=false;});}
     });
     await updateFolderStatus();
   }catch(e){notice(e.message||String(e),true,12000);}
