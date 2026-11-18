@@ -676,9 +676,13 @@ function accountModal(a,preview=null,rerun=null,opts={}){
   const payrollHint=analysis?.holerite_sugestao||{};
   const asPayroll=Boolean(a?.holerite||a?.holerite_sugerido||
     opts.payroll||payrollHint.detected);
-  const employeeChosen=Number(opts.employee?.id||a?.funcionario_id||0);
   const suggestedEmployee=String(opts.employee?.nome||a?.funcionario_nome||
     payrollHint.funcionario_sugestao||'');
+  const normalizeEmployeeName=v=>String(v||'').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').toLocaleUpperCase('pt-BR').replace(/\s+/g,' ').trim();
+  const existingMatch=payrollEmployees.find(e=>
+    suggestedEmployee&&normalizeEmployeeName(e.nome)===normalizeEmployeeName(suggestedEmployee));
+  const employeeChosen=Number(opts.employee?.id||a?.funcionario_id||existingMatch?.id||0);
   const suggestedCompetence=String(a?.competencia||
     payrollHint.competencia_sugestao||localToday().slice(0,7));
   const originalFilename=preview&&typeof preview.original_filename==='string'
