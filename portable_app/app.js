@@ -1685,8 +1685,10 @@ $('folderBtn').addEventListener('click',async()=>{
         await rememberWindowsBoletoFolder(chosen);
         $('windowsFolderName').textContent=chosen.name;
         $('browseWindowsFolder').textContent='Trocar pasta…';
+        await testWindowsFolderWrite(chosen);
         await updateFolderStatus();
-        notice('Pasta '+chosen.name+' lembrada. Clique em Testar gravacao para conferir.');
+        await retryWindowsCopiesAutomatically();
+        notice('Pasta '+chosen.name+' autorizada. Cópia automática R2 e Windows ativada.');
       }catch(e){if(e?.name!=='AbortError')notice(e.message||String(e),true,12000);}
     });
     $('testWindowsFolder').addEventListener('click',async()=>{
