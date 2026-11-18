@@ -96,6 +96,59 @@ class PortableDataTests(unittest.TestCase):
         self.assertEqual(stale.exception.code, 409)
         stale.exception.close()
 
+    def test_contas4_importar_holerite_novo_cadastra_funcionario_e_pix_juntos(self):
+        from portable_app import pdf_workflows as flow
+        import fitz
+        flow.PREVIEWS.clear()
+        self.addCleanup(flow.PREVIEWS.clear)
+        with fitz.open() as doc:
+            page = doc.new_page()
+            page.insert_text((45, 65), "RECIBO DE PAGAMENTO DE SALARIO")
+            page.insert_text((45, 85), "FUNCIONARIO: MARIA JOSE DE SOUZA")
+            page.insert_text((45, 105), "COMPETENCIA: 11/2026")
+            raw = doc.tobytes()
+        preview = flow.preview(
+            raw, "Holerite novembro 2026.pdf", self.root,
+            lambda path: {"fields": {
+                "fornecedor": "FAZENDA NOVO HORIZONTE",
+                "valor": 3200.00, "vencimento": "2026-12-05"
+            }},
+        )
+        file_path, _, _ = flow.take_preview(preview["ticket"])
+        guess = s.holerites.detect_from_document(
+            preview["original_filename"], file_path, preview.get("fields")
+        )
+        self.assertTrue(guess["detected"])
+        self.assertEqual(guess["funcionario_sugestao"], "MARIA JOSE DE SOUZA")
+        self.assertEqual(guess["competencia_sugestao"], "2026-11")
+        with s.connection() as conn:
+            self.assertFalse(s.holerites.tables_exist(conn))
+        # Confirmar as duas etapas do formulário (Pix + dados da conta).
+        with patch.object(s.pdf_intelligence, "learn_from_confirmed", return_value={}):
+            saved = s.create_account_from_preview({
+                "ticket": preview["ticket"],
+                "fornecedor": guess["funcionario_sugestao"],
+                "valor": 3200.00, "vencimento": "2026-12-05",
+                "observacoes": "HOLERITE NOVEMBRO 2026.pdf",
+                "holerite": "sim",
+                "funcionario_nome": guess["funcionario_sugestao"],
+                "pix_padrao": "maria@exemplo.com",
+                "competencia": guess["competencia_sugestao"],
+            })
+        with s.connection() as conn:
+            employees = s.holerites.get_employees(conn)
+            self.assertEqual(len(employees), 1)
+            self.assertEqual(employees[0]["chave_pix"], "maria@exemplo.com")
+        rows = {entry["id"]: entry for entry in s.list_accounts()["accounts"]}
+        self.assertTrue(rows[saved["id"]]["holerite"])
+        self.assertEqual(rows[saved["id"]]["competencia"], "2026-11")
+        self.assertIn("maria@exemplo.com", s.prepare_send(saved["id"])["text"])
+        with s.connection() as conn:
+            pdf = s.account(conn, saved["id"])["pdf_conta"]
+        self.assertTrue(Path(pdf).is_file())
+        with fitz.open(pdf) as doc:
+            self.assertEqual(doc.page_count, 1)
+
     def test_contas4_holerite_pix_reused_in_next_month_without_overwriting_account(self):
         first = s.create_account({
             "fornecedor": "FAZENDA NOVO HORIZONTE",
