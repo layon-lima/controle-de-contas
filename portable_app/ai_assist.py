@@ -319,8 +319,10 @@ class ChatGPTAssist:
         token = self.access_token()
         if not token:
             return {}
-        models = get_json(API + "/models", token=token).get("models", [])
-        names = [str(m.get("slug") or "") for m in models if isinstance(m, dict)]
+        listing = get_json(API + "/models", token=token)
+        models = listing.get("data") or listing.get("models") or []
+        names = [str(m.get("id") or m.get("slug") or "")
+                 for m in models if isinstance(m, dict)]
         model = next((m for m in ("gpt-6.1-sol", "gpt-6", "gpt-5.6") if m in names), None)
         if model is None:
             model = next((m for m in names if m.startswith("gpt-")), None)
@@ -398,9 +400,11 @@ class ChatGPTAssist:
         token = self.access_token()
         if not token:
             raise ValueError("A sessão do ChatGPT expirou. Reconecte a IA no CONTAS 4.")
-        models = get_json(API + "/models", token=token).get("models", [])
-        names = [str(m.get("slug") or "") for m in models if isinstance(m, dict)]
-        model = next((x for x in ("gpt-6", "gpt-5.6") if x in names), None)
+        listing = get_json(API + "/models", token=token)
+        models = listing.get("data") or listing.get("models") or []
+        names = [str(m.get("id") or m.get("slug") or "")
+                 for m in models if isinstance(m, dict)]
+        model = next((x for x in ("gpt-6", "gpt-5.6", "gpt-5") if x in names), None)
         if not model:
             model = next((x for x in names if x.startswith("gpt-")), None)
         if not model:
