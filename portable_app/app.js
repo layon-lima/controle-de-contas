@@ -669,10 +669,18 @@ const accountFields=[
   ['tipo_pagamento','Tipo de pagamento','text'],
   ['observacoes','Observações','textarea']
 ];
-function accountModal(a,preview=null,rerun=null){
+function accountModal(a,preview=null,rerun=null,opts={}){
   if(preview?.ticket)activePreviewTicket=preview.ticket;
   const analysis=preview||rerun;
   const suggested=analysis?.fields||{};
+  const payrollHint=analysis?.holerite_sugestao||{};
+  const asPayroll=Boolean(a?.holerite||a?.holerite_sugerido||
+    opts.payroll||payrollHint.detected);
+  const employeeChosen=Number(opts.employee?.id||a?.funcionario_id||0);
+  const suggestedEmployee=String(opts.employee?.nome||a?.funcionario_nome||
+    payrollHint.funcionario_sugestao||'');
+  const suggestedCompetence=String(a?.competencia||
+    payrollHint.competencia_sugestao||localToday().slice(0,7));
   const originalFilename=preview&&typeof preview.original_filename==='string'
     ? preview.original_filename : '';
   const unsafe=(analysis?.insecure_fields||[]).map(v=>String(v));
@@ -693,6 +701,31 @@ function accountModal(a,preview=null,rerun=null){
       :'<input name="'+key+'" type="'+type+'" '+(type==='number'?'step="0.01" min="0.01"':'')+' value="'+esc(value)+'" '+(['fornecedor','valor','vencimento'].includes(key)?'required':'')+'>';
     return '<label class="field '+(wide?'wide':'')+'">'+title+controls+'</label>';
   }).join('');
+  const employeeOptions=payrollEmployees.map(e=>
+    '<option value="'+Number(e.id)+'"'+(employeeChosen===e.id?' selected':'')+'>'+
+      esc(e.nome)+'</option>'
+  ).join('');
+  const payrollForm=
+    '<section class="payroll-form-box">'+
+      '<h4>Tratamento mensal do holerite</h4>'+
+      '<label class="field wide">Tipo do lançamento<select name="holerite" id="isHolerite">'+
+        '<option value="nao"'+(!asPayroll?' selected':'')+'>Conta normal</option>'+
+        '<option value="sim"'+(asPayroll?' selected':'')+'>Holerite mensal</option>'+
+      '</select></label>'+
+      '<div id="payrollFields" style="display:contents"'+(!asPayroll?' hidden':'')+'>'+
+        '<label class="field">Funcionário<select id="payrollEmployeePick" name="funcionario_id">'+
+          '<option value="">Novo funcionário</option>'+employeeOptions+'</select></label>'+
+        '<label class="field">Competência (mês) *'+
+          '<input type="month" id="payrollCompetence" name="competencia" value="'+esc(suggestedCompetence)+'"></label>'+
+        '<div id="payrollNewFields"'+(employeeChosen?' hidden':'')+'>'+
+          '<label class="field">Nome do funcionário *'+
+            '<input type="text" name="funcionario_nome" id="payrollEmployeeName" maxlength="150" value="'+esc(suggestedEmployee)+'"></label>'+
+          '<label class="field">Pix padrão do funcionário'+
+            '<input type="text" name="pix_padrao" id="payrollDefaultPix" maxlength="150" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
+        '</div>'+
+        '<p class="payroll-info">Cada holerite é uma conta independente. A chave Pix fica no cadastro permanente do funcionário; o valor é informado em cada mês.</p>'+
+      '</div>'+
+    '</section>';
   const fieldNames={recebedor:'Fornecedor',fornecedor:'Fornecedor',pagador:'Pagador',referencia:'Referência',valor:'Valor',vencimento:'Vencimento',codigo_pagamento:'Código de pagamento'};
   const warning=unsafe.length
     ? '<div class="ocr-note warning"><b>Conferir antes de salvar:</b> o leitor não confirmou com segurança '+esc([...new Set(unsafe.map(x=>fieldNames[x]||x))].join(', '))+'. Corrija os campos diretamente abaixo.</div>'
@@ -714,11 +747,16 @@ function accountModal(a,preview=null,rerun=null){
       ? '<div class="gpt-correction"><button type="button" id="correctGPT" class="outline">✦ Corrigir com GPT</button>'+
         '<span id="gptCorrectionMessage" role="status">Opcional. Só usa sua cota quando você clicar. Confira as sugestões antes de salvar.</span></div>'
       : '')+
-    '<form id="accountForm" class="formgrid">'+form+'</form>',
+    '<form id="accountForm" class="formgrid">'+form+payrollForm+'</form>',
     preview?'Confirmar e salvar PDF':a?'Salvar alterações':'Criar conta',async()=>{
       const form=$('accountForm');
       if(!form.reportValidity())return false;
       const values=Object.fromEntries(new FormData(form));
+      if(values.holerite==='sim'){
+        if(!values.competencia)throw new Error('Informe o mês de competência do holerite.');
+        if(!values.funcionario_id&&!String(values.funcionario_nome||'').trim())
+          throw new Error('Informe o funcionário do holerite.');
+      }
       // Solicitar permissao no clique ANTES da requisicao ao servidor.
       if(preview?.ticket&&pendingImportPDF?.ticket===preview.ticket)
         await prepareWindowsFolderCopy();
@@ -749,6 +787,20 @@ function accountModal(a,preview=null,rerun=null){
       // Salvar/importar nao altera o filtro escolhido pelo usuario.
       await reload();return true;
     });
+  const payrollType=$('isHolerite'), employeeSelect=$('payrollEmployeePick');
+  function updateHoleriteControls(){
+    const isPayroll=payrollType.value==='sim';
+    const fields=$('payrollFields');
+    fields.hidden=!isPayroll;
+    fields.style.display=isPayroll?'contents':'none';
+    const newFields=$('payrollNewFields');
+    newFields.hidden=Boolean(employeeSelect.value);
+    $('payrollEmployeeName').required=isPayroll&&!employeeSelect.value;
+    $('payrollCompetence').required=isPayroll;
+  }
+  payrollType.addEventListener('change',updateHoleriteControls);
+  employeeSelect.addEventListener('change',updateHoleriteControls);
+  updateHoleriteControls();
   if($('correctGPT')){
     $('correctGPT').addEventListener('click',async()=>{
       const button=$('correctGPT'),form=$('accountForm');
