@@ -762,12 +762,9 @@ function accountModal(a,preview=null,rerun=null,opts={}){
   const payrollHint=analysis?.holerite_sugestao||{};
   const asPayroll=Boolean(a?.holerite||a?.holerite_sugerido||
     opts.payroll||payrollHint.detected);
-  const suggestedEmployee=String(opts.employee?.nome||a?.funcionario_nome||
-    payrollHint.funcionario_sugestao||'');
-  const normalizeEmployeeName=v=>String(v||'').normalize('NFD')
-    .replace(/[\u0300-\u036f]/g,'').toLocaleUpperCase('pt-BR').replace(/\s+/g,' ').trim();
-  const existingMatch=payrollEmployees.find(e=>
-    suggestedEmployee&&normalizeEmployeeName(e.nome)===normalizeEmployeeName(suggestedEmployee));
+  const suggestedEmployee=String(opts.employee?.nome||opts.pendingEmployee?.nome||
+    a?.funcionario_nome||payrollHint.funcionario_sugestao||'');
+  const existingMatch=matchPayrollEmployee(suggestedEmployee);
   const employeeChosen=Number(opts.employee?.id||a?.funcionario_id||existingMatch?.id||0);
   const suggestedCompetence=String(a?.competencia||
     payrollHint.competencia_sugestao||localToday().slice(0,7));
@@ -780,11 +777,15 @@ function accountModal(a,preview=null,rerun=null,opts={}){
     const readable=predictedValue!==null&&predictedValue!==undefined&&String(predictedValue).trim()!=='';
     const fallbackValue=a?(a[key]??''):
       key==='vencimento'?localToday():
-      key==='fornecedor'&&opts.employee?opts.employee.nome:'';
+      key==='fornecedor'&&asPayroll?suggestedEmployee:'';
     // Cadastro inicial: Observacoes inicia pelo nome do PDF original,
     // independentemente das sugestoes OCR. Em releitura de conta ja existente,
     // preservar as Observacoes cadastradas (sem mudar o nome do documento).
-    const value=key==='observacoes'&&preview
+    const value=key==='fornecedor'&&asPayroll&&!a&&suggestedEmployee
+      ?suggestedEmployee
+      :key==='codigo_pagamento'&&asPayroll&&!a
+      ?''
+      :key==='observacoes'&&preview
       ? (originalFilename|| (readable?predictedValue:fallbackValue))
       : key==='observacoes'&&a ? fallbackValue
       : analysis&&readable?predictedValue:fallbackValue;
@@ -813,7 +814,7 @@ function accountModal(a,preview=null,rerun=null,opts={}){
           '<label class="field">Nome do funcionário *'+
             '<input type="text" name="funcionario_nome" id="payrollEmployeeName" maxlength="150" value="'+esc(suggestedEmployee)+'"></label>'+
           '<label class="field">Pix padrão do funcionário'+
-            '<input type="text" name="pix_padrao" id="payrollDefaultPix" maxlength="150" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
+            '<input type="text" name="pix_padrao" id="payrollDefaultPix" maxlength="150" value="'+esc(opts.pendingEmployee?.chave_pix||'')+'" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
         '</div>'+
         '<p class="payroll-info" id="payrollPixPreview"></p>'+
         '<p class="payroll-info">Cada holerite é uma conta independente. A chave Pix fica no cadastro permanente do funcionário; o valor é informado em cada mês.</p>'+
@@ -1432,7 +1433,7 @@ async function importNewPDF(file){
     const result=await response.json().catch(()=>({error:'Resposta inválida do leitor OCR.'}));
     if(!response.ok||!result.ok)throw new Error(result.error||'Não foi possível ler o PDF.');
     pendingImportPDF={ticket:result.ticket,file};
-    accountModal(null,result);
+    startDetectedHolerite(result);
   }catch(err){notice(err.message||String(err),true);}
   finally{importBusy=false;button.disabled=false;button.innerHTML=previous;}
 }
@@ -1584,7 +1585,13 @@ $('backdrop').addEventListener('click',e=>{if(e.target===$('backdrop'))closeModa
 $('save').addEventListener('click',async()=>{
   if(!dialogSave)return;
   $('save').disabled=true;
-  try{const ok=await dialogSave();if(ok)closeModal({saved:true})}
+  try{
+    const handler=dialogSave;
+    const ok=await handler();
+    // Quando o reconhecimento de funcionário abre a conferência do holerite,
+    // não fechar o formulário recém-aberto por engano.
+    if(ok&&dialogSave===handler)closeModal({saved:true});
+  }
   catch(e){notice(e.message||String(e),true)}
   finally{$('save').disabled=false}
 });
