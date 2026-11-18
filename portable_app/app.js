@@ -513,7 +513,7 @@ function openMenu(id,event){
   menu.querySelector('[data-action="reanalyze"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="copy-pdf-image"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="cancel-suggestion"]').disabled=!a.suggested_at;
-  menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||'').trim();
+  menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||a.pix_padrao||'').trim();
   menu.querySelector('[data-action="send"]').disabled=a.status==='Paga'||!String(a.codigo_pagamento||a.pix_padrao||'').trim();
   menu.querySelector('[data-action="receipt"]').disabled=!a.has_receipt;
   menu.querySelector('[data-action="pay"]').disabled=a.status==='Paga';
@@ -1089,7 +1089,7 @@ async function action(kind){
       accountModal(a,null,read);
     }
     else if(kind==='copy-code'){
-      const code=String(a.codigo_pagamento||'').trim();
+      const code=String(a.codigo_pagamento||a.pix_padrao||'').trim();
       if(!code)throw new Error('Esta conta não tem PIX ou código digitável.');
       await copyText(code);
       notice('Código PIX / linha digitável copiado.');
