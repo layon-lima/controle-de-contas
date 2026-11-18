@@ -401,6 +401,11 @@ def create_account_from_preview(data):
                 )
                 account_id = int(result.lastrowid)
                 holerites.assign(conn, account_id, data)
+                # Gravar no R2 antes de confirmar o lançamento no SQLite.
+                # Se o R2 não aceitar o PDF, o banco e o arquivo local são
+                # revertidos: nunca informar sucesso sem a cópia na nuvem.
+                if r2_bridge.enabled():
+                    r2_bridge.write_pdf(account_id, source.read_bytes())
         except Exception:
             if temp is not None:
                 temp.unlink(missing_ok=True)
@@ -793,6 +798,11 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
                 shutil.copy2(target, backup)
             os.replace(temporary, target)
             replaced = True
+            # O PDF FINAL (boleto + comprovante) deve substituir a versão R2
+            # antes de confirmar o pagamento. A cópia Windows será feita
+            # automaticamente pelo navegador lendo este mesmo PDF da VPS.
+            if r2_bridge.enabled():
+                r2_bridge.write_pdf(account_id, target.read_bytes(), pages)
             # A função de registro preserva os campos originais e a conferência
             # automática fica desativada, como no último desktop.
             with connection(write=True) as conn:
@@ -992,6 +1002,10 @@ def upload_pdf(account_id, data: bytes, filename: str):
                 account(conn, account_id)
                 conn.execute("UPDATE contas SET pdf_conta=?,atualizado_em=? WHERE id=?",
                              (str(target), stamp(), account_id))
+                if r2_bridge.enabled():
+                    # Mesmo arquivo aceito na VPS passa a ser a versão atual
+                    # no R2. O nome/ID da conta é estável entre substituições.
+                    r2_bridge.write_pdf(account_id, data)
         except Exception:
             if temp is not None:
                 temp.unlink(missing_ok=True)
