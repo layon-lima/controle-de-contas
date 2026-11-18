@@ -1322,7 +1322,10 @@ class Handler(BaseHTTPRequestHandler):
                     data = self._body()
                     if not isinstance(data.get("enabled"), bool):
                         raise ApiError(400, "Consentimento inválido.")
-                    self._json({"ok": True, **AI_ASSIST.consent(data["enabled"])})
+                    self._json({"ok": True, **AI_ASSIST.consent(
+                        data["enabled"],
+                        auto_holerites=data.get("auto_holerites")
+                    )})
                     return
                 if self.command == "POST" and route == "/api/ai/connect":
                     self._body()
@@ -1409,6 +1412,21 @@ class Handler(BaseHTTPRequestHandler):
                     parsed["holerite_sugestao"] = holerites.detect_from_document(
                         filename, source_pdf, parsed.get("fields")
                     )
+                    # IA opcional: somente se o usuário tiver ATIVADO a
+                    # identificação automática de holerites e autorizado
+                    # o envio das imagens do documento à OpenAI.
+                    settings = AI_ASSIST.status()
+                    if (parsed["holerite_sugestao"]["detected"] and
+                            settings.get("auto_holerites") and settings["consented"]):
+                        try:
+                            name_by_ai = AI_ASSIST.payroll_name(source_pdf)
+                        except Exception:
+                            # Erro da IA nunca bloqueia a importação do PDF.
+                            name_by_ai = ""
+                            parsed["holerite_ia_indisponivel"] = True
+                        if name_by_ai:
+                            parsed["holerite_sugestao"]["funcionario_sugestao"] = name_by_ai
+                            parsed["holerite_sugestao"]["origem_sugestao"] = "IA visual do documento"
                     self._json({"ok": True, **parsed})
                     return
                 if self.command == "POST" and route == "/api/import/commit":
