@@ -241,16 +241,46 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
         try:
             import fitz
             with fitz.open(str(path)) as doc:
-                raw += "\n" + "\n".join(
+                extracted = "\n".join(
                     (doc[i].get_text("text", sort=True) or "")[:15_000]
                     for i in range(min(len(doc), 2))
                 )
-            source = "conteúdo do PDF"
+                raw += "\n" + extracted
+                source = "conteúdo do PDF"
+                if len(extracted.strip()) < 65 and not HOLERITE_WORDS.search(
+                    simplify(raw)
+                ) and doc.page_count:
+                    # Contracheque escaneado: tentar OCR local somente na
+                    # primeira pagina, em resolucao limitada e com timeout.
+                    # A ausencia do Tesseract nao bloqueia a importacao.
+                    try:
+                        import subprocess
+                        first = doc.load_page(0)
+                        pixels = max(first.rect.width * first.rect.height, 1)
+                        scale = min(1.65, (8_000_000 / pixels) ** .5)
+                        image = first.get_pixmap(
+                            matrix=fitz.Matrix(scale, scale), alpha=False
+                        ).tobytes("png")
+                        result = subprocess.run(
+                            ["tesseract", "stdin", "stdout", "-l", "por+eng"],
+                            input=image, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=7,
+                            check=False
+                        )
+                        if result.returncode == 0 and result.stdout:
+                            raw += "\n" + result.stdout[:20_000].decode(
+                                "utf-8", errors="replace"
+                            )
+                            source = "OCR local do PDF"
+                    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                        pass
         except (OSError, RuntimeError, ValueError):
             pass
     clean = simplify(raw)
     detected = bool(HOLERITE_WORDS.search(clean))
-    match_name = EMPLOYEE_NAME.search(raw) if detected else None
+    # Identificar nome no texto normalizado reconhece também FUNCIONÁRIO
+    # com acento; o usuário confirma esse campo antes de salvar.
+    match_name = EMPLOYEE_NAME.search(clean) if detected else None
     suggestion = " ".join(match_name.group(1).split()).strip(" -.") if match_name else ""
     # Não confundir empregador com recebedor caso haja ambiguidade.
     if any(term in simplify(suggestion) for term in ("CNPJ", "CPF", "MATRICULA", "SALARIO")):
