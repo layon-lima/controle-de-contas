@@ -193,6 +193,20 @@ class PortableDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             s.register_payment(second, {"data_pagamento": date.today().isoformat()})
 
+    def test_contas4_holerite_sem_pix_nao_cadastra_funcionario_nem_conta(self):
+        before = s.list_accounts()["count"]
+        with self.assertRaisesRegex(ValueError, "chave Pix"):
+            s.create_account({
+                "fornecedor": "MARCOS PEREIRA",
+                "valor": 1800.00, "vencimento": "2026-12-05",
+                "holerite": "sim", "funcionario_nome": "MARCOS PEREIRA",
+                "pix_padrao": "", "competencia": "2026-11",
+                "observacoes": "HOLERITE NOVEMBRO"
+            })
+        self.assertEqual(s.list_accounts()["count"], before)
+        with s.connection() as conn:
+            self.assertFalse(s.holerites.tables_exist(conn))
+
     def test_contas4_holerite_new_employee_rolls_back_on_invalid_competencia(self):
         with self.assertRaisesRegex(ValueError, "Competência"):
             s.create_account({
