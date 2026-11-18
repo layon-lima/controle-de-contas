@@ -95,6 +95,14 @@ class WindowsRetroTests(unittest.TestCase):
         self.assertEqual(result["r2_missing"], 0)
         self.assertEqual(sync.upload_missing_to_r2(self.conn, fake)["uploaded"], 0)
 
+    def test_interface_nao_usa_mais_botao_de_sincronizacao_manual(self):
+        script = Path(__file__).with_name("app.js").read_text(encoding="utf-8")
+        self.assertNotIn("clique em Copiar pendentes", script)
+        self.assertNotIn('id="retryWindowsCopies"', script)
+        self.assertIn("async function reconcileAllWindowsPDFs(", script)
+        self.assertIn("windowsFileSHA256", script)
+        self.assertIn("reload().then(()=>retryWindowsCopiesAutomatically())", script)
+
     def test_nunca_considerar_comprovante_inexistente_como_sucesso(self):
         fake = FakeR2(enabled=True)
         result = sync.pdf_manifest(self.conn, fake)
