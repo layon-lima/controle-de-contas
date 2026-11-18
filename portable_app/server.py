@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export, receipt_images, holerites
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export, receipt_images, holerites, windows_reconcile
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -63,6 +63,7 @@ else:
     import excel_export
     import receipt_images
     import holerites
+    import windows_reconcile
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -186,10 +187,8 @@ def list_accounts():
         item["status"] = ("Paga" if int(item["id"]) in paid_ids else
                           status(item["vencimento"], item["data_pagamento"]))
         local_available = bool(pdf and Path(pdf).is_file())
-        # Apenas contas abertas no R2; comprovantes pagos sao locais no Windows.
-        item["has_pdf"] = local_available or (
-            item["status"] != "Paga" and r2_bridge.available(int(item["id"]))
-        )
+        # PDFs pagos também permanecem no R2, conforme a política atual.
+        item["has_pdf"] = local_available or r2_bridge.available(int(item["id"]))
         item["has_receipt"] = bool(receipt and Path(receipt).is_file())
         payroll = payroll_links.get(int(item["id"]))
         item["holerite"] = bool(payroll)
@@ -1572,6 +1571,13 @@ class Handler(BaseHTTPRequestHandler):
                         employee_id = holerites.save_employee(conn, payload)
                     self._json({"ok": True, "id": employee_id})
                     return
+                if self.command == "GET" and route == "/api/windows/pdf-manifest":
+                    # A reconciliação é somente leitura e usa a mesma
+                    # sessão autenticada das contas. Não expõe caminhos da VPS.
+                    with connection() as conn:
+                        manifest = windows_reconcile.pdf_manifest(conn, r2_bridge)
+                    self._json({"ok": True, **manifest})
+                    return
                 if self.command == "GET" and route == "/api/accounts":
                     self._json({"ok": True, **list_accounts()})
                     return
@@ -1638,7 +1644,7 @@ class Handler(BaseHTTPRequestHandler):
                             analysis = pdf_intelligence.analyze_pdf(
                                 local_pdf, enhanced=mode != "mode=legacy"
                             )
-                        elif not paid and r2_bridge.available(account_id):
+                        elif r2_bridge.available(account_id):
                             with r2_bridge.temp_pdf(r2_bridge.read_pdf(account_id)) as tmp:
                                 analysis = pdf_intelligence.analyze_pdf(
                                     tmp, enhanced=mode != "mode=legacy"
@@ -1692,10 +1698,10 @@ class Handler(BaseHTTPRequestHandler):
                             local_pdf = Path(str(rec.get("pdf_conta") or ""))
                             if local_pdf.is_file():
                                 content = local_pdf.read_bytes()
-                            elif not paid:
-                                content = r2_bridge.read_pdf(account_id)
                             else:
-                                raise FileNotFoundError("PDF pago guardado apenas no Windows.")
+                                # Recuperação retroativa também para contas
+                                # já pagas cuja cópia local não esteja na VPS.
+                                content = r2_bridge.read_pdf(account_id)
                         self._send(content, mime="application/pdf")
                         return
                     if self.command == "POST" and op == "verify-receipt":
@@ -1816,6 +1822,30 @@ class Handler(BaseHTTPRequestHandler):
         self._handle()
 
 
+def _reconcile_historical_r2():
+    """Repassa aos poucos PDFs legados ainda ausentes do R2.
+
+    Só adiciona chaves faltantes. Nunca sobrescreve um PDF atual nem altera
+    pagamentos. Rodar fora das requisições para não travar o navegador.
+    """
+    if not r2_bridge.enabled():
+        return
+    for _ in range(1000):
+        try:
+            with connection() as conn:
+                report = windows_reconcile.upload_missing_to_r2(
+                    conn, r2_bridge, max_uploads=25
+                )
+            if report["uploaded"]:
+                print("CONTAS 4 R2 retroativo:", report, flush=True)
+            if not report["remaining"] or report["uploaded"] == 0:
+                break
+            time.sleep(2)
+        except Exception as exc:
+            print("AVISO: reconciliação R2 adiada:", type(exc).__name__, flush=True)
+            break
+
+
 def main():
     pdf_workflows.cleanup_staging(APP_DIR)
     if not DB_PATH.is_file():
@@ -1837,6 +1867,12 @@ def main():
     except (OSError, RuntimeError) as exc:
         print("AVISO: sincronizador mobile não iniciou:", exc)
     print("Controle de Contas web:", url)
+    if (os.environ.get("CONTAS_PORTABLE_NO_BROWSER") == "1"
+            and r2_bridge.enabled()):
+        threading.Thread(
+            target=_reconcile_historical_r2,
+            daemon=True, name="contas4-r2-retroativo"
+        ).start()
     if os.environ.get("CONTAS_PORTABLE_NO_BROWSER") != "1":
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
