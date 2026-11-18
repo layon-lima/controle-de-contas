@@ -207,6 +207,10 @@ def _employee_for_assignment(conn, data):
     if found:
         return int(found[0])
     pix = validate_pix(data.get("pix_padrao"))
+    if not pix:
+        raise ValueError(
+            "Informe a chave Pix padrão para cadastrar este novo funcionário."
+        )
     return int(conn.execute(
         "INSERT INTO holerite_funcionarios(nome,nome_chave,chave_pix) VALUES(?,?,?)",
         (name, simplify(name), pix)
