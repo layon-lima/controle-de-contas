@@ -115,6 +115,71 @@ async function testWindowsFolderWrite(root){
     await root.removeEntry(name).catch(()=>{});
   }
 }
+async function ensureAutomaticWindowsFolder(){
+  // O navegador exige autorização na primeira vez que grava em C:\.
+  // Depois reutiliza a pasta persistida no IndexedDB, sem sincronização.
+  if(!/Windows/i.test(navigator.userAgent||''))return null;
+  let root=await readWindowsBoletoFolder();
+  if(!root){
+    if(typeof window.showDirectoryPicker!=='function')
+      throw new Error('Para salvar automaticamente no Windows, abra o CONTAS 4 pelo Edge/Chrome e autorize a pasta de boletos.');
+    root=await window.showDirectoryPicker({mode:'readwrite'});
+    validateWindowsFolderRoot(root);
+    await rememberWindowsBoletoFolder(root);
+  }
+  return (await prepareWindowsFolderCopy())||root;
+}
+async function fetchFinalPdfFromServer(id){
+  const request=()=>fetch('/api/accounts/'+Number(id)+'/pdf',{
+    headers:{'X-Local-Token':token},cache:'no-store'
+  });
+  let response=await request();
+  if(response.status===403){
+    const detail=await response.clone().json().catch(()=>({}));
+    if(/sess[aã]o inv[aá]lida|reabra pelo iniciador/i.test(String(detail.error||''))){
+      await renewSessionToken();response=await request();
+    }
+  }
+  if(!response.ok){
+    const result=await response.json().catch(()=>({}));
+    throw new Error(result.error||'A VPS não retornou o PDF final.');
+  }
+  const body=await response.blob();
+  if(body.type!=='application/pdf'||body.size<10)
+    throw new Error('O PDF final da VPS está inválido.');
+  return body;
+}
+async function autoSaveFinalPdfToWindows(id,info){
+  if(!/Windows/i.test(navigator.userAgent||''))return {skipped:true};
+  const pdf=await fetchFinalPdfFromServer(id);
+  const result=await copyOrQueueWindowsPDF(pdf,info,id);
+  if(!result?.saved){
+    const reason=result?.error||'A pasta do Windows não está autorizada.';
+    notice('R2 atualizado, mas a cópia Windows precisa de acesso: '+reason,
+      true,14500);
+  }
+  return result;
+}
+async function retryWindowsCopiesAutomatically(){
+  try{
+    if(!/Windows/i.test(navigator.userAgent||''))return;
+    const root=await readWindowsBoletoFolder();
+    if(!root||await windowsFolderPermission(root)!=='granted')return;
+    const queued=await windowsPendingCopies();
+    if(!queued.length)return;
+    let count=0;
+    for(const job of queued){
+      // A fonte da verdade é o PDF final no servidor, nunca o original
+      // do momento do upload (que pode ser um JPG de comprovante).
+      const pdf=await fetchFinalPdfFromServer(job.id);
+      const saved=await copyPDFToWindowsFolder(pdf,job.details,job.id);
+      if(!saved?.saved)continue;
+      await removeWindowsCopyPending(job.id);count++;
+    }
+    if(count)notice(count+' PDF(s) pendente(s) copiado(s) automaticamente para a pasta do Windows.');
+  }catch(_){/* a fila persiste; não bloquear o cadastro ou pagamento */}
+}
+window.addEventListener('focus',retryWindowsCopiesAutomatically);
 async function copyPendingWindowsPDFs(){
   const root=await prepareWindowsFolderCopy();
   if(!root)throw new Error('Selecione primeiro a pasta BOLETOS no Windows.');
@@ -196,10 +261,22 @@ async function copyPDFToWindowsFolder(file,accountInfo,accountId){
   const stem=safeWindowsPdfName(accountInfo?.observacoes||file.name);
   // Um ID fixo evita sobrescrever uma conta diferente com o mesmo nome.
   const base=accountId?String(accountId)+' - '+stem:stem;
+  // Para a mesma conta, reanexar/substituir deve atualizar a cópia
+  // anterior, em vez de gerar indefinidamente (1), (2), (3)...
   let name=base+'.pdf';
-  for(let i=1;i<1000;i++){
-    try{await monthFolder.getFileHandle(name);name=base+' ('+i+').pdf';}
-    catch(e){if(e.name==='NotFoundError')break;throw e;}
+  if(accountId){
+    for await(const [existingName,existingHandle] of monthFolder.entries()){
+      if(existingHandle.kind==='file'&&
+         existingName.startsWith(String(accountId)+' - ')&&
+         existingName.toLowerCase().endsWith('.pdf')){
+        name=existingName;break;
+      }
+    }
+  }else{
+    for(let i=1;i<1000;i++){
+      try{await monthFolder.getFileHandle(name);name=base+' ('+i+').pdf';}
+      catch(e){if(e.name==='NotFoundError')break;throw e;}
+    }
   }
   const target=await monthFolder.getFileHandle(name,{create:true});
   const writer=await target.createWritable();
@@ -853,13 +930,13 @@ function accountModal(a,preview=null,rerun=null,opts={}){
       }
       // Solicitar permissao no clique ANTES da requisicao ao servidor.
       if(preview?.ticket&&pendingImportPDF?.ticket===preview.ticket)
-        await prepareWindowsFolderCopy();
+        await ensureAutomaticWindowsFolder();
       const route=preview?'/api/import/commit':a?'/api/accounts/'+a.id+'/edit':'/api/accounts';
       const saved=await api(route,'POST',preview?{...values,ticket:preview.ticket}:values);
       let localCopy=null;
       if(preview?.ticket&&pendingImportPDF?.ticket===preview.ticket){
-        localCopy=await copyOrQueueWindowsPDF(
-          pendingImportPDF.file,values,saved.id||saved.account_id
+        localCopy=await autoSaveFinalPdfToWindows(
+          saved.id||saved.account_id,values
         );
         pendingImportPDF=null;
       }
@@ -1005,6 +1082,7 @@ function payModal(a){
         const checked=Boolean($('receiptManualConfirm')?.checked);
         if(receiptResult?.manual_required&&!checked)
           throw new Error('Confira a conta e marque a confirmação manual antes de registrar.');
+        await ensureAutomaticWindowsFolder();
         const proofMime=receiptUploadMime(proof);
         const response=await fetch('/api/accounts/'+a.id+'/pay-with-receipt',{
           method:'POST',headers:{'X-Local-Token':token,
@@ -1013,7 +1091,9 @@ function payModal(a){
         });
         const result=await response.json().catch(()=>({error:'Resposta de pagamento inválida.'}));
         if(!response.ok||!result.ok)throw new Error(result.error||'Pagamento não registrado.');
-        notice('Pagamento registrado. Comprovante mesclado ao PDF ('+result.pages+' páginas).');
+        const copy=await autoSaveFinalPdfToWindows(a.id,a);
+        notice(copy?.saved?'Pagamento registrado. PDF final salvo no R2 e no Windows.':
+          'Pagamento registrado. O PDF final foi salvo no R2.',false,9500);
       }else{
         await api('/api/accounts/'+a.id+'/pay','POST',{data_pagamento:paidOn});
         notice('Pagamento manual registrado sem comprovante.');
@@ -1119,6 +1199,7 @@ function confirmEligibleReceipt(file, report){
         throw new Error('Selecione uma das contas elegíveis.');
       const paidOn=$('eligiblePaidOn').value;
       if(!paidOn)throw new Error('Informe a data do pagamento.');
+      await ensureAutomaticWindowsFolder();
       // O servidor reconfere recebedor, valor, vencimento e duplicidade
       // antes de mesclar qualquer PDF ou criar o pagamento.
       const result=await fetch('/api/accounts/'+id+'/pay-with-receipt',{
@@ -1131,6 +1212,8 @@ function confirmEligibleReceipt(file, report){
       if(!result.ok||!saved.ok)
         throw new Error(saved.error||'Não foi possível registrar o pagamento.');
       selected=id;
+      const associated=eligible.find(a=>a.id===id);
+      if(associated)await autoSaveFinalPdfToWindows(id,associated);
       // Comprovante identificado nao troca a visualizacao atual.
       await reload();
       notice('Comprovante anexado à conta #'+id+'. Pagamento registrado.');
@@ -1225,14 +1308,14 @@ async function uploadAccountPDF(file){
   if(!selected)throw new Error('Selecione uma conta na lista antes de importar um PDF.');
   if(!file.name.toLowerCase().endsWith('.pdf'))throw new Error('Selecione um documento PDF.');
   if(file.size>30*1024*1024)throw new Error('PDF maior que 30 MB.');
-  await prepareWindowsFolderCopy();
+  await ensureAutomaticWindowsFolder();
   const response=await postPDF('/api/accounts/'+selected+'/upload-pdf',file,{
     'X-Pdf-Name':encodeURIComponent(file.name)
   });
   const data=await response.json().catch(()=>({error:'Falha ao enviar PDF.'}));
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
   const registered=accounts.find(item=>item.id===selected)||{};
-  const savedLocal=await copyOrQueueWindowsPDF(file,registered,selected);
+  const savedLocal=await autoSaveFinalPdfToWindows(selected,registered);
   notice(savedLocal?.saved?'PDF anexado e cópia salva na pasta do Windows.':
     savedLocal?.queued?'PDF anexado na VPS. Cópia Windows pendente: abra Pasta boletos e clique em Copiar pendentes.':
     savedLocal?.error?'PDF anexado na VPS, mas SEM cópia no Windows: '+savedLocal.error:
