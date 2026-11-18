@@ -451,6 +451,8 @@ def remove_account(account_id):
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='cc_account_tags'").fetchone():
             conn.execute("DELETE FROM cc_account_tags WHERE account_id=?", (account_id,))
+        if holerites.tables_exist(conn):
+            conn.execute("DELETE FROM holerite_lancamentos WHERE conta_id=?", (account_id,))
         conn.execute("DELETE FROM contas WHERE id=?", (account_id,))
 
 
