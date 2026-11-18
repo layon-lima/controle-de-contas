@@ -195,10 +195,18 @@ class ChatGPTAssist:
         connected = bool(c.get("access_token") and "chatgpt.tokens.use.direct" in c.get("scopes", []))
         return {"connected": connected, "enabled": bool(connected and self.settings.get("enabled")),
                 "consented": bool(self.settings.get("consented")),
+                "auto_holerites": bool(connected and self.settings.get("enabled")
+                                       and self.settings.get("auto_holerites")),
                 "email": c.get("email") if connected else None}
 
-    def consent(self, enabled):
+    def consent(self, enabled, *, auto_holerites=None):
         with LOCK:
+            if auto_holerites is not None:
+                if type(auto_holerites) is not bool:
+                    raise ValueError("Configuração de IA de holerites inválida.")
+                self.settings["auto_holerites"] = auto_holerites
+            if not enabled:
+                self.settings["auto_holerites"] = False
             self.settings["consented"] = bool(enabled)
             self.settings["enabled"] = bool(enabled and self.status()["connected"])
             self.save_settings()
@@ -302,6 +310,7 @@ class ChatGPTAssist:
             (self.root / "credentials.bin").unlink(missing_ok=True)
             self.settings["enabled"] = False
             self.settings["consented"] = False
+            self.settings["auto_holerites"] = False
             self.save_settings()
             return self.status()
 
