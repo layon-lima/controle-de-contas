@@ -3,6 +3,7 @@
 const $=id=>document.getElementById(id);
 let token=window.__CONTAS_TOKEN__;
 let accounts=[], selected=null, activeTab='open', dialogSave=null;
+let payrollEmployees=[], moduleActive='contas';
 let activePreviewTicket=null;
 
 
@@ -295,11 +296,150 @@ function notice(message,error=false,duration=4200){
   clearTimeout(notice.timer);notice.timer=setTimeout(()=>toast.style.display='none',duration);
 }
 async function reload(){
-  const data=await api('/api/accounts');
+  const [data,payroll]=await Promise.all([
+    api('/api/accounts'),api('/api/holerites')
+  ]);
   accounts=data.accounts||[];
+  payrollEmployees=payroll.funcionarios||[];
   if(selected&&!accounts.some(a=>a.id===selected))selected=null;
   render();
+  renderPayroll();
 }
+
+function setModule(module){
+  moduleActive=module==='holerites'?'holerites':'contas';
+  $('contasView').hidden=moduleActive!=='contas';
+  $('holeritesView').hidden=moduleActive!=='holerites';
+  $('tabContas').setAttribute('aria-selected',String(moduleActive==='contas'));
+  $('tabHolerites').setAttribute('aria-selected',String(moduleActive==='holerites'));
+  closeMenu();
+  if(moduleActive==='holerites')renderPayroll();
+}
+async function reloadPayroll(){
+  await reload();
+  if(moduleActive==='holerites')renderPayroll();
+}
+function employeeModal(employee=null){
+  showModal(employee?'Editar funcionário':'Cadastrar funcionário',
+    'A chave Pix fica salva para os próximos holerites. Alterar a chave não modifica documentos nem pagamentos anteriores.',
+    '<form class="formgrid" id="employeeForm">'+
+      '<label class="field wide">Nome completo *<input name="nome" type="text" maxlength="150" required value="'+esc(employee?.nome||'')+'"></label>'+
+      '<label class="field wide">Chave Pix padrão<input name="chave_pix" type="text" maxlength="150" autocomplete="off" value="'+esc(employee?.chave_pix||'')+'" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
+    '</form>',
+    employee?'Salvar funcionário':'Cadastrar funcionário',async()=>{
+      const form=$('employeeForm');
+      if(!form.reportValidity())return false;
+      const values=Object.fromEntries(new FormData(form));
+      if(employee)values.id=employee.id;
+      await api('/api/holerites/funcionarios','POST',values);
+      await reloadPayroll();
+      notice('Cadastro e chave Pix do funcionário salvos.');
+      return true;
+    });
+}
+function payrollShortMonth(value){
+  const match=String(value||'').match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
+  if(!match)return String(value||'—');
+  const d=new Date(Number(match[1]),Number(match[2])-1,1);
+  return d.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+}
+function renderPayroll(){
+  if(!$('payrollList'))return;
+  const target=$('payrollList');
+  const query=$('payrollSearch').value.trim().toLocaleLowerCase('pt-BR');
+  const linked=accounts.filter(a=>a.holerite);
+  const pending=accounts.filter(a=>a.holerite_sugerido&&!a.holerite);
+  const people=payrollEmployees.filter(e=>{
+    if(!query)return true;
+    return String(e.nome||'').toLocaleLowerCase('pt-BR').includes(query)||
+      linked.some(a=>a.funcionario_id===e.id&&[
+        a.competencia,a.observacoes,a.fornecedor,a.status
+      ].some(x=>String(x||'').toLocaleLowerCase('pt-BR').includes(query)));
+  });
+  const out=[];
+  if(!people.length&&!pending.length){
+    target.innerHTML='<div class="payroll-empty">'+(query?'Nenhum funcionário ou holerite corresponde à pesquisa.':
+      'Nenhum holerite cadastrado. Importe um contracheque ou cadastre o primeiro funcionário.')+'</div>';
+    return;
+  }
+  for(const e of people){
+    const history=linked.filter(a=>a.funcionario_id===e.id).sort((a,b)=>
+      String(b.competencia).localeCompare(String(a.competencia))||
+      String(b.vencimento).localeCompare(String(a.vencimento))||
+      b.id-a.id);
+    const paid=history.filter(a=>a.status==='Paga').length;
+    const months=history.map(a=>
+      '<div class="payroll-month">'+
+        '<strong>'+esc(payrollShortMonth(a.competencia))+'</strong>'+
+        '<span title="'+esc(a.observacoes||'')+'">'+esc(a.observacoes||'Holerite mensal')+'</span>'+
+        '<span class="amount">'+esc(money(a.valor))+'</span>'+
+        '<span class="pill '+esc(a.status.replace(/\s/g,''))+'">'+esc(a.status)+'</span>'+
+        '<button type="button" data-payroll-account="'+Number(a.id)+'">Ações</button>'+
+      '</div>'
+    ).join('');
+    out.push(
+      '<article class="payroll-person">'+
+        '<div class="payroll-person-head">'+
+          '<div class="payroll-person-details">'+
+            '<span class="payroll-avatar">'+esc(initials(e.nome))+'</span>'+
+            '<div><strong>'+esc(e.nome)+'</strong>'+
+            '<small>'+history.length+' holerite(s) · '+paid+' pago(s) · Pix: '+
+              esc(e.chave_pix||'não cadastrado')+'</small></div>'+
+          '</div>'+
+          '<div class="payroll-actions">'+
+            (e.chave_pix?'<button type="button" data-payroll-copy="'+Number(e.id)+'">Copiar Pix</button>':'')+
+            '<button type="button" data-payroll-edit="'+Number(e.id)+'">Editar Pix / Cadastro</button>'+
+            '<button type="button" data-payroll-new="'+Number(e.id)+'">+ Holerite</button>'+
+          '</div>'+
+        '</div>'+
+        (months||'<div class="payroll-empty">Ainda não existem holerites vinculados a este funcionário.</div>')+
+      '</article>'
+    );
+  }
+  const suggestions=pending.filter(a=>!query||[
+    a.fornecedor,a.observacoes,a.vencimento
+  ].some(x=>String(x||'').toLocaleLowerCase('pt-BR').includes(query)));
+  if(suggestions.length){
+    out.push('<section class="payroll-legacy"><h3>Holerites antigos para conferir</h3>'+
+      '<p>Possíveis holerites encontrados pela descrição. Confirme o funcionário antes de vincular; nenhuma conta será alterada automaticamente.</p>'+
+      suggestions.map(a=>'<div class="payroll-legacy-row">'+
+        '<span>'+esc(a.fornecedor)+' · '+esc(dateBR(a.vencimento))+
+        ' · '+esc(money(a.valor))+' · '+esc(a.observacoes||'')+'</span>'+
+        '<button type="button" data-payroll-link="'+Number(a.id)+'">Vincular</button>'+
+      '</div>').join('')+'</section>');
+  }
+  target.innerHTML=out.join('');
+  for(const button of target.querySelectorAll('[data-payroll-copy]')){
+    button.addEventListener('click',async()=>{
+      const employee=payrollEmployees.find(e=>e.id===Number(button.dataset.payrollCopy));
+      if(!employee?.chave_pix)return;
+      try{await copyText(employee.chave_pix);notice('Chave Pix de '+employee.nome+' copiada.');}
+      catch(e){notice(e.message||String(e),true);}
+    });
+  }
+  for(const button of target.querySelectorAll('[data-payroll-edit]')){
+    button.addEventListener('click',()=>{
+      const employee=payrollEmployees.find(e=>e.id===Number(button.dataset.payrollEdit));
+      if(employee)employeeModal(employee);
+    });
+  }
+  for(const button of target.querySelectorAll('[data-payroll-new]')){
+    button.addEventListener('click',()=>{
+      const employee=payrollEmployees.find(e=>e.id===Number(button.dataset.payrollNew));
+      if(employee)accountModal(null,null,null,{payroll:true,employee});
+    });
+  }
+  for(const button of target.querySelectorAll('[data-payroll-account]')){
+    button.addEventListener('click',()=>openMenu(Number(button.dataset.payrollAccount),{currentTarget:button}));
+  }
+  for(const button of target.querySelectorAll('[data-payroll-link]')){
+    button.addEventListener('click',()=>{
+      const a=accounts.find(a=>a.id===Number(button.dataset.payrollLink));
+      if(a)accountModal(a);
+    });
+  }
+}
+
 function filteredAccountsForView(){
   const requested=$('status').value;
   const query=$('search').value.trim().toLocaleLowerCase('pt-BR');
@@ -374,7 +514,7 @@ function openMenu(id,event){
   menu.querySelector('[data-action="copy-pdf-image"]').disabled=!a.has_pdf;
   menu.querySelector('[data-action="cancel-suggestion"]').disabled=!a.suggested_at;
   menu.querySelector('[data-action="copy-code"]').disabled=!String(a.codigo_pagamento||'').trim();
-  menu.querySelector('[data-action="send"]').disabled=a.status==='Paga'||!String(a.codigo_pagamento||'').trim();
+  menu.querySelector('[data-action="send"]').disabled=a.status==='Paga'||!String(a.codigo_pagamento||a.pix_padrao||'').trim();
   menu.querySelector('[data-action="receipt"]').disabled=!a.has_receipt;
   menu.querySelector('[data-action="pay"]').disabled=a.status==='Paga';
   menu.querySelector('[data-action="delete"]').disabled=a.status==='Paga';
@@ -1120,6 +1260,11 @@ $('paidCard').addEventListener('keydown',e=>{
 $('backToOpen').addEventListener('click',()=>setAccountView('open'));
 $('search').addEventListener('input',render);
 $('exportExcel').addEventListener('click',exportExcel);
+$('tabContas').addEventListener('click',()=>setModule('contas'));
+$('tabHolerites').addEventListener('click',()=>setModule('holerites'));
+$('employeeNew').addEventListener('click',()=>employeeModal());
+$('payrollNew').addEventListener('click',()=>accountModal(null,null,null,{payroll:true}));
+$('payrollSearch').addEventListener('input',renderPayroll);
 $('newAccount').addEventListener('click',()=>accountModal(null));
 $('pdfImport').addEventListener('click',()=>$('importFile').click());
 let importBusy=false;
