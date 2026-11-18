@@ -350,8 +350,17 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
                 # tentaria OCR. Um PDF escaneado com nome genérico falhava.
                 # Só acionar OCR quando a camada de texto é insuficiente.
                 text_length = len(content.strip())
-                if (doc.page_count and not _looks_like_payroll(content)
-                        and (text_length < 280 or len(content.split()) < 35)):
+                text_lines = "\n".join(simplify(line) for line in content.splitlines())
+                employee_found = any(
+                    p.search(text_lines)
+                    for p in (EMPLOYEE_NAME, EMPLOYEE_NAME_NEXT_LINE, SIMPLE_NAME)
+                )
+                payroll_found = _looks_like_payroll(content)
+                if (doc.page_count and (
+                        (not payroll_found and
+                         (text_length < 280 or len(content.split()) < 35))
+                        or (payroll_found and text_length < 450
+                            and not employee_found))):
                     try:
                         import subprocess
                         first = doc.load_page(0)
