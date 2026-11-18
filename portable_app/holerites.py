@@ -276,17 +276,19 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
                         pass
         except (OSError, RuntimeError, ValueError):
             pass
-    clean = simplify(raw)
-    detected = bool(HOLERITE_WORDS.search(clean))
-    # Identificar nome no texto normalizado reconhece também FUNCIONÁRIO
-    # com acento; o usuário confirma esse campo antes de salvar.
-    match_name = EMPLOYEE_NAME.search(clean) if detected else None
+    # Não achatar as linhas ANTES de procurar FUNCIONARIO/NOME DO EMPREGADO.
+    # EMPLOYEE_NAME usa ^ e $ para evitar capturar a empresa ou outros campos
+    # do contracheque. O antigo simplify(raw) apagava os \n e fazia o teste
+    # de reconhecimento falhar, bloqueando o build Docker da VPS.
+    lines = "\n".join(simplify(line) for line in raw.splitlines())
+    detected = bool(HOLERITE_WORDS.search(lines))
+    match_name = EMPLOYEE_NAME.search(lines) if detected else None
     suggestion = " ".join(match_name.group(1).split()).strip(" -.") if match_name else ""
     # Não confundir empregador com recebedor caso haja ambiguidade.
     if any(term in simplify(suggestion) for term in ("CNPJ", "CPF", "MATRICULA", "SALARIO")):
         suggestion = ""
     competence = ""
-    match_month = MONTH_YEAR.search(clean) if detected else None
+    match_month = MONTH_YEAR.search(lines) if detected else None
     if match_month:
         competence = f"{match_month.group(2)}-{int(match_month.group(1)):02d}"
     return {
