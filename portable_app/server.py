@@ -50,7 +50,7 @@ except (OSError, subprocess.SubprocessError):
     SOURCE_REVISION = "indisponivel"
 
 if __package__:
-    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export, receipt_images
+    from . import pdf_intelligence, pdf_workflows, sync_runtime, ai_assist, receipt_matching, mobile_vps, r2_bridge, pdf_clipboard, excel_export, receipt_images, holerites
 else:
     import pdf_intelligence
     import pdf_workflows
@@ -62,6 +62,7 @@ else:
     import pdf_clipboard
     import excel_export
     import receipt_images
+    import holerites
 # Sign in with ChatGPT (cliente OSS) exige callback loopback em
 # 127.0.0.1. No site HTTPS da VPS, o Windows encaminha temporariamente a
 # porta 1455 pelo tunel SSH para a porta privada 18769 da propria VPS.
@@ -174,6 +175,8 @@ def list_accounts():
             """SELECT DISTINCT conta_id FROM pagamentos
                WHERE data_pagamento IS NOT NULL AND TRIM(data_pagamento)<>''"""
         )}
+    with connection() as conn:
+        payroll_links = holerites.linked_accounts(conn)
     activities = activity_map()
     output = []
     for row in rows:
@@ -188,6 +191,13 @@ def list_accounts():
             item["status"] != "Paga" and r2_bridge.available(int(item["id"]))
         )
         item["has_receipt"] = bool(receipt and Path(receipt).is_file())
+        payroll = payroll_links.get(int(item["id"]))
+        item["holerite"] = bool(payroll)
+        item["holerite_sugerido"] = (not payroll and holerites.guess_existing(item))
+        item["funcionario_id"] = payroll["funcionario_id"] if payroll else None
+        item["funcionario_nome"] = payroll["funcionario_nome"] if payroll else ""
+        item["pix_padrao"] = payroll["pix_padrao"] if payroll else ""
+        item["competencia"] = payroll["competencia"] if payroll else ""
         item["suggested_at"] = activities.get(item["id"], {}).get("suggested_at")
         output.append(item)
     return {"accounts": output, "db_available": True, "count": len(output)}
@@ -235,7 +245,9 @@ def create_account(data):
             f"VALUES ({placeholders},?,?)",
             [values[c] for c in FIELDS] + [stamp(), stamp()],
         )
-        return int(record.lastrowid)
+        result_id = int(record.lastrowid)
+        holerites.assign(conn, result_id, data)
+        return result_id
 
 
 def get_document_folder():
@@ -388,6 +400,7 @@ def create_account_from_preview(data):
                     [fields[key] for key in FIELDS] + [stamp(), stamp(), str(target)],
                 )
                 account_id = int(result.lastrowid)
+                holerites.assign(conn, account_id, data)
         except Exception:
             if temp is not None:
                 temp.unlink(missing_ok=True)
@@ -413,6 +426,7 @@ def edit_account(account_id, data):
         conn.execute(
             f"UPDATE contas SET {pairs},atualizado_em=? WHERE id=?",
             [values[c] for c in FIELDS] + [stamp(), account_id])
+        holerites.assign(conn, account_id, data)
     # Edicao manual de um campo previamente lido errado TAMBEM ensina o
     # layout do PDF. Antes, so o cadastro novo treinava o leitor.
     changed = _learning_differences(values, original)
@@ -461,6 +475,13 @@ def payment_text(data):
 def prepare_send(account_id):
     with connection() as conn:
         data = account(conn, account_id)
+        payroll = holerites.linked_one(conn, account_id)
+    if payroll:
+        # A chave padrao acompanha o funcionario sem ficar gravada nos
+        # lancamentos antigos. Codigo digitado nesta conta tem prioridade.
+        if not str(data.get("codigo_pagamento") or "").strip():
+            data["codigo_pagamento"] = payroll["pix_padrao"]
+        data["fornecedor"] = payroll["funcionario_nome"]
     text = payment_text(data)
     nonce = secrets.token_urlsafe(24)
     with LOCK:
@@ -1366,6 +1387,12 @@ class Handler(BaseHTTPRequestHandler):
                             pdf_path, enhanced=ocr_mode == "hybrid"
                         ),
                     )
+                    source_pdf, _source_name, _fields = pdf_workflows.take_preview(
+                        parsed["ticket"]
+                    )
+                    parsed["holerite_sugestao"] = holerites.detect_from_document(
+                        filename, source_pdf, parsed.get("fields")
+                    )
                     self._json({"ok": True, **parsed})
                     return
                 if self.command == "POST" and route == "/api/import/commit":
@@ -1429,6 +1456,22 @@ class Handler(BaseHTTPRequestHandler):
                     description = str(options.get("label") or "Lista filtrada")[:120]
                     content = excel_export.build_xlsx(rows, label=description)
                     self._send(content, mime=excel_export.MIME_TYPE)
+                    return
+                if self.command == "GET" and route == "/api/holerites":
+                    with connection() as conn:
+                        employees = holerites.get_employees(conn)
+                    all_accounts = list_accounts()["accounts"]
+                    self._json({"ok": True, "funcionarios": employees,
+                                "lancamentos": [
+                                    row for row in all_accounts
+                                    if row["holerite"] or row["holerite_sugerido"]
+                                ]})
+                    return
+                if self.command == "POST" and route == "/api/holerites/funcionarios":
+                    payload = self._body()
+                    with LOCK, connection(write=True) as conn:
+                        employee_id = holerites.save_employee(conn, payload)
+                    self._json({"ok": True, "id": employee_id})
                     return
                 if self.command == "GET" and route == "/api/accounts":
                     self._json({"ok": True, **list_accounts()})
@@ -1621,6 +1664,11 @@ class Handler(BaseHTTPRequestHandler):
                         elif op == "delete":
                             remove_account(account_id)
                             result = {"deleted": True}
+                        elif op == "holerite":
+                            with LOCK, connection(write=True) as conn:
+                                account(conn, account_id)
+                                holerites.assign(conn, account_id, data)
+                            result = {"saved": True}
                         elif op == "prepare-send":
                             result = prepare_send(account_id)
                         elif op == "confirm-send":
