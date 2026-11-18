@@ -96,6 +96,78 @@ class PortableDataTests(unittest.TestCase):
         self.assertEqual(stale.exception.code, 409)
         stale.exception.close()
 
+    def test_contas4_holerite_pix_reused_in_next_month_without_overwriting_account(self):
+        first = s.create_account({
+            "fornecedor": "FAZENDA NOVO HORIZONTE",
+            "valor": 3100.00, "vencimento": "2026-11-05",
+            "observacoes": "HOLERITE DE OUTUBRO",
+            "holerite": "sim", "funcionario_nome": "João da Silva",
+            "pix_padrao": "joao@exemplo.com", "competencia": "2026-10",
+        })
+        rows = {r["id"]: r for r in s.list_accounts()["accounts"]}
+        self.assertTrue(rows[first]["holerite"])
+        self.assertEqual(rows[first]["competencia"], "2026-10")
+        self.assertEqual(rows[first]["pix_padrao"], "joao@exemplo.com")
+        self.assertEqual(rows[first]["funcionario_nome"], "João da Silva")
+        self.assertIn("RECEBEDOR: João da Silva", s.prepare_send(first)["text"])
+        self.assertIn("joao@exemplo.com", s.prepare_send(first)["text"])
+        with s.connection() as conn:
+            self.assertEqual(s.account(conn, first)["codigo_pagamento"], "")
+            eid = s.holerites.get_employees(conn)[0]["id"]
+
+        second = s.create_account({
+            "fornecedor": "FAZENDA NOVO HORIZONTE",
+            "valor": 3250.00, "vencimento": "2026-12-05",
+            "observacoes": "HOLERITE NOVEMBRO",
+            "holerite": "sim", "funcionario_id": eid, "competencia": "2026-11",
+        })
+        rows = {r["id"]: r for r in s.list_accounts()["accounts"]}
+        self.assertEqual(rows[second]["pix_padrao"], "joao@exemplo.com")
+        self.assertNotEqual(rows[first]["valor"], rows[second]["valor"])
+        self.assertIn("R$ 3.250,00", s.prepare_send(second)["text"])
+        with s.connection(write=True) as conn:
+            s.holerites.save_employee(conn, {
+                "id": eid, "nome": "João da Silva",
+                "chave_pix": "11999990000"
+            })
+        self.assertIn("11999990000", s.prepare_send(second)["text"])
+        self.assertNotIn("joao@exemplo.com", s.prepare_send(second)["text"])
+
+        # Pagamentos passam pelo motor original; não são duplicados.
+        s.register_payment(second, {"data_pagamento": date.today().isoformat()})
+        rows = {r["id"]: r for r in s.list_accounts()["accounts"]}
+        self.assertEqual(rows[second]["status"], "Paga")
+        with self.assertRaises(ValueError):
+            s.register_payment(second, {"data_pagamento": date.today().isoformat()})
+
+    def test_contas4_holerite_new_employee_rolls_back_on_invalid_competencia(self):
+        with self.assertRaisesRegex(ValueError, "Competência"):
+            s.create_account({
+                "fornecedor": "FNH", "valor": 1300,
+                "vencimento": "2026-12-05", "holerite": "sim",
+                "funcionario_nome": "Maria Pessoa",
+                "competencia": "2026-13", "pix_padrao": "12345678900"
+            })
+        self.assertEqual(s.list_accounts()["count"], 1)
+        with s.connection() as conn:
+            self.assertFalse(s.holerites.tables_exist(conn))
+
+    def test_contas4_holerite_http_registry_requires_token(self):
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2)))
+        address = f"http://127.0.0.1:{httpd.server_port}/api/holerites"
+        with self.assertRaises(HTTPError) as unauthorized:
+            urlopen(address, timeout=5)
+        self.assertEqual(unauthorized.exception.code, 403)
+        unauthorized.exception.close()
+        with urlopen(Request(address, headers={"X-Local-Token": s.TOKEN}),
+                     timeout=5) as response:
+            registry = json.load(response)
+        self.assertEqual(registry["funcionarios"], [])
+        self.assertEqual(s.list_accounts()["count"], 1)
+
     def test_due_today_is_overdue_in_server_and_account_summary(self):
         today = date.today()
         self.assertEqual(s.status(today.isoformat(), None), "Vencida")
