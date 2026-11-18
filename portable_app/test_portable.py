@@ -149,6 +149,55 @@ class PortableDataTests(unittest.TestCase):
         with fitz.open(pdf) as doc:
             self.assertEqual(doc.page_count, 1)
 
+    def test_contas4_pdf_upload_also_writes_r2_automatically(self):
+        data = self._real_pdf("ARQUIVO SIMULTANEO R2 E WINDOWS")
+        with patch.object(s.r2_bridge, "enabled", return_value=True), \
+             patch.object(s.r2_bridge, "available", return_value=False), \
+             patch.object(s.r2_bridge, "metadata", return_value=None), \
+             patch.object(s.r2_bridge, "write_pdf", return_value={}) as uploaded:
+            saved = s.upload_pdf(1, data, "holerite.pdf")
+            uploaded.assert_called_once_with(1, data)
+        self.assertTrue(Path(saved["folder"], saved["name"]).is_file())
+        with s.connection() as conn:
+            self.assertEqual(
+                Path(s.account(conn, 1)["pdf_conta"]).read_bytes(), data
+            )
+
+    def test_contas4_pdf_upload_r2_failure_preserves_existing_database(self):
+        data = self._real_pdf("ARQUIVO COM ERRO R2")
+        with s.connection() as conn:
+            before = s.account(conn, 1)["pdf_conta"]
+        with patch.object(s.r2_bridge, "enabled", return_value=True), \
+             patch.object(s.r2_bridge, "available", return_value=False), \
+             patch.object(s.r2_bridge, "metadata", return_value=None), \
+             patch.object(s.r2_bridge, "write_pdf",
+                          side_effect=s.r2_bridge.R2Unavailable("R2 indisponível")):
+            with self.assertRaisesRegex(s.r2_bridge.R2Unavailable, "R2 indisponível"):
+                s.upload_pdf(1, data, "falha-r2.pdf")
+        with s.connection() as conn:
+            self.assertEqual(s.account(conn, 1)["pdf_conta"], before)
+
+    def test_contas4_pagamento_mesclado_enviado_ao_r2(self):
+        import fitz
+        s.upload_pdf(1, self._real_pdf("BOLETO ORIGINAL"), "boleto.pdf")
+        proof = self._real_pdf("COMPROVANTE BANCARIO")
+        with patch.object(s.r2_bridge, "enabled", return_value=True), \
+             patch.object(s.r2_bridge, "available", return_value=False), \
+             patch.object(s.r2_bridge, "write_pdf", return_value={}) as uploaded:
+            paid = s.register_payment_with_receipt(
+                1, date.today().isoformat(), proof, manual_confirmed=True
+            )
+            uploaded.assert_called_once()
+        self.assertTrue(paid["merged"])
+        r2_args = uploaded.call_args.args
+        self.assertEqual(r2_args[0], 1)
+        with fitz.open(stream=r2_args[1], filetype="pdf") as doc:
+            self.assertEqual(doc.page_count, 2)
+        with s.connection() as conn:
+            self.assertEqual(
+                Path(s.account(conn, 1)["pdf_conta"]).read_bytes(), r2_args[1]
+            )
+
     def test_contas4_holerite_pix_reused_in_next_month_without_overwriting_account(self):
         first = s.create_account({
             "fornecedor": "FAZENDA NOVO HORIZONTE",
