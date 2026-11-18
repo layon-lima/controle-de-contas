@@ -85,11 +85,12 @@ class PayrollTests(unittest.TestCase):
                 })
         self.assertFalse(h.tables_exist(self.db))
 
-    def test_detect_pdf_by_name_and_text_but_never_creates_accounts(self):
-        guess = h.detect_from_document(
-            "HOLERITE OUTUBRO 2026.pdf", fields={"fornecedor": "Empregadora SA"}
-        )
-        self.assertTrue(guess["detected"])
+    def test_detect_pdf_by_content_only_but_never_creates_accounts(self):
+        # Nome/observações não podem disparar a classificação.
+        self.assertFalse(h.detect_from_document(
+            "HOLERITE OUTUBRO 2026.pdf",
+            fields={"observacoes": "CONTRACHEQUE", "fornecedor": "Empregadora SA"}
+        )["detected"])
         self.assertFalse(h.detect_from_document("nota fiscal.pdf")["detected"])
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "anexo.pdf"
@@ -99,11 +100,64 @@ class PayrollTests(unittest.TestCase):
                 page.insert_text((40, 90), "FUNCIONARIO: MARIA DE SOUZA")
                 page.insert_text((40, 110), "COMPETENCIA: 10/2026")
                 doc.save(str(path))
-            guess = h.detect_from_document("anexo.pdf", path=path)
+            guess = h.detect_from_document("arquivo.pdf", path=path)
             self.assertTrue(guess["detected"])
             self.assertEqual(guess["funcionario_sugestao"], "MARIA DE SOUZA")
             self.assertEqual(guess["competencia_sugestao"], "2026-10")
         self.assertFalse(h.tables_exist(self.db))
+
+    def test_holerite_sem_palavra_holerite_no_arquivo_ou_na_pagina(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "documento_83919.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "NOME DO FUNCIONARIO: MARIA DE SOUZA")
+                page.insert_text((40, 90), "SALARIO BASE: 4500,00")
+                page.insert_text((40, 110), "PROVENTOS      DESCONTOS")
+                page.insert_text((40, 130), "INSS 450,00     FGTS 360,00")
+                page.insert_text((40, 150), "COMPETENCIA: 11/2026")
+                doc.save(str(path))
+            result = h.detect_from_document("documento_83919.pdf", path=path)
+            self.assertTrue(result["detected"])
+            self.assertEqual(result["funcionario_sugestao"], "MARIA DE SOUZA")
+            self.assertEqual(result["competencia_sugestao"], "2026-11")
+
+    def test_nome_holerite_em_pdf_comum_nao_basta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "holerite.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "NOTA FISCAL DE VENDA")
+                page.insert_text((40, 90), "MILHO 350 SACAS")
+                page.insert_text((40, 110), "VALOR TOTAL R$ 65000")
+                doc.save(str(path))
+            result = h.detect_from_document(
+                "HOLERITE NOVEMBRO.pdf", path=path,
+                fields={"observacoes": "HOLERITE"}
+            )
+            self.assertFalse(result["detected"])
+            self.assertFalse(result["funcionario_sugestao"])
+
+    def test_pdf_sem_texto_pode_ser_reconhecido_por_ocr_sem_nome(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scan_001.pdf"
+            with fitz.open() as doc:
+                doc.new_page()
+                doc.save(str(path))
+            ocr = (
+                b"RECIBO DE PAGAMENTO DE SALARIO\n"
+                b"FUNCIONARIO: MARIA DE SOUZA\n"
+                b"COMPETENCIA: 11/2026\n"
+            )
+            with patch("subprocess.run", return_value=SimpleNamespace(
+                    returncode=0, stdout=ocr)) as mocked:
+                result = h.detect_from_document("scan_001.pdf", path=path)
+            mocked.assert_called_once()
+            self.assertTrue(result["detected"])
+            self.assertEqual(result["funcionario_sugestao"], "MARIA DE SOUZA")
+            self.assertEqual(result["origem_sugestao"], "OCR local do PDF")
 
     def test_nome_do_funcionario_depende_de_quebras_de_linha(self):
         # Regressão: simplificar o documento todo achata o texto e quebra
