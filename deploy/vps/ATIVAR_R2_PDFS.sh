@@ -44,5 +44,6 @@ with urllib.request.urlopen(req,timeout=90) as resp:
     data=json.load(resp)
 assert data.get("ok") and isinstance(data.get("pending"),list)
 print("CONTAS ABERTAS RECONHECIDAS:", len(data["pending"]))
-print("R2 PRONTO: falta somente o sincronizador do Windows enviar os arquivos.")
+print("R2 ATIVO: PDFs novos são enviados automaticamente pela VPS.")
+print("CONTAS 4: recuperação retroativa R2 roda no servidor; cópia Windows roda com a pasta autorizada no navegador.")
 PY
