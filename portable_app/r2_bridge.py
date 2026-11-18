@@ -1,4 +1,4 @@
-"""R2 para PDFs de contas EM ABERTO na VPS, sem outro banco.
+"""R2 para PDFs de contas abertas e pagas na VPS, sem outro banco.
 
 Credenciais SOMENTE na VPS, em /opt/apps/contas-runtime/r2-agent.json.
 Chaves do Cloudflare nunca sao enviadas ao navegador nem ao PC.
@@ -202,16 +202,24 @@ def write_pdf(account_id: int, content: bytes, pdf_pages: int = 0):
     return {"hash": digest, "size": len(content)}
 
 
-def remove_confirmed_paid(account_id: int):
-    """Apenas chamada apos comprovacao local Windows do PDF final."""
+def delete_pdf(account_id: int):
+    """Desfaz upload remoto de uma criação cancelada, nunca chamado na UI."""
     cfg = _config()
     if cfg is None:
-        raise R2Unavailable("R2 ainda nao configurado.")
+        raise R2Unavailable("R2 não configurado.")
     try:
         _client(cfg).delete_object(Bucket=cfg["bucket"], Key=_key(account_id))
     except Exception as exc:
-        raise R2Unavailable("Falha ao excluir PDF pago do R2.") from exc
+        raise R2Unavailable("Falha ao reverter PDF do R2.") from exc
     invalidate(account_id)
+
+
+def remove_confirmed_paid(account_id: int):
+    """Compatibilidade legada: manter o PDF pago no R2 e no Windows.
+
+    O usuário optou por manter as duas cópias, sem remoção automática.
+    """
+    return {"retained": True, "account_id": account_id}
 
 
 @contextmanager
