@@ -337,6 +337,92 @@ function employeeModal(employee=null){
       return true;
     });
 }
+function normalizePayrollName(name){
+  return String(name||'').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .toLocaleUpperCase('pt-BR').replace(/\s+/g,' ').trim();
+}
+function matchPayrollEmployee(name){
+  const key=normalizePayrollName(name);
+  return key?payrollEmployees.find(e=>normalizePayrollName(e.nome)===key):null;
+}
+function startDetectedHolerite(preview){
+  const hint=preview?.holerite_sugestao||{};
+  if(!hint.detected){accountModal(null,preview);return;}
+  setModule('holerites');
+  const identified=String(hint.funcionario_sugestao||'').trim();
+  const existing=matchPayrollEmployee(identified);
+  if(existing?.chave_pix){
+    accountModal(null,preview,null,{payroll:true,employee:existing});
+    notice('Funcionário reconhecido: '+existing.nome+'. Chave Pix recuperada.',false,7000);
+    return;
+  }
+  // A previa é descartada se o usuário cancelar este formulário.
+  activePreviewTicket=preview.ticket;
+  const staffOptions=payrollEmployees.map(e=>
+    '<option value="'+Number(e.id)+'"'+(existing?.id===e.id?' selected':'')+'>'+
+    esc(e.nome)+(e.chave_pix?' · Pix cadastrado':' · sem Pix')+'</option>'
+  ).join('');
+  showModal('Holerite — funcionário e Pix',
+    identified?'Recebedor encontrado no holerite: '+identified+'. Confira e complete os dados.':
+      'Holerite identificado. Informe o nome do recebedor que consta no documento.',
+    '<form class="formgrid" id="payrollRecognitionForm">'+
+      '<label class="field wide">O funcionário já está cadastrado?'+
+        '<select id="payrollRecognizedExisting"><option value="">Novo funcionário</option>'+
+        staffOptions+'</select></label>'+
+      '<label class="field wide" id="payrollRecognitionNameField">Nome do funcionário *'+
+        '<input id="payrollRecognizedName" name="nome" type="text" required maxlength="150" value="'+esc(identified)+'"></label>'+
+      '<label class="field wide" id="payrollRecognitionPixField">Chave Pix de pagamento *'+
+        '<input id="payrollRecognizedPix" name="chave_pix" type="text" required maxlength="150" autocomplete="off" placeholder="CPF, telefone, e-mail ou chave aleatória"></label>'+
+      '<p class="hint" id="payrollRecognitionHint" style="grid-column:1/-1"></p>'+
+    '</form>',
+    'Continuar para o holerite',async()=>{
+      const form=$('payrollRecognitionForm');
+      if(!form.reportValidity())return false;
+      const employeeId=Number($('payrollRecognizedExisting').value);
+      const enteredName=$('payrollRecognizedName').value.trim();
+      const pix=$('payrollRecognizedPix').value.trim();
+      let employee=payrollEmployees.find(e=>e.id===employeeId);
+      if(!employee)employee=matchPayrollEmployee(enteredName);
+      if(employee){
+        if(!employee.chave_pix){
+          if(!pix)throw new Error('Informe a chave Pix deste funcionário.');
+          await api('/api/holerites/funcionarios','POST',{
+            id:employee.id,nome:employee.nome,chave_pix:pix
+          });
+          const list=await api('/api/holerites');
+          payrollEmployees=list.funcionarios||[];
+          employee=payrollEmployees.find(e=>e.id===employee.id);
+        }
+        if(!employee)throw new Error('Não foi possível encontrar o funcionário.');
+        accountModal(null,preview,null,{payroll:true,employee});
+      }else{
+        if(enteredName.length<3)throw new Error('Confirme o nome do recebedor.');
+        if(!pix)throw new Error('Informe a chave Pix padrão.');
+        // O cadastro ocorre atomicamente com o holerite no botão Salvar.
+        accountModal(null,preview,null,{
+          payroll:true,pendingEmployee:{nome:enteredName,chave_pix:pix}
+        });
+      }
+      return true;
+    });
+  function updateRecognition(){
+    const selected=payrollEmployees.find(e=>
+      e.id===Number($('payrollRecognizedExisting').value));
+    $('payrollRecognitionNameField').hidden=Boolean(selected);
+    $('payrollRecognizedName').required=!selected;
+    const needsPix=!selected||!String(selected.chave_pix||'').trim();
+    $('payrollRecognitionPixField').hidden=!needsPix;
+    $('payrollRecognizedPix').required=needsPix;
+    $('payrollRecognitionHint').textContent=selected
+      ?(selected.chave_pix
+        ?'Funcionário existente. O Pix já cadastrado será reutilizado.'
+        :'Funcionário existente sem Pix. Informe a chave uma única vez.')
+      :'Novo recebedor: confirme o nome e cadastre o Pix. O funcionário será criado junto com este holerite.';
+  }
+  $('payrollRecognizedExisting').addEventListener('change',updateRecognition);
+  updateRecognition();
+}
 function payrollShortMonth(value){
   const match=String(value||'').match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
   if(!match)return String(value||'—');
