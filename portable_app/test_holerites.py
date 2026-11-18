@@ -113,6 +113,45 @@ class PayrollTests(unittest.TestCase):
             self.assertEqual(result["competencia_sugestao"], "2026-11")
         self.assertFalse(h.tables_exist(self.db))
 
+    def test_nome_na_linha_seguinte_e_nome_simples_no_holerite(self):
+        import fitz
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "contracheque.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "RECIBO DE PAGAMENTO DE SALARIO")
+                page.insert_text((40, 90), "NOME DO EMPREGADO")
+                page.insert_text((40, 110), "ANA MARIA DE LIMA")
+                page.insert_text((40, 130), "COMPETENCIA: 10/2026")
+                doc.save(str(path))
+            result = h.detect_from_document("arquivo.pdf", path)
+            self.assertTrue(result["detected"])
+            self.assertEqual(result["funcionario_sugestao"], "ANA MARIA DE LIMA")
+            self.assertEqual(result["competencia_sugestao"], "2026-10")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outro.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "HOLERITE")
+                page.insert_text((40, 90), "NOME: PEDRO HENRIQUE SOUZA")
+                doc.save(str(path))
+            result = h.detect_from_document("outro.pdf", path)
+            self.assertEqual(result["funcionario_sugestao"], "PEDRO HENRIQUE SOUZA")
+
+    def test_nomes_simples_ambiguos_nao_geram_funcionario(self):
+        import fitz
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nomes.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "HOLERITE")
+                page.insert_text((40, 90), "NOME: EMPRESA NOVO HORIZONTE")
+                page.insert_text((40, 110), "NOME: MARIA SILVA")
+                doc.save(str(path))
+            result = h.detect_from_document("nomes.pdf", path)
+            self.assertTrue(result["detected"])
+            self.assertFalse(result["funcionario_sugestao"])
+
     def test_old_holerite_candidate_is_only_a_suggestion(self):
         self.assertTrue(h.guess_existing({
             "observacoes": "CONTRACHEQUE DE OUTUBRO.pdf"
