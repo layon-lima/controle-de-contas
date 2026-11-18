@@ -350,12 +350,11 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
                 break
         if not suggestion:
             # "NOME" sozinho é ambíguo caso várias pessoas apareçam.
-            candidates = [
-                valid_employee_name(m.group(1)) for m in SIMPLE_NAME.finditer(lines)
-            ]
-            valid = list(dict.fromkeys(name for name in candidates if name))
-            if len(valid) == 1:
-                suggestion = valid[0]
+            candidates = list(SIMPLE_NAME.finditer(lines))
+            # Se houver vários campos chamados NOME (empregador, contador,
+            # funcionário), não adivinhar qual deles é o recebedor.
+            if len(candidates) == 1:
+                suggestion = valid_employee_name(candidates[0].group(1))
     competence = ""
     match_month = MONTH_YEAR.search(lines) if detected else None
     if match_month:
