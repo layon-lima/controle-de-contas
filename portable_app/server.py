@@ -1459,6 +1459,24 @@ class Handler(BaseHTTPRequestHandler):
                     content = excel_export.build_xlsx(rows, label=description)
                     self._send(content, mime=excel_export.MIME_TYPE)
                     return
+                if self.command == "POST" and route == "/api/holerites/identificar":
+                    # O nome é lido por IA apenas com conexão e consentimento
+                    # já autorizados. A origem é um ticket de importação do
+                    # usuário, jamais um caminho arbitrário recebido da web.
+                    payload = self._body()
+                    if not AI_ASSIST.status()["enabled"] or not AI_ASSIST.status()["consented"]:
+                        raise ApiError(409, "Conecte e autorize o ChatGPT para identificar o nome com IA.")
+                    ticket = payload.get("ticket")
+                    if not isinstance(ticket, str) or not ticket:
+                        raise ApiError(400, "Importe o PDF do holerite novamente.")
+                    source_pdf, _, _ = pdf_workflows.take_preview(ticket)
+                    proposed = AI_ASSIST.payroll_name(source_pdf)
+                    self._json({
+                        "ok": True,
+                        "funcionario_nome": holerites.valid_employee_name(proposed),
+                        "origem": "IA do holerite"
+                    })
+                    return
                 if self.command == "GET" and route == "/api/holerites":
                     # As contas já vêm em /api/accounts. Evitar listar
                     # todos os PDFs no R2 novamente só para abrir a aba.
