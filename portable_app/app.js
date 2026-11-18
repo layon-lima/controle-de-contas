@@ -1489,7 +1489,8 @@ $('mobileBtn').addEventListener('click',async()=>{
 $('menuClose').addEventListener('click',closeMenu);
 for(const b of document.querySelectorAll('.menu-item'))b.addEventListener('click',()=>action(b.dataset.action));
 document.addEventListener('click',e=>{
-  if(!e.target.closest('#menu')&&!e.target.closest('tbody tr'))closeMenu();
+  if(!e.target.closest('#menu')&&!e.target.closest('tbody tr')&&
+     !e.target.closest('[data-payroll-account]'))closeMenu();
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenu();closeModal();}});
 $('cancel').addEventListener('click',()=>closeModal());
