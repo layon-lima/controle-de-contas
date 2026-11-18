@@ -1035,11 +1035,11 @@ function accountModal(a,preview=null,rerun=null,opts={}){
           'Conta salva. Nenhum novo campo foi aprendido.');
       }else notice(a?'Conta atualizada.':'Conta cadastrada.');
       if(localCopy?.saved&&!saved.warning)
-        notice('Conta salva. PDF também copiado para a pasta do Windows.');
-      else if(localCopy?.queued)
-        notice('Conta salva na VPS. Cópia do Windows pendente: abra Pasta boletos e clique em Copiar pendentes.',true,14000);
-      else if(localCopy?.error)
-        notice('Conta salva na VPS, mas SEM cópia local: '+localCopy.error,true,14000);
+        notice('Conta salva no R2 e no Windows.');
+      else if(localCopy&&!localCopy.saved&&!localCopy.skipped)
+        notice('Conta salva na VPS/R2. O Windows ainda não confirmou a cópia; '+
+          'a recuperação será automática quando a pasta estiver acessível.',
+          true,11000);
       // Salvar/importar nao altera o filtro escolhido pelo usuario.
       await reload();return true;
     });
@@ -1401,11 +1401,10 @@ async function uploadAccountPDF(file){
   if(!response.ok||!data.ok)throw new Error(data.error||'Falha ao importar PDF.');
   const registered=accounts.find(item=>item.id===selected)||{};
   const savedLocal=await autoSaveFinalPdfToWindows(selected,registered);
-  notice(savedLocal?.saved?'PDF anexado e cópia salva na pasta do Windows.':
-    savedLocal?.queued?'PDF anexado na VPS. Cópia Windows pendente: abra Pasta boletos e clique em Copiar pendentes.':
-    savedLocal?.error?'PDF anexado na VPS, mas SEM cópia no Windows: '+savedLocal.error:
-    'PDF anexado à VPS. Configure Pasta boletos para copiar ao Windows.',
-    Boolean(savedLocal?.error||savedLocal?.queued),14000);
+  notice(savedLocal?.saved?'PDF anexado e salvo no R2 e no Windows.':
+    'PDF anexado na VPS/R2. A cópia local será retomada automaticamente '+
+    'quando o navegador tiver acesso à pasta Windows.',
+    Boolean(savedLocal&&!savedLocal.saved&&!savedLocal.skipped),11000);
   await reload();
 }
 
@@ -1700,8 +1699,9 @@ $('folderBtn').addEventListener('click',async()=>{
       button.disabled=!root||permission==='granted';
       const pending=await windowsPendingCopies();
       queue.textContent=pending.length
-        ?pending.length+' PDF(s) na fila de copia automatica do Windows.'
-        :'Todas as copias recentes foram processadas neste navegador.';
+        ?pending.length+' documento(s) aguardando o acesso automático ao Windows. '+
+          'Os demais arquivos antigos também serão conferidos.'
+        :'Cópias novas e antigas são conferidas automaticamente quando a pasta está acessível.';
       $('testWindowsFolder').disabled=!root;
     }
     $('authorizeWindowsFolder').addEventListener('click',async()=>{
@@ -1713,8 +1713,8 @@ $('folderBtn').addEventListener('click',async()=>{
         if(state!=='granted')throw new Error('Autorize o acesso a pasta na janela do navegador.');
         await testWindowsFolderWrite(root);
         await updateFolderStatus();
-        await retryWindowsCopiesAutomatically();
-        notice('Pasta '+root.name+' autorizada. Copias pendentes processadas automaticamente.');
+        void reconcileAllWindowsPDFs(true).catch(console.warn);
+        notice('Pasta '+root.name+' autorizada. Conferindo todos os PDFs antigos automaticamente.');
       }catch(e){notice('Nao foi possivel autorizar: '+(e.message||String(e)),true,12000);}
     });
     $('browseWindowsFolder').addEventListener('click',async()=>{
@@ -1729,8 +1729,8 @@ $('folderBtn').addEventListener('click',async()=>{
         $('browseWindowsFolder').textContent='Trocar pasta…';
         await testWindowsFolderWrite(chosen);
         await updateFolderStatus();
-        await retryWindowsCopiesAutomatically();
-        notice('Pasta '+chosen.name+' autorizada. Cópia automática R2 e Windows ativada.');
+        void reconcileAllWindowsPDFs(true).catch(console.warn);
+        notice('Pasta '+chosen.name+' autorizada. Recuperação retroativa automática iniciada.');
       }catch(e){if(e?.name!=='AbortError')notice(e.message||String(e),true,12000);}
     });
     $('testWindowsFolder').addEventListener('click',async()=>{
@@ -1773,7 +1773,8 @@ $('save').addEventListener('click',async()=>{
   catch(e){notice(e.message||String(e),true)}
   finally{$('save').disabled=false}
 });
-reload().catch(e=>notice('Não foi possível carregar o banco: '+e.message,true));
+reload().then(()=>retryWindowsCopiesAutomatically())
+  .catch(e=>notice('Não foi possível carregar o banco: '+e.message,true));
 setInterval(()=>{
   if(!$('backdrop').classList.contains('show')&&!$('menu').classList.contains('visible'))
     reload().catch(()=>{});
