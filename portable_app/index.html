@@ -196,6 +196,44 @@ table{min-width:0}.vendor-name{min-width:0}
  .top-actions{grid-template-columns:minmax(0,1fr)}
 }
 
+/* CONTAS 4 — Holerites: área própria sem duplicar o motor financeiro. */
+.module-tabs{display:flex;align-items:center;gap:4px;padding:4px;background:#edf3fa;border:1px solid #dfe9f4;border-radius:11px;width:max-content;max-width:100%;flex:none}
+.module-tabs button{border:0;background:transparent;padding:9px 18px;border-radius:8px;color:#55708e;font-weight:750;font-size:12px;cursor:pointer;white-space:nowrap}
+.module-tabs button[aria-selected="true"]{background:white;color:#205887;box-shadow:0 1px 5px #1b3f621c}
+#contasView[hidden],#holeritesView[hidden]{display:none!important}
+.payroll-surface{min-height:0;overflow:hidden;background:#fff}
+.payroll-head{padding:15px 18px;border-bottom:1px solid #e7edf5;display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
+.payroll-head h2{margin:0;font-size:17px;color:#1b3757}
+.payroll-head small{font-size:11px;color:#7890a7}
+.payroll-toolbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.payroll-toolbar button,.payroll-actions button,.payroll-legacy button{border:1px solid #d6e3f0;background:white;color:#225c83;border-radius:8px;padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer}
+.payroll-toolbar button:hover,.payroll-actions button:hover,.payroll-legacy button:hover{background:#eef6fe}
+.payroll-toolbar .primary{border-color:#098b62;background:#098b62;color:white}
+.payroll-search{padding:9px 12px;border:1px solid #dce6f0;border-radius:9px;min-width:210px;flex:1;background:#fff;color:#264467;font-size:13px}
+.payroll-list{overflow-y:auto;flex:1;min-height:0;padding:14px 18px 24px;display:grid;align-content:start;gap:12px}
+.payroll-person{border:1px solid #e1e9f2;background:#fff;border-radius:13px;overflow:hidden;box-shadow:0 3px 12px #17365b07}
+.payroll-person-head{padding:13px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#f9fbfe}
+.payroll-person-details{min-width:0;display:flex;gap:10px;align-items:center;flex:1}
+.payroll-avatar{border-radius:11px;width:38px;height:38px;background:#e4eff9;color:#316896;display:grid;place-items:center;font-size:12px;font-weight:800;flex:none}
+.payroll-person-details strong{display:block;color:#243d58;font-size:13px;overflow-wrap:anywhere}
+.payroll-person-details small{display:block;color:#7e8fa6;font-size:11px;margin-top:4px;overflow-wrap:anywhere}
+.payroll-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.payroll-month{border-top:1px solid #edf1f6;display:grid;grid-template-columns:minmax(85px,.9fr) minmax(0,2fr) minmax(110px,1fr) minmax(80px,.8fr) auto;gap:12px;align-items:center;padding:11px 15px;color:#405a76;font-size:12px}
+.payroll-month strong{font-size:12px;color:#254764}.payroll-month .amount{font-weight:800;white-space:nowrap}
+.payroll-month .pill{width:max-content}
+.payroll-month button{border:1px solid #dce6f1;background:white;border-radius:7px;padding:7px 11px;color:#30658c;font-weight:700;cursor:pointer}
+.payroll-empty{padding:40px 20px;text-align:center;color:#6f8399;font-size:13px}
+.payroll-legacy{padding:13px 16px;background:#fff9ed;border:1px solid #f0e3c7;border-radius:12px}
+.payroll-legacy h3{margin:0 0 6px;font-size:13px;color:#856228}
+.payroll-legacy p{margin:0 0 8px;font-size:11px;color:#8f7a51}
+.payroll-legacy-row{display:flex;gap:8px;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid #f3e7cc;font-size:12px;color:#594e36;flex-wrap:wrap}
+.payroll-form-box{grid-column:1/-1;border:1px solid #dbe6f2;background:#f7faff;border-radius:11px;padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.payroll-form-box h4{grid-column:1/-1;margin:0;font-size:13px;color:#294d70}
+.payroll-form-box .field{margin:0}.payroll-form-box .payroll-info{font-size:11px;color:#68829b;grid-column:1/-1;line-height:1.5}
+.payroll-form-box #payrollNewFields{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.payroll-form-box #payrollNewFields[hidden],#payrollFields[hidden]{display:none!important}
+@media(max-width:760px){.module-tabs{width:100%}.module-tabs button{flex:1}.payroll-toolbar{width:100%}.payroll-search{width:100%}.payroll-head{padding:11px}.payroll-list{padding:10px}.payroll-month{grid-template-columns:1fr 1fr;gap:6px}.payroll-month>span:nth-child(2){grid-column:1/-1}.payroll-month button{justify-self:end}.payroll-form-box{grid-template-columns:1fr}.payroll-form-box #payrollNewFields{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body>
@@ -217,7 +255,11 @@ table{min-width:0}.vendor-name{min-width:0}
       <input type="file" id="uploadFile" accept=".pdf,application/pdf" hidden><input type="file" id="importFile" accept=".pdf,application/pdf" hidden>
     </div>
   </header>
-  <main class="surface">
+  <nav class="module-tabs" aria-label="Módulos do CONTAS 4" role="tablist">
+    <button type="button" id="tabContas" role="tab" aria-selected="true" aria-controls="contasView">Contas</button>
+    <button type="button" id="tabHolerites" role="tab" aria-selected="false" aria-controls="holeritesView">Holerites</button>
+  </nav>
+  <main class="surface" id="contasView">
     <div class="section-header"><h2 id="listTitle">Visão geral</h2><div><button type="button" class="back-to-open" id="backToOpen" hidden>← Em aberto</button><span class="count">Lançamentos <strong id="count">0 registros</strong></span><button type="button" id="resetColumns" class="reset-columns" title="Voltar às larguras padrão">↺ Restaurar colunas</button></div></div>
     <div class="filters">
       <label>Status <select id="status"><option value="all">Todas</option><option>Vencida</option><option>Próxima</option><option>Em dia</option><option>Paga</option></select></label>
@@ -232,6 +274,17 @@ table{min-width:0}.vendor-name{min-width:0}
       </table>
     </div>
   </main>
+  <section class="surface payroll-surface" id="holeritesView" role="tabpanel" aria-labelledby="tabHolerites" hidden>
+    <div class="payroll-head">
+      <div><h2>Holerites</h2><small>Funcionários, Pix padrão e histórico mensal</small></div>
+      <div class="payroll-toolbar">
+        <input type="search" class="payroll-search" id="payrollSearch" placeholder="Buscar funcionário ou mês..." aria-label="Buscar holerites">
+        <button type="button" id="employeeNew">+ Funcionário</button>
+        <button type="button" class="primary" id="payrollNew">+ Novo holerite</button>
+      </div>
+    </div>
+    <div class="payroll-list" id="payrollList"><p class="payroll-empty">Carregando holerites...</p></div>
+  </section>
 </div>
 <div id="menu" class="menu" role="menu" aria-label="Ações da conta">
   <div class="menu-title"><span>Ações da conta</span><button aria-label="Fechar" id="menuClose">×</button></div>
@@ -253,5 +306,5 @@ table{min-width:0}.vendor-name{min-width:0}
 <div id="dropZone" class="drop-zone" aria-hidden="true"><div class="drop-zone-content"><img src="/icons/upload.svg" alt=""><strong>Solte um boleto ou comprovante PDF</strong><span>Boletos entram no cadastro; comprovantes mostram as contas elegíveis para sua escolha.</span></div></div>
 <div id="toast" class="toast" role="status"></div>
 <!--LOCAL_AUTH-->
-<script src="/app.js?v=20261109-comprovantes-imagem-pdf"></script>
+<script src="/app.js?v=20261118-holerites-contas4"></script>
 </body></html>
