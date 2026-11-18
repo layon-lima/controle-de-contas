@@ -24,21 +24,20 @@ MONTH_YEAR = re.compile(
     re.IGNORECASE,
 )
 EMPLOYEE_NAME = re.compile(
-    r"(?im)^[ \\t]*(?:NOME\s+(?:DO|DA)\s+"
+    r"(?im)^[ \t]*(?:NOME\s+(?:DO|DA)\s+"
     r"(?:EMPREGADO|FUNCIONARIO|COLABORADOR|TRABALHADOR|RECEBEDOR)|"
     r"FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR)"
-    r"[ \\t]*[:\\-]?[ \\t]*"
-    r"([A-Z][A-Z' .-]{4,90})[ \\t]*$"
+    r"[ \t]*[:\-]?[ \t]*"
+    r"([A-Z][A-Z' .-]{4,90})[ \t]*$"
 )
 EMPLOYEE_NAME_NEXT_LINE = re.compile(
-    r"(?im)^[ \\t]*(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|"
+    r"(?im)^[ \t]*(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|"
     r"NOME\s+(?:DO|DA)\s+(?:EMPREGADO|FUNCIONARIO|TRABALHADOR))"
-    r"[ \\t]*:?[ \\t]*\\n[ \\t]*([A-Z][A-Z' .-]{4,90})[ \\t]*$"
+    r"[ \t]*:?[ \t]*\n[ \t]*([A-Z][A-Z' .-]{4,90})[ \t]*$"
 )
 SIMPLE_NAME = re.compile(
-    r"(?im)^[ \\t]*NOME[ \\t]*[:\\-][ \\t]*([A-Z][A-Z' .-]{4,90})[ \\t]*$"
+    r"(?im)^[ \t]*NOME[ \t]*[:\-][ \t]*([A-Z][A-Z' .-]{4,90})[ \t]*$"
 )
-
 
 def simplify(value):
     normalized = unicodedata.normalize("NFKD", str(value or ""))
