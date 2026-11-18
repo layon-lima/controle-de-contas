@@ -149,6 +149,51 @@ class PortableDataTests(unittest.TestCase):
         with fitz.open(pdf) as doc:
             self.assertEqual(doc.page_count, 1)
 
+    def test_contas4_windows_manifest_retroativo_inclui_pagos(self):
+        pdf = self._real_pdf("PDF RETROATIVO")
+        s.upload_pdf(1, pdf, "vencimento.pdf")
+        s.register_payment(1, {"data_pagamento": date.today().isoformat()})
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(
+            lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2))
+        )
+        url = f"http://127.0.0.1:{httpd.server_port}/api/windows/pdf-manifest"
+        with self.assertRaises(HTTPError) as forbidden:
+            urlopen(url, timeout=5)
+        self.assertEqual(forbidden.exception.code, 403)
+        forbidden.exception.close()
+        with patch.object(s.r2_bridge, "enabled", return_value=False):
+            request = Request(url, headers={"X-Local-Token": s.TOKEN})
+            with urlopen(request, timeout=6) as response:
+                listing = json.load(response)
+        self.assertTrue(listing["ok"])
+        entry = next(item for item in listing["items"] if item["id"] == 1)
+        self.assertRegex(entry["sha256"], r"^[a-f0-9]{64}$")
+        self.assertEqual(entry["size"], len(pdf))
+        self.assertEqual(entry["vencimento"], date.today().isoformat())
+
+    def test_contas4_pdf_pago_recupera_do_r2_sem_arquivo_local(self):
+        pdf = self._real_pdf("PDF PAGO R2")
+        s.upload_pdf(1, pdf, "doc.pdf")
+        local = s.pdf_path(1)
+        s.register_payment(1, {"data_pagamento": date.today().isoformat()})
+        local.rename(local.with_suffix(".pdf.hidden"))
+        httpd = s.LocalServer(("127.0.0.1", 0), s.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(
+            lambda: (httpd.shutdown(), httpd.server_close(), thread.join(2))
+        )
+        url = f"http://127.0.0.1:{httpd.server_port}/api/accounts/1/pdf"
+        with patch.object(s.r2_bridge, "read_pdf", return_value=pdf) as remote:
+            request = Request(url, headers={"X-Local-Token": s.TOKEN})
+            with urlopen(request, timeout=6) as response:
+                received = response.read()
+            remote.assert_called_once_with(1)
+        self.assertEqual(received, pdf)
+
     def test_contas4_pdf_upload_also_writes_r2_automatically(self):
         data = self._real_pdf("ARQUIVO SIMULTANEO R2 E WINDOWS")
         with patch.object(s.r2_bridge, "enabled", return_value=True), \
