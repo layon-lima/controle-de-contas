@@ -60,9 +60,9 @@ async function rememberWindowsBoletoFolder(handle){
   }finally{db.close();}
   windowsFolderHandle=handle;
 }
-// Uma copia que falhou continua pendente mesmo apos fechar o navegador.
-// Guardar no IndexedDB SOMENTE o PDF original selecionado pelo usuario,
-// nunca chaves/tokens do servidor.
+// Uma cópia falhada continua pendente ao fechar o navegador.
+// A fila guarda somente o ID e o destino; o PDF final é sempre
+// recuperado da VPS na tentativa automática seguinte.
 async function windowsCopyTransaction(mode,operation){
   const db=await openWindowsFoldersDB();
   try{
@@ -78,10 +78,10 @@ async function windowsCopyTransaction(mode,operation){
   }finally{db.close();}
 }
 async function saveWindowsCopyPending(file,details,id){
-  if(!file||!Number.isInteger(Number(id))||Number(id)<=0)
+  if(!Number.isInteger(Number(id))||Number(id)<=0)
     throw new Error('Nao foi possivel identificar a conta para repetir a copia.');
   return windowsCopyTransaction('readwrite',store=>store.put({
-    id:Number(id),file,details:{
+    id:Number(id),details:{
       vencimento:String(details?.vencimento||''),
       observacoes:String(details?.observacoes||'')
     },addedAt:Date.now()
@@ -151,14 +151,25 @@ async function fetchFinalPdfFromServer(id){
 }
 async function autoSaveFinalPdfToWindows(id,info){
   if(!/Windows/i.test(navigator.userAgent||''))return {skipped:true};
-  const pdf=await fetchFinalPdfFromServer(id);
-  const result=await copyOrQueueWindowsPDF(pdf,info,id);
-  if(!result?.saved){
-    const reason=result?.error||'A pasta do Windows não está autorizada.';
-    notice('R2 atualizado, mas a cópia Windows precisa de acesso: '+reason,
-      true,14500);
+  try{
+    const pdf=await fetchFinalPdfFromServer(id);
+    const result=await copyOrQueueWindowsPDF(pdf,info,id);
+    if(result?.saved){
+      await removeWindowsCopyPending(id).catch(()=>{});
+    }else{
+      notice('PDF salvo no R2. Cópia do Windows pendente: '+
+        (result?.error||'pasta não autorizada.'),true,14500);
+    }
+    return result;
+  }catch(error){
+    // O pagamento ou cadastro JÁ foi confirmado na VPS. Nunca reportar
+    // esta falha de cópia como erro da transação e causar duplicidade.
+    try{await saveWindowsCopyPending(null,info,id);}catch(_){}
+    notice('Conta salva no R2. Não foi possível gravar agora no Windows. '+
+      'O sistema repetirá a cópia automaticamente ao recuperar o acesso à pasta. '+
+      (error.message||String(error)),true,14500);
+    return {saved:false,queued:true,error:error.message||String(error)};
   }
-  return result;
 }
 async function retryWindowsCopiesAutomatically(){
   try{
@@ -180,6 +191,7 @@ async function retryWindowsCopiesAutomatically(){
   }catch(_){/* a fila persiste; não bloquear o cadastro ou pagamento */}
 }
 window.addEventListener('focus',retryWindowsCopiesAutomatically);
+setInterval(retryWindowsCopiesAutomatically,60000);
 async function copyPendingWindowsPDFs(){
   const root=await prepareWindowsFolderCopy();
   if(!root)throw new Error('Selecione primeiro a pasta BOLETOS no Windows.');
@@ -187,7 +199,8 @@ async function copyPendingWindowsPDFs(){
   const pending=await windowsPendingCopies();
   let copied=0;
   for(const entry of pending){
-    const result=await copyPDFToWindowsFolder(entry.file,entry.details,entry.id);
+    const current=await fetchFinalPdfFromServer(entry.id);
+    const result=await copyPDFToWindowsFolder(current,entry.details,entry.id);
     if(!result?.saved)throw new Error(
       copied+' PDF(s) copiado(s). Conta '+entry.id+': '+(result?.error||'Nao foi possivel gravar o PDF.')
     );
