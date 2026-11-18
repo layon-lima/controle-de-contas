@@ -96,6 +96,23 @@ class PayrollTests(unittest.TestCase):
             self.assertEqual(guess["competencia_sugestao"], "2026-10")
         self.assertFalse(h.tables_exist(self.db))
 
+    def test_nome_do_funcionario_depende_de_quebras_de_linha(self):
+        # Regressão: simplificar o documento todo achata o texto e quebra
+        # ^FUNCIONARIO, impedindo a construção da imagem Docker na VPS.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "contracheque.pdf"
+            with fitz.open() as doc:
+                page = doc.new_page()
+                page.insert_text((40, 70), "DEMONSTRATIVO DE PAGAMENTO")
+                page.insert_text((40, 90), "NOME DO FUNCIONÁRIO: JOSÉ DE OLIVEIRA")
+                page.insert_text((40, 110), "COMPETÊNCIA: 11/2026")
+                doc.save(str(path))
+            result = h.detect_from_document("arquivo.pdf", path)
+            self.assertTrue(result["detected"])
+            self.assertEqual(result["funcionario_sugestao"], "JOSE DE OLIVEIRA")
+            self.assertEqual(result["competencia_sugestao"], "2026-11")
+        self.assertFalse(h.tables_exist(self.db))
+
     def test_old_holerite_candidate_is_only_a_suggestion(self):
         self.assertTrue(h.guess_existing({
             "observacoes": "CONTRACHEQUE DE OUTUBRO.pdf"
