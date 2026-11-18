@@ -65,6 +65,15 @@ class PayrollTests(unittest.TestCase):
         self.assertNotIn(1, h.linked_accounts(self.db))
         self.assertIn(2, h.linked_accounts(self.db))
 
+    def test_novo_funcionario_precisa_da_chave_pix_antes_de_vincular(self):
+        with self.assertRaisesRegex(ValueError, "chave Pix"):
+            h.assign(self.db, 1, {
+                "holerite": "sim", "funcionario_nome": "Carlos Pires",
+                "competencia": "2026-11", "pix_padrao": ""
+            })
+        self.assertEqual(h.get_employees(self.db), [])
+        self.assertEqual(h.linked_accounts(self.db), {})
+
     def test_invalid_competence_does_not_link_or_create_employee(self):
         for wrong in ("", "2026-00", "2026-13", "11/2026", "outubro"):
             with self.subTest(wrong=wrong), self.assertRaisesRegex(
