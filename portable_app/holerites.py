@@ -286,44 +286,88 @@ def assign(conn, account_id, data):
     )
 
 
+def _looks_like_payroll(text):
+    """Classifica o CONTEÚDO do documento, nunca seu nome ou observações."""
+    body = simplify(text)
+    if not body:
+        return False
+    # Títulos encontrados na página são evidência; títulos de ARQUIVO não são.
+    if HOLERITE_WORDS.search(body):
+        return True
+
+    # Layouts comuns não escrevem "holerite": trazem rubricas,
+    # proventos/descontos, identificação do empregado e salário líquido.
+    employee = bool(re.search(
+        r"\b(?:FUNCIONARIO|EMPREGADO|COLABORADOR|TRABALHADOR|"
+        r"NOME\s+(?:DO|DA)\s+(?:FUNCIONARIO|EMPREGADO|COLABORADOR|"
+        r"TRABALHADOR)|MATRICULA|ADMISSAO)\b", body
+    ))
+    salary = bool(re.search(
+        r"\b(?:SALARIO(?:\s+(?:BASE|BRUTO|MENSAL|CONTRATUAL|"
+        r"LIQUIDO))?|REMUNERACAO|PROVENTOS|VENCIMENTOS)\b", body
+    ))
+    has_columns = (
+        bool(re.search(r"\b(?:PROVENTOS|VENCIMENTOS)\b", body))
+        and bool(re.search(r"\bDESCONTOS?\b", body))
+    )
+    has_net = bool(re.search(
+        r"\b(?:LIQUIDO\s+A\s+RECEBER|TOTAL\s+LIQUIDO|"
+        r"SALARIO\s+LIQUIDO|VALOR\s+LIQUIDO)\b", body
+    ))
+    labour_indicators = (
+        r"\bINSS\b", r"\bFGTS\b", r"\bIRRF\b",
+        r"\bPIS(?:\s*/\s*PASEP)?\b", r"\bCBO\b",
+        r"\b(?:DATA\s+DE\s+)?ADMISSAO\b",
+        r"\bHORAS?\s+EXTRAS?\b", r"\b(?:13[ºO]?\s+SALARIO|FERIAS)\b",
+        r"\bRUBRICAS?\b",
+    )
+    labour_count = sum(bool(re.search(p, body)) for p in labour_indicators)
+    return bool(
+        (employee and has_columns and (salary or labour_count >= 1))
+        or (employee and salary and has_net and labour_count >= 1)
+        or (has_columns and salary and has_net and labour_count >= 2)
+    )
+
+
 def detect_from_document(filename="", path: Path | None = None, fields=None):
-    """Sugestão, nunca cadastramento ou vínculo automático silencioso."""
-    fields = fields or {}
-    name = str(filename or "")
-    raw = name + "\n" + str(fields.get("observacoes") or "")
-    source = "nome do arquivo"
+    """Sugere holerite pelo texto/OCR do PDF; não cria contas ou funcionários.
+
+    filename e fields permanecem na assinatura por compatibilidade com a API,
+    mas NÃO participam da classificação nem da extração do nome.
+    """
+    content = ""
+    source = "conteúdo do PDF não disponível"
     if path:
         try:
             import fitz
             with fitz.open(str(path)) as doc:
-                extracted = "\n".join(
+                content = "\n".join(
                     (doc[i].get_text("text", sort=True) or "")[:15_000]
                     for i in range(min(len(doc), 2))
                 )
-                raw += "\n" + extracted
                 source = "conteúdo do PDF"
-                if len(extracted.strip()) < 65 and not HOLERITE_WORDS.search(
-                    simplify(raw)
-                ) and doc.page_count:
-                    # Contracheque escaneado: tentar OCR local somente na
-                    # primeira pagina, em resolucao limitada e com timeout.
-                    # A ausencia do Tesseract nao bloqueia a importacao.
+                # A antiga rotina usava o título do arquivo para decidir se
+                # tentaria OCR. Um PDF escaneado com nome genérico falhava.
+                # Só acionar OCR quando a camada de texto é insuficiente.
+                text_length = len(content.strip())
+                if (doc.page_count and not _looks_like_payroll(content)
+                        and (text_length < 280 or len(content.split()) < 35)):
                     try:
                         import subprocess
                         first = doc.load_page(0)
                         pixels = max(first.rect.width * first.rect.height, 1)
-                        scale = min(1.65, (8_000_000 / pixels) ** .5)
+                        scale = min(2.0, (8_000_000 / pixels) ** .5)
                         image = first.get_pixmap(
                             matrix=fitz.Matrix(scale, scale), alpha=False
                         ).tobytes("png")
                         result = subprocess.run(
                             ["tesseract", "stdin", "stdout", "-l", "por+eng"],
                             input=image, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, timeout=7,
+                            stderr=subprocess.DEVNULL, timeout=9,
                             check=False
                         )
                         if result.returncode == 0 and result.stdout:
-                            raw += "\n" + result.stdout[:20_000].decode(
+                            content += "\n" + result.stdout[:35_000].decode(
                                 "utf-8", errors="replace"
                             )
                             source = "OCR local do PDF"
@@ -331,15 +375,11 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
                         pass
         except (OSError, RuntimeError, ValueError):
             pass
-    # Não achatar as linhas ANTES de procurar FUNCIONARIO/NOME DO EMPREGADO.
-    # EMPLOYEE_NAME usa ^ e $ para evitar capturar a empresa ou outros campos
-    # do contracheque. O antigo simplify(raw) apagava os \n e fazia o teste
-    # de reconhecimento falhar, bloqueando o build Docker da VPS.
-    lines = "\n".join(simplify(line) for line in raw.splitlines())
-    detected = bool(HOLERITE_WORDS.search(lines))
+    # Manter as linhas evita confundir cabeçalhos e nomes de empregados.
+    lines = "\n".join(simplify(line) for line in content.splitlines())
+    detected = _looks_like_payroll(content)
     suggestion = ""
     if detected:
-        # Rejeitar falsos candidatos e continuar procurando no PDF.
         for pattern in (EMPLOYEE_NAME, EMPLOYEE_NAME_NEXT_LINE):
             candidates = [
                 valid_employee_name(m.group(1)) for m in pattern.finditer(lines)
@@ -349,10 +389,7 @@ def detect_from_document(filename="", path: Path | None = None, fields=None):
                 suggestion = valid[0]
                 break
         if not suggestion:
-            # "NOME" sozinho é ambíguo caso várias pessoas apareçam.
             candidates = list(SIMPLE_NAME.finditer(lines))
-            # Se houver vários campos chamados NOME (empregador, contador,
-            # funcionário), não adivinhar qual deles é o recebedor.
             if len(candidates) == 1:
                 suggestion = valid_employee_name(candidates[0].group(1))
     competence = ""
