@@ -378,6 +378,100 @@ class ChatGPTAssist:
             response.get("fields"), dict
         ) else {}
 
+    def payroll_name(self, pdf_path: Path):
+        """Identifica exclusivamente o nome do empregado em imagem de holerite.
+
+        Chamado apenas após autorização prévia do usuário para IA.
+        Não salva o PDF nem altera nome, funcionário ou conta.
+        """
+        if not self.status()["enabled"] or not self.status()["consented"]:
+            raise ValueError("Conecte e autorize o ChatGPT antes de ler o nome com IA.")
+        token = self.access_token()
+        if not token:
+            raise ValueError("A sessão do ChatGPT expirou. Reconecte a IA no CONTAS 4.")
+        models = get_json(API + "/models", token=token).get("models", [])
+        names = [str(m.get("slug") or "") for m in models if isinstance(m, dict)]
+        model = next((x for x in ("gpt-6", "gpt-5.6") if x in names), None)
+        if not model:
+            model = next((x for x in names if x.startswith("gpt-")), None)
+        if not model:
+            raise ValueError("Nenhum modelo de IA disponível na conexão.")
+        import fitz
+        instruction = (
+            "Analise a imagem deste HOLERITE brasileiro. Sua única tarefa é "
+            "identificar o NOME COMPLETO DO EMPREGADO/FUNCIONÁRIO que receberá o "
+            "salário. NÃO retorne nome da empresa, empregador, pagador, contador, "
+            "tabela ou cabeçalho, mesmo se estiver perto do rótulo 'Nome'. "
+            "Confira visualmente onde está a identificação do trabalhador. "
+            "Não adivinhe nomes cortados, ilegíveis nem preencha com 'DO DISCRIMINADA'. "
+            "Se não tiver certeza, use string vazia. "
+            "Responda SOMENTE JSON válido: {\"funcionario_nome\":\"NOME COMPLETO\"}. "
+            "Não devolva CPF, salário, outros dados pessoais nem explicações."
+        )
+        with fitz.open(str(pdf_path)) as document:
+            if not document.page_count:
+                return ""
+            page = document.load_page(0)
+            pixels = max(float(page.rect.width * page.rect.height), 1.0)
+            scale = min(2.0, (9_000_000 / pixels) ** 0.5)
+            image = page.get_pixmap(
+                matrix=fitz.Matrix(scale, scale), alpha=False
+            ).tobytes("jpeg", jpg_quality=80)
+        payload = json.dumps({
+            "model": model, "store": False, "stream": True,
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": instruction},
+                    {"type": "input_image", "image_url":
+                     "data:image/jpeg;base64," + base64.b64encode(image).decode()}
+                ]
+            }]
+        }, ensure_ascii=False).encode()
+        req = Request(API + "/responses", data=payload, method="POST", headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream"
+        })
+        chunks, completed, total_size = [], False, 0
+        with urlopen(req, timeout=70) as resp:
+            for line in resp:
+                if not line.startswith(b"data: "):
+                    continue
+                try:
+                    event = json.loads(line[6:])
+                except (ValueError, UnicodeError):
+                    continue
+                event_type = event.get("type")
+                if event_type == "response.output_text.delta":
+                    delta = str(event.get("delta") or "")
+                    total_size += len(delta)
+                    if total_size > 3000:
+                        return ""
+                    chunks.append(delta)
+                elif event_type in ("response.failed", "response.incomplete"):
+                    return ""
+                elif event_type == "response.completed":
+                    completed = True
+                    break
+        if not completed:
+            return ""
+        answer = "".join(chunks).strip()
+        begin, end = answer.find("{"), answer.rfind("}")
+        if begin < 0 or end <= begin:
+            return ""
+        try:
+            response = json.loads(answer[begin:end + 1])
+        except ValueError:
+            return ""
+        if not isinstance(response, dict):
+            return ""
+        try:
+            from . import holerites
+        except ImportError:
+            import holerites
+        return holerites.valid_employee_name(response.get("funcionario_nome"))
+
     def correct(self, path: Path, current: dict):
         """Somente mediante clique: não grava, não treina, não altera o PDF."""
         if not self.status()["enabled"] or not self.status()["consented"]:
