@@ -149,81 +149,123 @@ async function fetchFinalPdfFromServer(id){
     throw new Error('O PDF final da VPS está inválido.');
   return body;
 }
+// Todas as gravações usam uma fila serial no navegador, evitando que uma
+// reconciliação antiga sobrescreva o comprovante recém-mesclado de uma conta.
+let windowsWriteTail=Promise.resolve(),windowsReconcileRunning=false;
+let windowsLastReconcile=0;
+function serializeWindowsWrite(task){
+  const pending=windowsWriteTail.catch(()=>{}).then(task);
+  windowsWriteTail=pending.catch(()=>{});
+  return pending;
+}
 async function autoSaveFinalPdfToWindows(id,info){
   if(!/Windows/i.test(navigator.userAgent||''))return {skipped:true};
-  try{
-    const pdf=await fetchFinalPdfFromServer(id);
-    const result=await copyOrQueueWindowsPDF(pdf,info,id);
-    if(result?.saved){
-      await removeWindowsCopyPending(id).catch(()=>{});
-    }else{
-      notice('PDF salvo no R2. Cópia do Windows pendente: '+
-        (result?.error||'pasta não autorizada.'),true,14500);
+  return serializeWindowsWrite(async()=>{
+    try{
+      const pdf=await fetchFinalPdfFromServer(id);
+      const result=await copyOrQueueWindowsPDF(pdf,info,id);
+      if(result?.saved){
+        await removeWindowsCopyPending(id).catch(()=>{});
+      }else{
+        await saveWindowsCopyPending(null,info,id);
+      }
+      return result;
+    }catch(error){
+      // O cadastro/pagamento já foi gravado na VPS. Apenas a cópia Windows
+      // foi adiada. Nunca pedir para registrar o mesmo pagamento outra vez.
+      await saveWindowsCopyPending(null,info,id).catch(()=>{});
+      return {saved:false,queued:true,error:error.message||String(error)};
     }
-    return result;
+  });
+}
+async function windowsExistingPDF(folder,id){
+  for await(const [name,handle] of folder.entries()){
+    if(handle.kind==='file'&&
+       name.startsWith(String(id)+' - ')&&
+       name.toLowerCase().endsWith('.pdf'))return handle;
+  }
+  return null;
+}
+async function windowsFileSHA256(handle){
+  const file=await handle.getFile();
+  const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest),
+    value=>value.toString(16).padStart(2,'0')).join('');
+}
+async function windowsAlreadyCurrent(root,item){
+  const match=/^(20\d{2})-(0[1-9]|1[0-2])-\d{2}$/.exec(
+    String(item.vencimento||'')
+  );
+  if(!match)return false;
+  let folder;
+  try{
+    folder=await root.getDirectoryHandle('BOLETOS '+match[1]);
+    folder=await folder.getDirectoryHandle(
+      match[2]+' - '+WINDOWS_MONTHS[Number(match[2])-1]);
   }catch(error){
-    // O pagamento ou cadastro JÁ foi confirmado na VPS. Nunca reportar
-    // esta falha de cópia como erro da transação e causar duplicidade.
-    try{await saveWindowsCopyPending(null,info,id);}catch(_){}
-    notice('Conta salva no R2. Não foi possível gravar agora no Windows. '+
-      'O sistema repetirá a cópia automaticamente ao recuperar o acesso à pasta. '+
-      (error.message||String(error)),true,14500);
-    return {saved:false,queued:true,error:error.message||String(error)};
+    if(error.name==='NotFoundError')return false;
+    throw error;
+  }
+  const existing=await windowsExistingPDF(folder,item.id);
+  if(!existing)return false;
+  // Somente considerar sincronizado quando o hash dos bytes conferir.
+  // Tamanho/nome iguais não bastam: PDFs substituídos podem ser diferentes.
+  if(!/^[0-9a-f]{64}$/i.test(String(item.sha256||'')))return false;
+  return (await windowsFileSHA256(existing)).toLowerCase()===
+    String(item.sha256).toLowerCase();
+}
+async function reconcileAllWindowsPDFs(force=false){
+  if(!/Windows/i.test(navigator.userAgent||'')||windowsReconcileRunning)return;
+  if(!force&&Date.now()-windowsLastReconcile<45000)return;
+  const root=await readWindowsBoletoFolder();
+  // Pasta precisa ter sido escolhida uma única vez. Se o navegador revogar
+  // a permissão, somente um novo clique do usuário pode reativá-la.
+  if(!root||await windowsFolderPermission(root)!=='granted')return;
+  windowsReconcileRunning=true;
+  try{
+    const manifest=await api('/api/windows/pdf-manifest');
+    let recovered=0,failed=0;
+    for(const item of manifest.items||[]){
+      if(!Number.isInteger(item.id)||item.id<=0)continue;
+      try{
+        // A verificação e a eventual gravação ficam serializadas com os
+        // uploads normais. Baixar SEMPRE a versão atual da VPS.
+        const copied=await serializeWindowsWrite(async()=>{
+          if(await windowsAlreadyCurrent(root,item))return false;
+          const content=await fetchFinalPdfFromServer(item.id);
+          const copied=await copyPDFToWindowsFolder(content,item,item.id);
+          if(!copied?.saved)throw new Error(copied?.error||'Pasta indisponível.');
+          return true;
+        });
+        await removeWindowsCopyPending(item.id).catch(()=>{});
+        if(copied)recovered++;
+      }catch(error){
+        failed++;
+        await saveWindowsCopyPending(null,item,item.id).catch(()=>{});
+      }
+      if((recovered+failed)%25===0){
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+    }
+    windowsLastReconcile=Date.now();
+    if(recovered){
+      notice(recovered+' PDF(s) recuperado(s)/atualizado(s) automaticamente na pasta do Windows.',false,11000);
+    }
+    if(failed){
+      console.warn('CONTAS 4: PDFs não copiados nesta tentativa:',failed);
+    }
+    return {recovered,failed,missingSource:manifest.missing_source||0};
+  }finally{
+    windowsReconcileRunning=false;
   }
 }
 async function retryWindowsCopiesAutomatically(){
-  try{
-    if(!/Windows/i.test(navigator.userAgent||''))return;
-    const root=await readWindowsBoletoFolder();
-    if(!root||await windowsFolderPermission(root)!=='granted')return;
-    const queued=await windowsPendingCopies();
-    if(!queued.length)return;
-    let count=0;
-    for(const job of queued){
-      // A fonte da verdade é o PDF final no servidor, nunca o original
-      // do momento do upload (que pode ser um JPG de comprovante).
-      const pdf=await fetchFinalPdfFromServer(job.id);
-      const saved=await copyPDFToWindowsFolder(pdf,job.details,job.id);
-      if(!saved?.saved)continue;
-      await removeWindowsCopyPending(job.id);count++;
-    }
-    if(count)notice(count+' PDF(s) pendente(s) copiado(s) automaticamente para a pasta do Windows.');
-  }catch(_){/* a fila persiste; não bloquear o cadastro ou pagamento */}
+  try{await reconcileAllWindowsPDFs();}catch(error){
+    console.warn('CONTAS 4: reconciliação automática adiada:',error.message||String(error));
+  }
 }
 window.addEventListener('focus',retryWindowsCopiesAutomatically);
 setInterval(retryWindowsCopiesAutomatically,60000);
-async function copyPendingWindowsPDFs(){
-  const root=await prepareWindowsFolderCopy();
-  if(!root)throw new Error('Selecione primeiro a pasta BOLETOS no Windows.');
-  validateWindowsFolderRoot(root);
-  const pending=await windowsPendingCopies();
-  let copied=0;
-  for(const entry of pending){
-    const current=await fetchFinalPdfFromServer(entry.id);
-    const result=await copyPDFToWindowsFolder(current,entry.details,entry.id);
-    if(!result?.saved)throw new Error(
-      copied+' PDF(s) copiado(s). Conta '+entry.id+': '+(result?.error||'Nao foi possivel gravar o PDF.')
-    );
-    await removeWindowsCopyPending(entry.id);
-    copied++;
-  }
-  return copied;
-}
-async function copyOrQueueWindowsPDF(file,details,id){
-  let result;
-  try{result=await copyPDFToWindowsFolder(file,details,id);}
-  catch(e){result={configured:true,saved:false,error:e.message||String(e)};}
-  if(result?.saved||!result?.configured)return result;
-  try{
-    await saveWindowsCopyPending(file,details,id);
-    return {...result,queued:true};
-  }catch(e){
-    return {...result,queued:false,
-      error:(result.error||'Falha ao copiar para o Windows.')+
-        ' Tambem nao foi possivel manter uma copia pendente no navegador: '+
-        (e.message||String(e))};
-  }
-}
 async function windowsFolderPermission(handle,request=false){
   if(!handle)return 'not-configured';
   if(typeof handle.queryPermission!=='function')return 'unsupported';
