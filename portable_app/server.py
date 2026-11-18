@@ -364,11 +364,22 @@ def _learn_reviewed_pdf(pdf_path: Path, final: dict, predicted: dict,
     return learned, ""
 
 
+def require_r2_for_pdf_upload():
+    """Em HTTPS/VPS não aceitar novos PDFs sem cópia R2 configurada."""
+    if (os.environ.get("CONTAS_PUBLIC_ORIGIN", "").startswith("https://")
+            and not r2_bridge.enabled()):
+        raise RuntimeError(
+            "O R2 não está configurado na VPS. Nenhum PDF foi gravado; "
+            "restaure a configuração do R2 antes de cadastrar o arquivo."
+        )
+
+
 def create_account_from_preview(data):
     """Confirma campos corrigidos pelo usuário, grava PDF e cadastro atomicamente."""
     ticket = str(data.get("ticket") or "")
     source, source_name, predicted = pdf_workflows.take_preview(ticket)
     fields = normalize(data)
+    require_r2_for_pdf_upload()
     # Se o usuario apagou Observacoes, conservar o nome de origem do PDF
     # como identificacao do cadastro. Nunca usar um nome vazio/aleatorio.
     if not fields["observacoes"]:
@@ -378,6 +389,8 @@ def create_account_from_preview(data):
         temp = None
         target = None
         created = False
+        remote_written = False
+        account_id = None
         try:
             with connection(write=True) as conn:
                 pdf_workflows.check_duplicate(
@@ -406,7 +419,16 @@ def create_account_from_preview(data):
                 # revertidos: nunca informar sucesso sem a cópia na nuvem.
                 if r2_bridge.enabled():
                     r2_bridge.write_pdf(account_id, source.read_bytes())
+                    remote_written = True
         except Exception:
+            if remote_written and account_id is not None:
+                try:
+                    r2_bridge.delete_pdf(account_id)
+                except Exception:
+                    # Nunca perder o PDF local só porque o rollback remoto
+                    # falhou: o objeto órfão não deve ser confundido com
+                    # uma conta confirmada. Erro permanece no log.
+                    pass
             if temp is not None:
                 temp.unlink(missing_ok=True)
             if created and target is not None:
@@ -721,6 +743,7 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
     A cópia de segurança antes da primeira escrita já existe em connection().
     """
     pdf_workflows.check_pdf(data)
+    require_r2_for_pdf_upload()
     try:
         date.fromisoformat(str(paid_on))
     except ValueError as exc:
@@ -792,6 +815,10 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
         temporary = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".part.pdf")
         backup = target.with_name("." + target.stem + "_" + secrets.token_hex(6) + ".restore.pdf") if existing else None
         replaced = False
+        remote_written = False
+        remote_before = (r2_bridge.read_pdf(account_id)
+                         if r2_bridge.enabled() and r2_bridge.available(account_id)
+                         else None)
         try:
             pages = pdf_workflows.merge_receipt(existing, data, temporary)
             if backup:
@@ -803,6 +830,7 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
             # automaticamente pelo navegador lendo este mesmo PDF da VPS.
             if r2_bridge.enabled():
                 r2_bridge.write_pdf(account_id, target.read_bytes(), pages)
+                remote_written = True
             # A função de registro preserva os campos originais e a conferência
             # automática fica desativada, como no último desktop.
             with connection(write=True) as conn:
@@ -859,6 +887,14 @@ def register_payment_with_receipt(account_id: int, paid_on: str, data: bytes, *,
                     )
             return {"paid": True, "merged": True, "pages": pages, "pdf": str(target)}
         except Exception:
+            if remote_written:
+                try:
+                    if remote_before is None:
+                        r2_bridge.delete_pdf(account_id)
+                    else:
+                        r2_bridge.write_pdf(account_id, remote_before)
+                except Exception:
+                    pass
             if replaced:
                 if backup and backup.is_file():
                     try:
@@ -975,6 +1011,7 @@ def upload_pdf(account_id, data: bytes, filename: str):
     # Anexar a conta existente também precisa da detecção reforçada de
     # duplicidade. Sem isso um mesmo boleto poderia aparecer em duas contas.
     pdf_workflows.check_pdf(data)
+    require_r2_for_pdf_upload()
     with LOCK:
         stage_dir = APP_DIR / "portable_staging"
         stage_dir.mkdir(parents=True, exist_ok=True)
@@ -983,9 +1020,13 @@ def upload_pdf(account_id, data: bytes, filename: str):
         target = None
         temp = None
         created = False
+        remote_written = False
+        remote_before = None
         try:
             with connection() as conn:
                 info = account(conn, account_id)
+                if r2_bridge.enabled() and r2_bridge.available(account_id):
+                    remote_before = r2_bridge.read_pdf(account_id)
                 pdf_workflows.check_duplicate(
                     conn, stage, info, exclude_id=account_id,
                     remote_metadata=r2_bridge.metadata if r2_bridge.enabled() else None,
@@ -1006,7 +1047,16 @@ def upload_pdf(account_id, data: bytes, filename: str):
                     # Mesmo arquivo aceito na VPS passa a ser a versão atual
                     # no R2. O nome/ID da conta é estável entre substituições.
                     r2_bridge.write_pdf(account_id, data)
+                    remote_written = True
         except Exception:
+            if remote_written:
+                try:
+                    if remote_before is None:
+                        r2_bridge.delete_pdf(account_id)
+                    else:
+                        r2_bridge.write_pdf(account_id, remote_before)
+                except Exception:
+                    pass
             if temp is not None:
                 temp.unlink(missing_ok=True)
             if created and target is not None:
